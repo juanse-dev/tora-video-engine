@@ -1,5 +1,7 @@
 # MVP-001 — Bootstrap Remotion
 
+> Status: **Implemented** in [PR #1](https://github.com/juanse-dev/tora-video-engine/pull/1). CI verifies dependency installation, lint/typecheck, H.264 smoke rendering, and a non-empty output artifact.
+
 ## Goal
 
 Create the smallest runnable TypeScript + React + Remotion project and prove that the local rendering toolchain works before introducing the story engine.
