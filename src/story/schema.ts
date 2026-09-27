@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {VIDEO_FPS} from "../videoConfig.ts";
+import {durationToFrames, isValidFrameCount} from "./duration.ts";
 
 export const sceneTypes = ["intro", "dialogue", "chaos", "punchline"] as const;
 export const poses = ["formal", "confused", "panic", "coffee"] as const;
@@ -21,9 +22,13 @@ export const StorySceneSchema = z
       .number()
       .finite()
       .positive()
-      .refine((duration) => Math.round(duration * VIDEO_FPS) >= 1, {
-        message: `Duration must produce at least 1 frame at ${VIDEO_FPS} FPS`,
-      }),
+      .refine(
+        (duration) =>
+          isValidFrameCount(durationToFrames(duration, VIDEO_FPS)),
+        {
+          message: `Duration must produce a finite safe frame count of at least 1 at ${VIDEO_FPS} FPS`,
+        },
+      ),
     animation: AnimationSchema.optional(),
   })
   .strict();
