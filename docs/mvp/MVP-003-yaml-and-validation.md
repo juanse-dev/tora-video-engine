@@ -1,5 +1,7 @@
 # MVP-003 — YAML input and validation
 
+> Status: **Implemented** in [PR #3](https://github.com/juanse-dev/tora-video-engine/pull/3). The reference YAML loads through a Node-only parser, validates against the Zod contract, and feeds the existing timeline domain without YAML/filesystem logic leaking into React.
+
 ## Goal
 
 Make YAML the external source format and guarantee that only valid stories reach the renderer.
