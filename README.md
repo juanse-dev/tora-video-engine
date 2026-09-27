@@ -751,79 +751,49 @@ Esta estructura es orientativa y puede cambiar durante la implementación.
 
 ## MVP
 
-La primera versión debe mantenerse deliberadamente pequeña.
-
-### Assets
-
-~~~text
-5 poses de Tora
-3 fondos
-~~~
-
-### Scenes
-
-~~~text
-Intro
-Dialogue
-Reaction
-Punchline
-Outro
-~~~
-
-### Animations
-
-~~~text
-fade
-float
-slowZoom
-~~~
-
-### Format
-
-~~~text
-1080 × 1920
-30 FPS
-~~~
-
-### Input
-
-~~~text
-YAML
-~~~
-
-### Output
-
-~~~text
-MP4
-~~~
-
-Objetivo mínimo:
+La primera versión se mantiene deliberadamente pequeña y demuestra un único vertical slice:
 
 ~~~text
 story.yaml
     ↓
 validation
     ↓
+timeline
+    ↓
+reusable visuals
+    ↓
 Remotion
     ↓
 video.mp4
 ~~~
 
-La IA, TTS y generación dinámica de imágenes quedan fuera del MVP.
+Alcance de v0.1:
+
+- 1 personaje: Tora;
+- 4 poses: `formal`, `confused`, `panic`, `coffee`;
+- 2 fondos: `office`, `server-room`;
+- 4 scene presets: `intro`, `dialogue`, `chaos`, `punchline`;
+- 3 animaciones: `fade`, `float`, `slowZoom`;
+- 1080 × 1920, 30 FPS;
+- YAML como input;
+- H.264 MP4 como output.
+
+La IA, TTS, audio, props, character packs y generación dinámica de imágenes quedan fuera del MVP.
+
+El roadmap implementable y los criterios de aceptación viven en **[docs/mvp/](docs/mvp/README.md)**. Las specs de esa carpeta son la fuente de verdad para v0.1.
 
 ## Roadmap
 
-### Phase 1 — Renderer
+### Phase 1 — Renderer / MVP v0.1
 
-- Remotion project.
-- Story schema.
-- YAML parser.
-- Scene resolver.
-- Character component.
-- Background component.
-- Five scene types.
-- Basic animations.
-- Vertical video rendering.
+La implementación concreta de esta fase está dividida en specs secuenciales en **[docs/mvp/](docs/mvp/README.md)**:
+
+1. Remotion bootstrap.
+2. Story domain and timeline.
+3. YAML input and validation.
+4. Visual primitives and scene presets.
+5. Render command.
+6. Reference story and verification.
 
 ### Phase 2 — Content engine
 
