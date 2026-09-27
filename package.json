@@ -7,7 +7,7 @@
     "dev": "remotion studio src/index.ts",
     "build": "remotion bundle src/index.ts",
     "render:smoke": "remotion render src/index.ts ToraVideo output/smoke.mp4 --codec=h264",
-    "test": "vitest run",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "lint": "eslint src && tsc"
   },
   "dependencies": {
@@ -22,7 +22,6 @@
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
     "prettier": "3.8.1",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "typescript": "5.9.3"
   }
 }
