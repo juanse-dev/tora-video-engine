@@ -149,6 +149,20 @@ scenes:
     );
   });
 
+  it("rejects a positive duration that cannot produce a frame", async () => {
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: Too short
+    duration: 0.001
+`,
+      "scenes.0.duration",
+    );
+  });
+
   it("rejects malformed YAML before schema validation", async () => {
     await withYaml(
       `title: Broken
