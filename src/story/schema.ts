@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {VIDEO_FPS} from "../videoConfig.ts";
 
 export const sceneTypes = ["intro", "dialogue", "chaos", "punchline"] as const;
 export const poses = ["formal", "confused", "panic", "coffee"] as const;
@@ -16,7 +17,13 @@ export const StorySceneSchema = z
     pose: PoseSchema,
     background: BackgroundSchema,
     text: z.string().min(1, "Text must not be empty"),
-    duration: z.number().finite().positive(),
+    duration: z
+      .number()
+      .finite()
+      .positive()
+      .refine((duration) => Math.round(duration * VIDEO_FPS) >= 1, {
+        message: `Duration must produce at least 1 frame at ${VIDEO_FPS} FPS`,
+      }),
     animation: AnimationSchema.optional(),
   })
   .strict();
