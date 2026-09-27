@@ -1,4 +1,8 @@
-import {durationToFrames, isValidFrameCount} from "./duration.ts";
+import {
+  addFrameCounts,
+  durationToFrames,
+  isValidFrameCount,
+} from "./duration.ts";
 import type {Story, StoryScene} from "./types";
 
 export type TimelineScene = StoryScene & {
@@ -23,13 +27,21 @@ export const compileTimeline = (story: Story, fps: number): Timeline => {
       );
     }
 
+    const nextFrom = addFrameCounts(from, durationInFrames);
+
+    if (nextFrom === null) {
+      throw new Error(
+        `Scene ${index} ("${scene.text}") causes the cumulative timeline to exceed the safe integer frame range; current=${from}, durationInFrames=${durationInFrames}.`,
+      );
+    }
+
     const timelineScene: TimelineScene = {
       ...scene,
       from,
       durationInFrames,
     };
 
-    from += durationInFrames;
+    from = nextFrom;
 
     return timelineScene;
   });
