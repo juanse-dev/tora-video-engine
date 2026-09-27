@@ -42,15 +42,20 @@ export const Scene = ({scene}: SceneProps) => {
   const animation: Animation | undefined =
     scene.animation ?? preset.defaultAnimation;
 
-  const animationStyle: CSSProperties = (() => {
-    const styles: Record<Animation, () => CSSProperties> = {
-      fade: () => fade(frame, fps, scene.durationInFrames),
-      float: () => float(frame, fps),
-      slowZoom: () => slowZoom(frame, scene.durationInFrames),
-    };
+  const sceneAnimationStyle: CSSProperties = (() => {
+    if (animation === "fade") {
+      return fade(frame, fps, scene.durationInFrames);
+    }
 
-    return animation ? styles[animation]() : {};
+    if (animation === "slowZoom") {
+      return slowZoom(frame, scene.durationInFrames);
+    }
+
+    return {};
   })();
+
+  const toraAnimationStyle: CSSProperties =
+    animation === "float" ? float(frame, fps) : {};
 
   return (
     <AbsoluteFill style={{overflow: "hidden"}}>
@@ -64,7 +69,7 @@ export const Scene = ({scene}: SceneProps) => {
 
       <AbsoluteFill
         style={{
-          ...animationStyle,
+          ...sceneAnimationStyle,
           transformOrigin: "center center",
         }}
       >
@@ -77,7 +82,15 @@ export const Scene = ({scene}: SceneProps) => {
             width: preset.toraWidth,
           }}
         >
-          <Tora pose={scene.pose} />
+          <div
+            style={{
+              height: "100%",
+              width: "100%",
+              ...toraAnimationStyle,
+            }}
+          >
+            <Tora pose={scene.pose} />
+          </div>
         </div>
 
         <Caption

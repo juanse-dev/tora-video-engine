@@ -43,7 +43,7 @@ export const Caption = ({
   placement,
   align,
 }: CaptionProps) => {
-  const fontSize = getCaptionFontSize(variant, text.length);
+  const fontSize = getCaptionFontSize(variant, text);
 
   return (
     <div
