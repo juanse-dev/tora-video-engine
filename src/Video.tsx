@@ -8,7 +8,7 @@ export type ToraVideoProps = {
 };
 
 export const ToraVideo = ({story}: ToraVideoProps) => {
-  useCaptionFont();
+  useCaptionFont(story);
 
   return (
     <AbsoluteFill>

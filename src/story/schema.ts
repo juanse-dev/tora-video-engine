@@ -1,6 +1,10 @@
 import {z} from "zod";
 import {VIDEO_FPS} from "../videoConfig.ts";
-import {MAX_CAPTION_LENGTH} from "./constraints.ts";
+import {
+  captionCodePointLength,
+  hasOnlySupportedCaptionCharacters,
+  MAX_CAPTION_LENGTH,
+} from "./constraints.ts";
 import {
   addFrameCounts,
   durationToFrames,
@@ -25,10 +29,16 @@ export const StorySceneSchema = z
     text: z
       .string()
       .min(1, "Text must not be empty")
-      .max(
-        MAX_CAPTION_LENGTH,
-        `Text must contain at most ${MAX_CAPTION_LENGTH} characters`,
-      ),
+      .refine(
+        (text) => captionCodePointLength(text) <= MAX_CAPTION_LENGTH,
+        {
+          message: `Text must contain at most ${MAX_CAPTION_LENGTH} Unicode code points`,
+        },
+      )
+      .refine(hasOnlySupportedCaptionCharacters, {
+        message:
+          "Text contains characters unsupported by the bundled caption font",
+      }),
     duration: z
       .number()
       .finite()

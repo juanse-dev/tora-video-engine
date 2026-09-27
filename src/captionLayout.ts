@@ -1,4 +1,5 @@
 import type {CaptionVariant} from "./scenePresets.ts";
+import {captionCodePointLength} from "./story/constraints.ts";
 
 export const CAPTION_BOX_MAX_HEIGHT = 620;
 export const CAPTION_TEXT_MAX_HEIGHT = 520;
@@ -40,7 +41,7 @@ export const estimateCaptionLineCount = (
   fontSize: number,
 ): number => {
   const capacity = estimateCharactersPerLine(variant, fontSize);
-  const codePointCount = Math.max(1, Array.from(text).length);
+  const codePointCount = Math.max(1, captionCodePointLength(text));
 
   return Math.ceil(codePointCount / capacity);
 };

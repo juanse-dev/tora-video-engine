@@ -137,6 +137,44 @@ scenes:
     );
   });
 
+  it("counts caption length by Unicode code points", async () => {
+    const text = "Ж".repeat(180);
+
+    await withYaml(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "${text}"
+    duration: 1
+`,
+      async (path) => {
+        const story = await loadStory(path);
+        assert.equal(story.scenes[0].text, text);
+      },
+    );
+  });
+
+  it("rejects characters unsupported by the bundled caption font", async () => {
+    await withYaml(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "😀"
+    duration: 1
+`,
+      async (path) => {
+        await assert.rejects(
+          () => loadStory(path),
+          /unsupported by the bundled caption font/,
+        );
+      },
+    );
+  });
+
   it("rejects zero duration", async () => {
     await expectInvalidStory(
       `title: Test
