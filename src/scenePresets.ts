@@ -38,6 +38,7 @@ export const scenePresets = {
   },
   chaos: {
     captionVariant: "impact",
+    defaultAnimation: undefined,
     captionPlacement: "top",
     captionAlign: "center",
     toraWidth: 770,
