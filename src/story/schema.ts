@@ -1,6 +1,10 @@
 import {z} from "zod";
 import {VIDEO_FPS} from "../videoConfig.ts";
-import {durationToFrames, isValidFrameCount} from "./duration.ts";
+import {
+  addFrameCounts,
+  durationToFrames,
+  isValidFrameCount,
+} from "./duration.ts";
 
 export const sceneTypes = ["intro", "dialogue", "chaos", "punchline"] as const;
 export const poses = ["formal", "confused", "panic", "coffee"] as const;
@@ -40,7 +44,31 @@ export const StorySchema = z
       .array(StorySceneSchema)
       .min(1, "Story must contain at least one scene"),
   })
-  .strict();
+  .strict()
+  .superRefine((story, context) => {
+    let totalFrames = 0;
+
+    for (const [index, scene] of story.scenes.entries()) {
+      const sceneFrames = durationToFrames(scene.duration, VIDEO_FPS);
+
+      if (!isValidFrameCount(sceneFrames)) {
+        continue;
+      }
+
+      const nextTotal = addFrameCounts(totalFrames, sceneFrames);
+
+      if (nextTotal === null) {
+        context.addIssue({
+          code: "custom",
+          path: ["scenes", index, "duration"],
+          message: `Cumulative story duration must remain within the safe integer frame range at ${VIDEO_FPS} FPS`,
+        });
+        break;
+      }
+
+      totalFrames = nextTotal;
+    }
+  });
 
 export type SceneType = z.infer<typeof SceneTypeSchema>;
 export type Pose = z.infer<typeof PoseSchema>;
