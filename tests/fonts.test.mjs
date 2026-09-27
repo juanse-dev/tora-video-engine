@@ -1,8 +1,25 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {loadCaptionFontForText} from "../src/fontCoverage.ts";
+import {
+  isCaptionTextSupported,
+  loadCaptionFontForText,
+} from "../src/fontCoverage.ts";
 
-describe("caption font loading", () => {
+describe("caption font coverage", () => {
+  it("accepts characters from bundled Latin, Greek, and Cyrillic ranges", () => {
+    assert.equal(
+      isCaptionTextSupported(
+        "Tora café — Καλημέρα — Привет 123 €",
+      ),
+      true,
+    );
+  });
+
+  it("rejects Arabic-Indic digits and emoji before rendering", () => {
+    assert.equal(isCaptionTextSupported("A٠"), false);
+    assert.equal(isCaptionTextSupported("Tora 😀"), false);
+  });
+
   it("checks every renderable code point against every required weight", async () => {
     const calls = [];
 
@@ -17,24 +34,28 @@ describe("caption font loading", () => {
     );
   });
 
-  it("rejects a code point not covered by the bundled font", async () => {
+  it("does not call the browser loader for unsupported text", async () => {
+    let calls = 0;
+
     await assert.rejects(
       () =>
-        loadCaptionFontForText("A٠", async (_font, text) =>
-          text === "٠" ? [] : [{}],
-        ),
+        loadCaptionFontForText("A٠", async () => {
+          calls += 1;
+          return [{}];
+        }),
       /U\+0660/,
     );
+
+    assert.equal(calls, 0);
   });
 
-  it("checks an astral character as one code point", async () => {
-    const checked = [];
-
-    await loadCaptionFontForText("😀", async (_font, text) => {
-      checked.push(text);
-      return [{}];
-    });
-
-    assert.deepEqual(checked, ["😀", "😀", "😀"]);
+  it("still fails if a supported bundled glyph cannot be loaded", async () => {
+    await assert.rejects(
+      () =>
+        loadCaptionFontForText("AЖ", async (_font, text) =>
+          text === "Ж" ? [] : [{}],
+        ),
+      /U\+0416/,
+    );
   });
 });

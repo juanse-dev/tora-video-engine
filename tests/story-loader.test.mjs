@@ -156,6 +156,32 @@ scenes:
     );
   });
 
+  it("rejects caption glyphs outside the bundled Inter coverage", async () => {
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "A٠"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "Tora 😀"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+  });
+
   it("rejects zero duration", async () => {
     await expectInvalidStory(
       `title: Test
