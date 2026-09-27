@@ -1,3 +1,4 @@
+import "@fontsource-variable/inter/wght.css";
 import type {CSSProperties} from "react";
 import {
   CAPTION_BOX_MAX_HEIGHT,
@@ -33,7 +34,6 @@ const variantStyles: Record<CaptionVariant, CSSProperties> = {
     letterSpacing: 1,
     lineHeight: 0.98,
     padding: "30px 34px",
-    textTransform: "uppercase",
   },
 };
 
@@ -68,7 +68,7 @@ export const Caption = ({
           boxShadow: "0 18px 54px rgba(0, 0, 0, 0.28)",
           boxSizing: "border-box",
           color: "#f8fafc",
-          fontFamily: "Arial, Helvetica, sans-serif",
+          fontFamily: '"Inter Variable"',
           fontSize,
           maxHeight: CAPTION_BOX_MAX_HEIGHT,
           overflow: "hidden",
@@ -76,7 +76,7 @@ export const Caption = ({
           textAlign: align,
           textShadow: "0 4px 18px rgba(0, 0, 0, 0.45)",
           width: "100%",
-          wordBreak: "break-word",
+          wordBreak: "break-all",
         }}
       >
         {text}

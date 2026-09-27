@@ -42,63 +42,63 @@ export const Scene = ({scene}: SceneProps) => {
   const animation: Animation | undefined =
     scene.animation ?? preset.defaultAnimation;
 
-  const sceneAnimationStyle: CSSProperties = (() => {
-    if (animation === "fade") {
-      return fade(frame, fps, scene.durationInFrames);
-    }
+  const fadeStyle: CSSProperties =
+    animation === "fade"
+      ? fade(frame, fps, scene.durationInFrames)
+      : {};
 
-    if (animation === "slowZoom") {
-      return slowZoom(frame, scene.durationInFrames);
-    }
-
-    return {};
-  })();
+  const foregroundAnimationStyle: CSSProperties =
+    animation === "slowZoom"
+      ? slowZoom(frame, scene.durationInFrames)
+      : {};
 
   const toraAnimationStyle: CSSProperties =
     animation === "float" ? float(frame, fps) : {};
 
   return (
     <AbsoluteFill style={{overflow: "hidden"}}>
-      <Background background={scene.background} />
+      <AbsoluteFill style={fadeStyle}>
+        <Background background={scene.background} />
 
-      <AbsoluteFill
-        style={{
-          background: preset.overlay,
-        }}
-      />
-
-      <AbsoluteFill
-        style={{
-          ...sceneAnimationStyle,
-          transformOrigin: "center center",
-        }}
-      >
-        <div
+        <AbsoluteFill
           style={{
-            ...placementStyle(preset.toraPlacement),
-            bottom: preset.toraBottom,
-            height: preset.toraWidth * 1.18,
-            position: "absolute",
-            width: preset.toraWidth,
+            background: preset.overlay,
+          }}
+        />
+
+        <AbsoluteFill
+          style={{
+            ...foregroundAnimationStyle,
+            transformOrigin: "center center",
           }}
         >
           <div
             style={{
-              height: "100%",
-              width: "100%",
-              ...toraAnimationStyle,
+              ...placementStyle(preset.toraPlacement),
+              bottom: preset.toraBottom,
+              height: preset.toraWidth * 1.18,
+              position: "absolute",
+              width: preset.toraWidth,
             }}
           >
-            <Tora pose={scene.pose} />
+            <div
+              style={{
+                height: "100%",
+                width: "100%",
+                ...toraAnimationStyle,
+              }}
+            >
+              <Tora pose={scene.pose} />
+            </div>
           </div>
-        </div>
 
-        <Caption
-          text={scene.text}
-          variant={preset.captionVariant}
-          placement={preset.captionPlacement}
-          align={preset.captionAlign}
-        />
+          <Caption
+            text={scene.text}
+            variant={preset.captionVariant}
+            placement={preset.captionPlacement}
+            align={preset.captionAlign}
+          />
+        </AbsoluteFill>
       </AbsoluteFill>
     </AbsoluteFill>
   );

@@ -23,7 +23,7 @@ describe("caption layout", () => {
     });
   }
 
-  it("accounts conservatively for word-boundary wrapping", () => {
+  it("uses a conservative glyph-width bound independent of words", () => {
     const text = Array(16).fill("WWWWWWWWWW").join(" ");
     assert.equal(text.length, 175);
 
@@ -35,6 +35,16 @@ describe("caption layout", () => {
     );
 
     assert.ok(lineCount >= 8);
+    assert.ok(
+      estimateCaptionHeight(text, "impact", fontSize) <=
+        CAPTION_TEXT_MAX_HEIGHT,
+    );
+  });
+
+  it("does not rely on CSS case transformations for impact captions", () => {
+    const text = "ﬄ".repeat(MAX_CAPTION_LENGTH);
+    const fontSize = getCaptionFontSize("impact", text);
+
     assert.ok(
       estimateCaptionHeight(text, "impact", fontSize) <=
         CAPTION_TEXT_MAX_HEIGHT,

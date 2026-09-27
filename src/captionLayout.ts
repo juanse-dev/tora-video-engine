@@ -6,7 +6,7 @@ export const CAPTION_MIN_FONT_SIZE = 32;
 export const CAPTION_CONTENT_WIDTH = 868;
 
 const CAPTION_LINE_HEIGHT = 1.12;
-const WORST_CASE_GLYPH_EM = 1.1;
+const WORST_CASE_GLYPH_EM = 2;
 
 const baseFontSizes: Record<CaptionVariant, number> = {
   hero: 86,
@@ -40,46 +40,9 @@ export const estimateCaptionLineCount = (
   fontSize: number,
 ): number => {
   const capacity = estimateCharactersPerLine(variant, fontSize);
-  const words = text.trim().split(/\s+/u).filter(Boolean);
+  const codePointCount = Math.max(1, Array.from(text).length);
 
-  if (words.length === 0) {
-    return 1;
-  }
-
-  let lines = 0;
-  let currentLineCharacters = 0;
-
-  for (const word of words) {
-    let remainingCharacters = word.length;
-
-    if (remainingCharacters <= capacity) {
-      const separator = currentLineCharacters === 0 ? 0 : 1;
-
-      if (
-        currentLineCharacters + separator + remainingCharacters <=
-        capacity
-      ) {
-        currentLineCharacters += separator + remainingCharacters;
-        continue;
-      }
-
-      lines += 1;
-      currentLineCharacters = remainingCharacters;
-      continue;
-    }
-
-    if (currentLineCharacters > 0) {
-      lines += 1;
-      currentLineCharacters = 0;
-    }
-
-    lines += Math.floor(remainingCharacters / capacity);
-    remainingCharacters %= capacity;
-
-    currentLineCharacters = remainingCharacters;
-  }
-
-  return lines + (currentLineCharacters > 0 ? 1 : 0);
+  return Math.ceil(codePointCount / capacity);
 };
 
 export const estimateCaptionHeight = (
