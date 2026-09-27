@@ -61,6 +61,17 @@ describe("compileTimeline", () => {
     assert.equal(timeline.durationInFrames, 38);
   });
 
+  it("rejects scenes that round down to zero frames", () => {
+    assert.throws(
+      () =>
+        compileTimeline(
+          makeStory([makeScene({duration: 0.001, text: "Too short"})]),
+          30,
+        ),
+      /must compile to at least 1 frame/,
+    );
+  });
+
   it("moves subsequent scenes when a duration changes", () => {
     const original = compileTimeline(
       makeStory([
