@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
+import {getStoryMetadata} from "../src/story/metadata.ts";
 import {compileTimeline} from "../src/story/timeline.ts";
 
 const makeScene = (overrides = {}) => ({
@@ -80,6 +81,17 @@ describe("compileTimeline", () => {
     assert.equal(original.scenes[1].from, 30);
     assert.equal(changed.scenes[1].from, 60);
     assert.equal(changed.durationInFrames, 90);
+  });
+
+  it("derives composition metadata from the effective story", () => {
+    const shortStory = makeStory([makeScene({duration: 1})]);
+    const longStory = makeStory([
+      makeScene({duration: 3}),
+      makeScene({duration: 2}),
+    ]);
+
+    assert.equal(getStoryMetadata(shortStory, 30).durationInFrames, 30);
+    assert.equal(getStoryMetadata(longStory, 30).durationInFrames, 150);
   });
 
   it("preserves story scene order", () => {
