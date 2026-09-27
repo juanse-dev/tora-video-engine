@@ -10,13 +10,13 @@
     "lint": "eslint src && tsc"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.0",
+    "@remotion/cli": "4.0.529",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "remotion": "^4.0.0"
+    "remotion": "4.0.529"
   },
   "devDependencies": {
-    "@remotion/eslint-config-flat": "^4.0.0",
+    "@remotion/eslint-config-flat": "4.0.529",
     "@types/react": "19.2.7",
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
