@@ -177,6 +177,30 @@ scenes:
     );
   });
 
+  it("rejects a story whose cumulative frame count overflows", async () => {
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: Almost max
+    duration: 300239975158033
+  - type: dialogue
+    pose: confused
+    background: office
+    text: Last safe frame
+    duration: 0.03
+  - type: punchline
+    pose: coffee
+    background: office
+    text: Overflow
+    duration: 0.03
+`,
+      "scenes.2.duration",
+    );
+  });
+
   it("rejects malformed YAML before schema validation", async () => {
     await withYaml(
       `title: Broken
