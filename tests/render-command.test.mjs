@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import {resolve} from "node:path";
 import {describe, it} from "node:test";
 import {
   buildRenderArgs,
   COMPOSITION_ID,
   getOutputPath,
+  getRemotionCliPath,
+  getRemotionExecutable,
   getStoryPath,
   getStorySlug,
   REMOTION_ENTRY_POINT,
@@ -47,6 +50,19 @@ describe("render command support", () => {
     );
   });
 
+  it("launches the Remotion JavaScript CLI through the current Node executable", () => {
+    assert.equal(getRemotionExecutable(), process.execPath);
+    assert.equal(
+      getRemotionCliPath(),
+      resolve(
+        "node_modules",
+        "@remotion",
+        "cli",
+        "remotion-cli.js",
+      ),
+    );
+  });
+
   it("builds a deterministic H.264 Remotion invocation", () => {
     assert.deepEqual(
       buildRenderArgs(
@@ -54,6 +70,7 @@ describe("render command support", () => {
         "/tmp/tora/props.json",
       ),
       [
+        getRemotionCliPath(),
         "render",
         REMOTION_ENTRY_POINT,
         COMPOSITION_ID,

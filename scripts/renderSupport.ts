@@ -41,17 +41,21 @@ export const getStorySlug = (storyPath: string): string => {
 export const getOutputPath = (storyPath: string): string =>
   join("output", `${getStorySlug(storyPath)}.mp4`);
 
-export const getRemotionExecutable = (): string =>
+export const getRemotionExecutable = (): string => process.execPath;
+
+export const getRemotionCliPath = (): string =>
   resolve(
     "node_modules",
-    ".bin",
-    process.platform === "win32" ? "remotion.cmd" : "remotion",
+    "@remotion",
+    "cli",
+    "remotion-cli.js",
   );
 
 export const buildRenderArgs = (
   outputPath: string,
   propsPath: string,
 ): string[] => [
+  getRemotionCliPath(),
   "render",
   REMOTION_ENTRY_POINT,
   COMPOSITION_ID,
