@@ -68,7 +68,18 @@ describe("compileTimeline", () => {
           makeStory([makeScene({duration: 0.001, text: "Too short"})]),
           30,
         ),
-      /must compile to at least 1 frame/,
+      /must compile to a finite safe frame count of at least 1/,
+    );
+  });
+
+  it("rejects scenes whose frame count overflows", () => {
+    assert.throws(
+      () =>
+        compileTimeline(
+          makeStory([makeScene({duration: 1e308, text: "Too long"})]),
+          30,
+        ),
+      /must compile to a finite safe frame count of at least 1/,
     );
   });
 
