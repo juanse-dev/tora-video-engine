@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {loadCaptionFontForText} from "../src/fonts.ts";
+import {loadCaptionFontForText} from "../src/fontCoverage.ts";
 
 describe("caption font loading", () => {
   it("checks every renderable code point against every required weight", async () => {

@@ -1,5 +1,5 @@
 import type {CSSProperties} from "react";
-import {CAPTION_FONT_FAMILY} from "../fonts.ts";
+import {CAPTION_FONT_FAMILY} from "../fontCoverage.ts";
 import {
   CAPTION_BOX_MAX_HEIGHT,
   getCaptionFontSize,
