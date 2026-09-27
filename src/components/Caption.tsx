@@ -1,5 +1,5 @@
-import "@fontsource-variable/inter/wght.css";
 import type {CSSProperties} from "react";
+import {CAPTION_FONT_FAMILY} from "../fonts.ts";
 import {
   CAPTION_BOX_MAX_HEIGHT,
   getCaptionFontSize,
@@ -68,7 +68,7 @@ export const Caption = ({
           boxShadow: "0 18px 54px rgba(0, 0, 0, 0.28)",
           boxSizing: "border-box",
           color: "#f8fafc",
-          fontFamily: '"Inter Variable"',
+          fontFamily: CAPTION_FONT_FAMILY,
           fontSize,
           maxHeight: CAPTION_BOX_MAX_HEIGHT,
           overflow: "hidden",
