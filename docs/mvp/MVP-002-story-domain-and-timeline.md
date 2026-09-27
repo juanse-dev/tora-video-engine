@@ -1,5 +1,7 @@
 # MVP-002 — Story domain and timeline
 
+> Status: **Implemented**. The story is now an in-memory domain object, timeline compilation is pure and unit-tested, and the Remotion composition duration is derived from the story.
+
 ## Goal
 
 Replace the static composition with a data-driven story rendered from an in-memory TypeScript object.
