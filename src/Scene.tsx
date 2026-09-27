@@ -1,74 +1,105 @@
-import {AbsoluteFill} from "remotion";
+import type {CSSProperties} from "react";
+import {
+  AbsoluteFill,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
+import {fade} from "./animations/fade.ts";
+import {float} from "./animations/float.ts";
+import {slowZoom} from "./animations/slowZoom.ts";
+import {Background} from "./components/Background.tsx";
+import {Caption} from "./components/Caption.tsx";
+import {Tora} from "./components/Tora.tsx";
+import {scenePresets, type ScenePreset} from "./scenePresets.ts";
+import type {Animation} from "./story/types.ts";
 import type {TimelineScene} from "./story/timeline";
 
 type SceneProps = {
   scene: TimelineScene;
-  sceneNumber: number;
-  totalScenes: number;
 };
 
-const sceneBackgrounds = {
-  intro: "#111827",
-  dialogue: "#1f2937",
-  chaos: "#3f1d2e",
-  punchline: "#172554",
-} as const;
+const placementStyle = (
+  placement: "left" | "center" | "right",
+): CSSProperties => {
+  if (placement === "left") {
+    return {left: 72};
+  }
 
-export const Scene = ({
-  scene,
-  sceneNumber,
-  totalScenes,
-}: SceneProps) => {
+  if (placement === "right") {
+    return {right: 72};
+  }
+
+  return {
+    left: "50%",
+    transform: "translateX(-50%)",
+  };
+};
+
+export const Scene = ({scene}: SceneProps) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const preset: ScenePreset = scenePresets[scene.type];
+  const animation: Animation | undefined =
+    scene.animation ?? preset.defaultAnimation;
+
+  const fadeStyle: CSSProperties =
+    animation === "fade"
+      ? fade(frame, fps, scene.durationInFrames)
+      : {};
+
+  const foregroundAnimationStyle: CSSProperties =
+    animation === "slowZoom"
+      ? slowZoom(frame, scene.durationInFrames)
+      : {};
+
+  const toraAnimationStyle: CSSProperties =
+    animation === "float" ? float(frame, fps) : {};
+
   return (
-    <AbsoluteFill
-      style={{
-        alignItems: "center",
-        backgroundColor: sceneBackgrounds[scene.type],
-        color: "#f9fafb",
-        display: "flex",
-        fontFamily: "Arial, sans-serif",
-        justifyContent: "center",
-        padding: 96,
-        textAlign: "center",
-      }}
-    >
-      <div>
-        <div
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            letterSpacing: 4,
-            opacity: 0.6,
-            textTransform: "uppercase",
-          }}
-        >
-          {scene.type} · {sceneNumber}/{totalScenes}
-        </div>
+    <AbsoluteFill style={{overflow: "hidden"}}>
+      <AbsoluteFill style={fadeStyle}>
+        <Background background={scene.background} />
 
-        <div
+        <AbsoluteFill
           style={{
-            fontSize: 88,
-            fontWeight: 700,
-            letterSpacing: -3,
-            lineHeight: 1.08,
-            marginTop: 40,
+            background: preset.overlay,
           }}
-        >
-          {scene.text}
-        </div>
+        />
 
-        <div
+        <AbsoluteFill
           style={{
-            fontSize: 30,
-            lineHeight: 1.4,
-            marginTop: 48,
-            opacity: 0.5,
+            ...foregroundAnimationStyle,
+            transformOrigin: "center center",
           }}
         >
-          pose: {scene.pose} · background: {scene.background}
-          {scene.animation ? ` · animation: ${scene.animation}` : ""}
-        </div>
-      </div>
+          <div
+            style={{
+              ...placementStyle(preset.toraPlacement),
+              bottom: preset.toraBottom,
+              height: preset.toraWidth * 1.18,
+              position: "absolute",
+              width: preset.toraWidth,
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: "100%",
+                ...toraAnimationStyle,
+              }}
+            >
+              <Tora pose={scene.pose} />
+            </div>
+          </div>
+
+          <Caption
+            text={scene.text}
+            variant={preset.captionVariant}
+            placement={preset.captionPlacement}
+            align={preset.captionAlign}
+          />
+        </AbsoluteFill>
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };

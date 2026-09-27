@@ -121,6 +121,67 @@ scenes:
     );
   });
 
+  it("rejects captions longer than the renderer supports", async () => {
+    const longText = "x".repeat(181);
+
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "${longText}"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+  });
+
+  it("counts caption length by Unicode code points", async () => {
+    const text = "Ж".repeat(180);
+
+    await withYaml(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "${text}"
+    duration: 1
+`,
+      async (path) => {
+        const story = await loadStory(path);
+        assert.equal(story.scenes[0].text, text);
+      },
+    );
+  });
+
+  it("rejects caption glyphs outside the bundled Inter coverage", async () => {
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "A٠"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "Tora 😀"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+  });
+
   it("rejects zero duration", async () => {
     await expectInvalidStory(
       `title: Test

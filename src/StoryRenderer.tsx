@@ -20,11 +20,7 @@ export const StoryRenderer = ({story}: StoryRendererProps) => {
           durationInFrames={scene.durationInFrames}
           name={`${index + 1}. ${scene.type}`}
         >
-          <Scene
-            scene={scene}
-            sceneNumber={index + 1}
-            totalScenes={timeline.scenes.length}
-          />
+          <Scene scene={scene} />
         </Sequence>
       ))}
     </>
