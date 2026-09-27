@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {VIDEO_FPS} from "../videoConfig.ts";
+import {MAX_CAPTION_LENGTH} from "./constraints.ts";
 import {
   addFrameCounts,
   durationToFrames,
@@ -21,7 +22,13 @@ export const StorySceneSchema = z
     type: SceneTypeSchema,
     pose: PoseSchema,
     background: BackgroundSchema,
-    text: z.string().min(1, "Text must not be empty"),
+    text: z
+      .string()
+      .min(1, "Text must not be empty")
+      .max(
+        MAX_CAPTION_LENGTH,
+        `Text must contain at most ${MAX_CAPTION_LENGTH} characters`,
+      ),
     duration: z
       .number()
       .finite()

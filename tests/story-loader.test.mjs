@@ -121,6 +121,22 @@ scenes:
     );
   });
 
+  it("rejects captions longer than the renderer supports", async () => {
+    const longText = "x".repeat(181);
+
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: "${longText}"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+  });
+
   it("rejects zero duration", async () => {
     await expectInvalidStory(
       `title: Test
