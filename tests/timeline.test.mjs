@@ -83,6 +83,21 @@ describe("compileTimeline", () => {
     );
   });
 
+  it("rejects stories whose cumulative frame count overflows", () => {
+    assert.throws(
+      () =>
+        compileTimeline(
+          makeStory([
+            makeScene({duration: 300239975158033, text: "Almost max"}),
+            makeScene({duration: 0.03, text: "Last safe frame"}),
+            makeScene({duration: 0.03, text: "Overflow"}),
+          ]),
+          30,
+        ),
+      /cumulative timeline to exceed the safe integer frame range/,
+    );
+  });
+
   it("moves subsequent scenes when a duration changes", () => {
     const original = compileTimeline(
       makeStory([
