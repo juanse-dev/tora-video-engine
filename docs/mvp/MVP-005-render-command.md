@@ -1,5 +1,7 @@
 # MVP-005 — Render command
 
+> Status: **Implemented** in [PR #5](https://github.com/juanse-dev/tora-video-engine/pull/5). The repository command validates one YAML story before rendering, derives a deterministic output path, passes the validated Story to Remotion as input props, and writes an H.264 MP4 under `output/`.
+
 ## Goal
 
 Provide the single developer workflow that defines the MVP:
