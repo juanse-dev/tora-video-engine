@@ -1,5 +1,7 @@
 # MVP-004 — Visual primitives and scene presets
 
+> Status: **Implemented** in [PR #4](https://github.com/juanse-dev/tora-video-engine/pull/4). The renderer now resolves local Tora/background assets through explicit maps, composes reusable visual primitives, applies centralized scene presets, and supports deterministic fade/float/slowZoom animation.
+
 ## Goal
 
 Turn the generic timeline into a recognizable Tora video while keeping the rendering model composable.
