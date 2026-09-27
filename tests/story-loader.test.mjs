@@ -163,6 +163,20 @@ scenes:
     );
   });
 
+  it("rejects a duration whose frame count overflows", async () => {
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    text: Too long
+    duration: 1e308
+`,
+      "scenes.0.duration",
+    );
+  });
+
   it("rejects malformed YAML before schema validation", async () => {
     await withYaml(
       `title: Broken
