@@ -2,7 +2,7 @@
 
 Tora Video Engine is a small declarative video renderer built with Remotion. The v0.1 MVP turns a validated YAML story into a deterministic vertical H.264 MP4.
 
-> Status: **v0.1 MVP complete** once the reference render passes the final visual checklist in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md).
+> Status: **v0.1 MVP complete**. The canonical reference render passes automated verification and the final visual checklist in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md).
 
 ## MVP flow
 

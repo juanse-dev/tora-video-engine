@@ -1,6 +1,6 @@
 # MVP-006 — Reference story and verification
 
-> Status: **Implemented**. Automated checks cover the canonical story, exact timeline, YAML-only mutation behavior, render command, and reference artifact generation. The reference MP4 is uploaded by CI for final visual inspection.
+> Status: **Verified / MVP complete**. Automated checks cover the canonical story, exact timeline, YAML-only mutation behavior, render command, and reference artifact generation. The CI reference MP4 was inspected and passed the visual checklist.
 
 ## Goal
 
@@ -114,6 +114,22 @@ Update the root README so that:
 - \`docs/mvp/README.md\` is linked as the implementation roadmap;
 - the actual development and render commands are accurate.
 
+## Verification evidence
+
+The reference artifact produced by CI was inspected after the automated checks passed:
+
+- codec: H.264;
+- dimensions: 1080 × 1920;
+- frame rate: 30 FPS;
+- duration: 12.000 seconds;
+- frame count: 360;
+- scene order: intro → dialogue → chaos → punchline;
+- Tora poses: formal → confused → panic → coffee;
+- backgrounds: office → office → server-room → office;
+- fade, float, and slowZoom are visibly active;
+- captions remain visible with no unexpected clipping;
+- sampled scene boundaries contain no blank frames.
+
 ## MVP completion checklist
 
 - [x] MVP-001 accepted
@@ -125,7 +141,7 @@ Update the root README so that:
 - [x] schema tests pass
 - [x] timeline tests pass
 - [x] render smoke test passes
-- [ ] manual visual checklist passes
+- [x] manual visual checklist passes
 - [x] YAML mutation check passes
 - [x] README commands match reality
 
