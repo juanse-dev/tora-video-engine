@@ -30,8 +30,18 @@ jobs:
       - name: Lint and typecheck
         run: npm run lint
 
-      - name: Smoke render
-        run: npm run render:smoke
+      - name: Render reference story
+        run: npm run video -- stories/friday-deploy.yaml
 
       - name: Verify artifact
-        run: test -s output/smoke.mp4
+        run: test -s output/friday-deploy.mp4
+
+      - name: Reject stale output after validation failure
+        shell: bash
+        run: |
+          printf 'title: Broken\nscenes: []\n' > /tmp/friday-deploy.yaml
+          if npm run video -- /tmp/friday-deploy.yaml; then
+            echo "Expected invalid story render to fail"
+            exit 1
+          fi
+          test ! -e output/friday-deploy.mp4

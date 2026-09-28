@@ -67,7 +67,7 @@ These features may influence future architecture, but they must not increase the
 | ✅ [MVP-002](./MVP-002-story-domain-and-timeline.md) | In-memory story model and data-driven timeline | MVP-001 |
 | ✅ [MVP-003](./MVP-003-yaml-and-validation.md) | YAML loading and Zod validation | MVP-002 |
 | ✅ [MVP-004](./MVP-004-visual-primitives.md) | Tora, backgrounds, captions, presets and animations | MVP-002 |
-| [MVP-005](./MVP-005-render-command.md) | One-command YAML → MP4 rendering | MVP-003, MVP-004 |
+| ✅ [MVP-005](./MVP-005-render-command.md) | One-command YAML → MP4 rendering | MVP-003, MVP-004 |
 | [MVP-006](./MVP-006-reference-story-and-verification.md) | Golden story, tests and MVP exit criteria | MVP-005 |
 
 Specs are intentionally sequential. Avoid implementing later phases while an earlier acceptance criterion is still failing.
