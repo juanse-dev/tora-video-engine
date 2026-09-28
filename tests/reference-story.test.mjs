@@ -4,6 +4,7 @@ import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
 import YAML from "yaml";
+import {buildStoryRenderPlan} from "../src/renderPlan.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
 import {loadStory} from "../src/story/loadStory.ts";
 import {compileTimeline} from "../src/story/timeline.ts";
@@ -114,11 +115,13 @@ describe("MVP reference story", () => {
         story.scenes[0].text = "Mutated caption";
       },
       async (story) => {
+        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
+
         assert.deepEqual(
-          story.scenes.map(({type}) => type),
+          renderPlan.scenes.map(({type}) => type),
           ["dialogue", "intro", "chaos", "punchline"],
         );
-        assert.equal(story.scenes[0].text, "Mutated caption");
+        assert.equal(renderPlan.scenes[0].text, "Mutated caption");
       },
     );
   });
@@ -129,13 +132,13 @@ describe("MVP reference story", () => {
         story.scenes[0].duration = 4;
       },
       async (story) => {
-        const timeline = compileTimeline(story, VIDEO_FPS);
+        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
 
         assert.deepEqual(
-          timeline.scenes.map(({from}) => from),
+          renderPlan.scenes.map(({from}) => from),
           [0, 120, 210, 300],
         );
-        assert.equal(timeline.durationInFrames, 390);
+        assert.equal(renderPlan.durationInFrames, 390);
       },
     );
   });
@@ -148,9 +151,12 @@ describe("MVP reference story", () => {
         story.scenes[0].animation = "slowZoom";
       },
       async (story) => {
-        assert.equal(story.scenes[0].pose, "coffee");
-        assert.equal(story.scenes[0].background, "server-room");
-        assert.equal(story.scenes[0].animation, "slowZoom");
+        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
+        const renderedScene = renderPlan.scenes[0];
+
+        assert.equal(renderedScene.pose, "coffee");
+        assert.equal(renderedScene.background, "server-room");
+        assert.equal(renderedScene.animation, "slowZoom");
       },
     );
   });

@@ -34,7 +34,7 @@ The implementation roadmap and acceptance criteria live in [docs/mvp/](docs/mvp/
 npm install
 ```
 
-Requires Node.js 22.
+Requires Node.js >=22.6.0.
 
 ## Render a story
 
@@ -114,7 +114,7 @@ At 30 FPS it compiles to four 90-frame scenes and a total duration of 360 frames
 - Duration: explicit positive seconds
 - Output: 1080×1920, 30 FPS, H.264 MP4
 
-Changing scene order, caption text, duration, pose, background, or animation in YAML changes the validated story/timeline without requiring React changes.
+Changing scene order, caption text, duration, pose, background, or animation in YAML changes the render plan consumed by `StoryRenderer`/`Scene` without requiring React changes.
 
 ## Architecture
 
