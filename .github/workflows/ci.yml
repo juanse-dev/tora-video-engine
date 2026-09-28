@@ -30,26 +30,26 @@ jobs:
       - name: Lint and typecheck
         run: npm run lint
 
-      - name: Render reference story
-        run: npm run video -- stories/friday-deploy.yaml
+      - name: Render demo reel
+        run: npm run video -- stories/demo-reel.yaml
 
       - name: Verify artifact
-        run: test -s output/friday-deploy.mp4
+        run: test -s output/demo-reel.mp4
 
-      - name: Upload reference render
+      - name: Upload demo reel
         uses: actions/upload-artifact@v4
         with:
-          name: mvp-reference-render
-          path: output/friday-deploy.mp4
+          name: tora-video-engine-demo-reel
+          path: output/demo-reel.mp4
           if-no-files-found: error
           retention-days: 7
 
       - name: Reject stale output after validation failure
         shell: bash
         run: |
-          printf 'title: Broken\nscenes: []\n' > /tmp/friday-deploy.yaml
-          if npm run video -- /tmp/friday-deploy.yaml; then
+          printf 'title: Broken\nscenes: []\n' > /tmp/demo-reel.yaml
+          if npm run video -- /tmp/demo-reel.yaml; then
             echo "Expected invalid story render to fail"
             exit 1
           fi
-          test ! -e output/friday-deploy.mp4
+          test ! -e output/demo-reel.mp4
