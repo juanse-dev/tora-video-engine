@@ -35,3 +35,13 @@ jobs:
 
       - name: Verify artifact
         run: test -s output/friday-deploy.mp4
+
+      - name: Reject stale output after validation failure
+        shell: bash
+        run: |
+          printf 'title: Broken\nscenes: []\n' > /tmp/friday-deploy.yaml
+          if npm run video -- /tmp/friday-deploy.yaml; then
+            echo "Expected invalid story render to fail"
+            exit 1
+          fi
+          test ! -e output/friday-deploy.mp4

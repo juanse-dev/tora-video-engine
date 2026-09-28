@@ -44,10 +44,12 @@ const runRemotion = async (
 };
 
 export const renderStory = async (storyPath: string): Promise<string> => {
-  const story = await loadStory(storyPath);
   const outputPath = getOutputPath(storyPath);
 
   await mkdir(dirname(outputPath), {recursive: true});
+  await rm(outputPath, {force: true});
+
+  const story = await loadStory(storyPath);
 
   const temporaryDirectory = await mkdtemp(
     join(tmpdir(), "tora-video-engine-"),
@@ -60,9 +62,6 @@ export const renderStory = async (storyPath: string): Promise<string> => {
       JSON.stringify({story}),
       "utf8",
     );
-
-    // Never let a failed render leave a partial artifact that looks current.
-    await rm(outputPath, {force: true});
 
     try {
       await runRemotion(
