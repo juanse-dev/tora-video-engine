@@ -17,14 +17,14 @@ export const exampleStory: Story = {
       background: "office",
       animation: "float",
       text: "Pero es solo un cambio pequeño...",
-      duration: 2,
+      duration: 3,
     },
     {
       type: "chaos",
       pose: "panic",
       background: "server-room",
       text: "Production is down.",
-      duration: 4,
+      duration: 3,
     },
     {
       type: "punchline",

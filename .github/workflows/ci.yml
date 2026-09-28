@@ -36,6 +36,14 @@ jobs:
       - name: Verify artifact
         run: test -s output/friday-deploy.mp4
 
+      - name: Upload reference render
+        uses: actions/upload-artifact@v4
+        with:
+          name: mvp-reference-render
+          path: output/friday-deploy.mp4
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Reject stale output after validation failure
         shell: bash
         run: |
