@@ -1,0 +1,43 @@
+name: Demo Reel v2
+
+on:
+  push:
+    branches:
+      - mvp-demo-reel-v2-render
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Lint and typecheck
+        run: npm run lint
+
+      - name: Render demo reel
+        run: npm run video -- stories/demo-reel-v2.yaml
+
+      - name: Verify artifact
+        run: test -s output/demo-reel-v2.mp4
+
+      - name: Upload demo reel
+        uses: actions/upload-artifact@v4
+        with:
+          name: tora-video-engine-demo-reel-v2
+          path: output/demo-reel-v2.mp4
+          if-no-files-found: error
+          retention-days: 7
