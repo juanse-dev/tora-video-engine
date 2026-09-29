@@ -10,12 +10,10 @@ import {slowZoom} from "./animations/slowZoom.ts";
 import {Background} from "./components/Background.tsx";
 import {Caption} from "./components/Caption.tsx";
 import {Tora} from "./components/Tora.tsx";
-import {scenePresets, type ScenePreset} from "./scenePresets.ts";
-import type {Animation} from "./story/types.ts";
-import type {TimelineScene} from "./story/timeline";
+import type {SceneRenderPlan} from "./renderPlan.ts";
 
 type SceneProps = {
-  scene: TimelineScene;
+  scene: SceneRenderPlan;
 };
 
 const placementStyle = (
@@ -38,9 +36,7 @@ const placementStyle = (
 export const Scene = ({scene}: SceneProps) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-  const preset: ScenePreset = scenePresets[scene.type];
-  const animation: Animation | undefined =
-    scene.animation ?? preset.defaultAnimation;
+  const {animation, preset} = scene;
 
   const fadeStyle: CSSProperties =
     animation === "fade"

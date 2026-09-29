@@ -1,6 +1,6 @@
 import {Sequence, useVideoConfig} from "remotion";
+import {buildStoryRenderPlan} from "./renderPlan.ts";
 import {Scene} from "./Scene";
-import {compileTimeline} from "./story/timeline";
 import type {Story} from "./story/types";
 
 type StoryRendererProps = {
@@ -9,11 +9,11 @@ type StoryRendererProps = {
 
 export const StoryRenderer = ({story}: StoryRendererProps) => {
   const {fps} = useVideoConfig();
-  const timeline = compileTimeline(story, fps);
+  const renderPlan = buildStoryRenderPlan(story, fps);
 
   return (
     <>
-      {timeline.scenes.map((scene, index) => (
+      {renderPlan.scenes.map((scene, index) => (
         <Sequence
           key={`${scene.from}-${index}`}
           from={scene.from}
