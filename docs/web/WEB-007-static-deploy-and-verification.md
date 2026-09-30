@@ -89,7 +89,11 @@ A useful automated smoke flow is:
 23. create a schema-valid visual candidate with a title large enough that canonical YAML exceeds 1 MiB, verify it remains pending and never reaches Player/persistence/render;
 24. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard;
 25. create a schema-valid visual candidate whose canonical YAML is >1 MiB, transfer it with **Open candidate in YAML**, and verify **Export current YAML candidate** succeeds without invoking `parseStorySource()`;
-26. edit that oversized transferred YAML by one character and verify its validated-transfer provenance is cleared and candidate export is disabled until the source is reduced to ≤1 MiB and parsed successfully.
+26. edit that oversized transferred YAML by one character and verify its validated-transfer provenance is cleared and candidate export is disabled until the source is reduced to ≤1 MiB and parsed successfully;
+27. attempt a visual title update of 65,537 UTF-16 code units and verify it is rejected before `StorySchema.safeParse()` / `serializeStorySource()`; verify 65,536 proceeds to normal policy checks;
+28. apply noncanonical YAML A, leave YAML cleanly, commit visual Story B, then transfer rejected candidate C; verify the YAML baseline is freshly generated from B, not retained from A;
+29. invoke Reset with dirty YAML and with a pending visual candidate; verify each requires explicit destructive confirmation and Stay preserves the draft;
+30. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -106,14 +110,15 @@ For each tested browser record:
 - YAML import/apply works;
 - invalid, over-budget, or otherwise dirty YAML visibly blocks MP4 rendering until an eligible Apply or discard;
 - a successful Apply of noncanonical YAML clears dirty state without requiring canonical text equality;
-- dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision;
+- dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision, and Reset cannot silently discard it;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
-- reload restores valid local state when persistence succeeds;
+- reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
-- an over-budget visual candidate—including one rejected solely because its canonical YAML exceeds 1 MiB—remains pending and blocks render rather than allowing export of the previous active Story;
+- oversized visual title input is rejected before canonical serialization;
+- an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
 - raw/edited YAML sources above 1 MiB are refused before synchronous parsing;
 - an unchanged >1 MiB YAML buffer transferred from an already schema-validated visual candidate remains exportable for CLI use without parsing, while editing it clears that privilege;
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
@@ -171,10 +176,12 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
+- [ ] visual title >65,536 UTF-16 code units is rejected before candidate serialization
 - [ ] browser authoring/preview budget blocks >200 scenes, >9,000 frames, or >1 MiB canonical YAML before Player mount
 - [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
 - [ ] persisted Stories are rechecked against browser policy before restore
+- [ ] policy-rejected stored Stories remain exportable and protected from fallback overwrite until explicit discard
 - [ ] YAML Apply requires both schema validity and browser eligibility
 - [ ] successful Apply resets YAML dirty baseline even for noncanonical source
 - [ ] >1 MiB raw/edited YAML is rejected before parse
@@ -186,9 +193,11 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
+- [ ] YAML baseline is regenerated from current Active Story on candidate transfer
+- [ ] Reset requires explicit destructive confirmation whenever editor/recovery state is pending
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
-- [ ] render start defensively rechecks the same 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
+- [ ] render start defensively rechecks the same title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
 
