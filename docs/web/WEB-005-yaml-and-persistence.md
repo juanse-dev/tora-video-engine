@@ -61,9 +61,11 @@ If the visual candidate is schema-invalid when the user attempts to enter YAML m
 
 If the visual candidate is schema-valid but browser-policy-ineligible, require one explicit choice:
 
-- **Open candidate in YAML** — serialize that exact rejected candidate into the YAML buffer, transfer draft ownership to YAML, and enter YAML mode without changing the active Story;
+- **Open candidate in YAML** — serialize that exact rejected candidate into the YAML buffer, transfer draft ownership to YAML, and enter YAML mode without changing the active Story. Retain a **validated transfer snapshot** containing the schema-validated Story plus the exact serialized buffer produced during transfer;
 - **Discard visual candidate** — restore from the active Story, then enter YAML mode;
 - **Stay in visual editor** — cancel the transition.
+
+The validated transfer snapshot is provenance, not a second active Story. It exists only to prove that the unchanged transferred YAML buffer came from a Story that already passed `StorySchema` before the browser-policy rejection.
 
 If the visual editor has no pending candidate, entering YAML mode generates a canonical YAML representation from the current active Story.
 
@@ -76,9 +78,9 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 Track YAML dirty state relative to a **YAML baseline buffer**, not by comparing text to canonical serialization of the active Story.
 
 - when YAML mode opens from the active Story, generate canonical YAML and set that exact text as both buffer and clean baseline;
-- when YAML mode opens from the active Story, that generated text is the clean baseline representing the active Story;
-- when a browser-policy-rejected visual candidate is explicitly transferred to YAML, keep the active Story's clean baseline and replace only the buffer with the transferred serialization, so the candidate is immediately dirty/unapplied;
-- after a successful Apply, set the **current exact YAML buffer** as the new clean baseline without rewriting whitespace/comments/quotes/key order;
+- when a browser-policy-rejected visual candidate is explicitly transferred to YAML, keep the active Story's clean baseline and replace only the buffer with the transferred serialization, so the candidate is immediately dirty/unapplied; attach the validated transfer snapshot to that exact buffer;
+- any edit that changes the transferred YAML buffer immediately clears the validated transfer snapshot, because the edited text is no longer known to represent the previously validated Story;
+- after a successful Apply, set the **current exact YAML buffer** as the new clean baseline without rewriting whitespace/comments/quotes/key order and clear any transfer snapshot because the Story is now active;
 - subsequent edits are dirty only when they differ from that baseline;
 - leaving and later re-entering YAML after a clean Apply may regenerate canonical YAML from the active Story, consistent with v0.2 not promising formatting/comment preservation across mode changes;
 - validate on demand or live with debounce;
@@ -94,7 +96,7 @@ Do not synchronously parse arbitrarily large YAML on the UI thread.
 
 For v0.2, define a browser-only maximum YAML source size of **1 MiB (1,048,576 UTF-8 bytes)**.
 
-Apply the guard **before** calling `parseStorySource()`:
+Apply the guard **before** calling `parseStorySource()` on raw/untrusted YAML:
 
 - for file import, inspect `File.size` before reading/parsing the file;
 - for pasted/edited YAML, measure the current buffer as UTF-8 bytes (for example with `TextEncoder`) before parsing;
@@ -102,6 +104,8 @@ Apply the guard **before** calling `parseStorySource()`:
 - keep the existing active Story untouched;
 - show a browser source-size warning and offer the CLI path;
 - this limit is a browser safety policy, not a change to the shared Story/YAML contract or local CLI.
+
+The guard prevents parsing oversized text; it does **not** prohibit downloading bytes. The one exception to "oversized YAML cannot be treated as schema-valid in the editor" is an unchanged buffer with a validated transfer snapshot from the visual editor: its schema validity was established before serialization, so no parse is needed merely to export that exact candidate.
 
 ### Apply valid YAML
 
@@ -163,15 +167,19 @@ Because canonical YAML size ≤1 MiB is part of browser authoring eligibility, t
 
 ### Export current YAML candidate
 
-When the current YAML buffer is within the 1 MiB source limit and parses/passes `StorySchema`, allow downloading that **exact buffer** even if it fails the browser authoring/preview budget and therefore cannot be Applied.
+Allow downloading the **exact current buffer** through either of two evidence paths:
+
+1. **Parsed candidate** — the buffer is ≤1 MiB, has been parsed, and passes `StorySchema`; or
+2. **Validated transferred candidate** — the buffer exactly matches the unchanged validated transfer snapshot created by **Open candidate in YAML**. This path may exceed 1 MiB because it does not call `parseStorySource()`; schema validity came from the visual candidate before serialization.
 
 This action:
 
-- is available for schema-valid policy-ineligible YAML, including a visual over-budget candidate transferred into YAML;
-- preserves the user's current YAML formatting/comments because it downloads the buffer verbatim;
+- is available for schema-valid policy-ineligible YAML, including a visual candidate rejected because its canonical YAML exceeds 1 MiB;
+- preserves the user's current YAML bytes/text exactly as represented by the buffer;
 - does not make the candidate active, mount it in Player, persist it, or enable MP4 browser render;
-- is disabled for source-oversized, parse-invalid, or schema-invalid YAML;
-- uses the parsed candidate title for the filename when available, with a documented fallback.
+- clears the validated-transfer evidence immediately if the user edits the buffer; an edited >1 MiB buffer is therefore not exportable as a validated candidate until it is reduced below the source guard and successfully parsed;
+- remains disabled for parse-invalid/schema-invalid YAML, and for oversized raw/edited YAML that has no matching validated transfer snapshot;
+- uses the validated transferred Story title or parsed candidate title for the filename when available, with a documented fallback.
 
 Label the actions so it is clear whether the download represents the **active Story** or the **current YAML candidate**.
 
@@ -233,6 +241,8 @@ Cover:
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - schema-valid browser-policy-ineligible YAML can be exported verbatim as the current candidate for CLI use without exporting the older active Story;
+- a visual candidate rejected because canonical YAML exceeds 1 MiB can be transferred and exported without reparsing while the buffer remains unchanged;
+- editing that oversized transferred buffer invalidates its transfer snapshot and disables validated-candidate export until it is ≤1 MiB and parses successfully;
 - corrupt localStorage falls back safely;
 - schema-valid, browser-eligible localStorage restores, including a recheck that canonical YAML is ≤1 MiB;
 - schema-invalid stored data is rejected;
@@ -249,7 +259,7 @@ Cover:
 
 - visual and YAML modes operate on one validated Story;
 - YAML can be imported and exported entirely in-browser;
-- browser YAML parsing is never attempted for source text above 1 MiB UTF-8;
+- browser YAML parsing is never attempted for raw/edited source text above 1 MiB UTF-8; unchanged oversized text originating from a validated visual transfer may be exported without parsing;
 - invalid YAML never reaches preview/render/persistence;
 - dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
 - any dirty/unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
@@ -259,7 +269,7 @@ Cover:
 - a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
 - every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow;
-- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate;
+- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including canonical YAML ≤1 MiB;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
