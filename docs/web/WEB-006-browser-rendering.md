@@ -67,6 +67,17 @@ Target output:
 
 Any web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
 
+## Render eligibility
+
+The primary render action must only be enabled when all of the following are true:
+
+- the current browser supports the requested H.264/MP4 render configuration;
+- the visual editor has no invalid draft values;
+- the YAML editor has no unapplied buffer changes;
+- a validated Story is available.
+
+If the visible editor state is invalid or unapplied, do not offer to render the previous validated Story behind it. Disable the action and explain what must be fixed, applied, or discarded first.
+
 ## Render UI state
 
 At minimum expose:
@@ -81,7 +92,7 @@ While rendering:
 - prevent accidental duplicate concurrent renders from the primary button;
 - surface available progress information from the renderer;
 - keep an understandable status if progress is coarse;
-- do not allow an invalid editor draft to replace the validated Story being rendered.
+- do not allow editor changes to replace the validated Story snapshot being rendered.
 
 The render should capture one immutable Story snapshot at start so edits made during rendering cannot mutate the in-flight output.
 
@@ -119,6 +130,7 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - supported browsers can render the canonical Story to an H.264 MP4;
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
+- MP4 rendering is disabled whenever visual draft state is invalid or YAML contains unapplied changes, preventing accidental export of a stale validated Story;
 - unsupported browsers receive a useful message and can still edit/preview;
 - render uses an immutable validated Story snapshot;
 - final filename is deterministic;
