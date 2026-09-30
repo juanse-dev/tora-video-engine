@@ -148,24 +148,29 @@ Schema validity does not by itself mean a Story is safe to mount into the browse
 For v0.2, define centralized browser-authoring limits:
 
 - maximum active scenes: **200**;
-- maximum derived total duration: **300 seconds / 9,000 frames at 30 FPS**.
+- maximum derived total duration: **300 seconds / 9,000 frames at 30 FPS**;
+- maximum canonical YAML size: **1 MiB (1,048,576 UTF-8 bytes)**, measured from the exact `serializeStorySource(story)` representation introduced by WEB-001.
 
 These are browser policy limits, not additions to `StorySchema`.
 
 Before a schema-valid candidate becomes the active validated Story used by the visual editor and Player:
 
 1. derive total frames with the existing timeline/render-plan logic;
-2. check scene count and total frames against the browser budget;
-3. only commit/mount the candidate when both checks pass.
+2. serialize the candidate through the shared canonical `serializeStorySource()`;
+3. measure the canonical YAML as UTF-8 bytes;
+4. check scene count, total frames, and canonical YAML size against the browser budget;
+5. only commit/mount the candidate when all checks pass.
 
-A schema-valid candidate above either limit:
+The canonical-size condition is a round-trip invariant: every Story the web app accepts as active must produce a canonical YAML export that the same app can later accept through its 1 MiB pre-parse source guard.
+
+A schema-valid candidate above any browser-authoring limit:
 
 - remains valid for the engine/CLI;
 - remains the pending visual candidate so the user can remove scenes/reduce duration or explicitly transfer it to YAML;
 - must not replace the current active browser Story;
 - must not be mounted into `StoryRenderer` / Remotion Player;
 - must disable browser MP4 rendering while it differs from the active Story;
-- must show an actionable explanation that the browser authoring limit was exceeded;
+- must show which browser authoring limit was exceeded (scene count, duration/frames, or canonical YAML bytes);
 - should direct the user to YAML/CLI workflows rather than labeling the document schema-invalid.
 
 Keep these limits named and centralized so WEB-005 import and WEB-006 rendering reuse the same browser-policy source of truth.
@@ -195,7 +200,9 @@ Add automated coverage for state/domain transformations where practical:
 - multiple consecutive caption edits after Player mount, including overlapping rapid edits, preserve correct font readiness without stale `delayRender` handles;
 - a schema-valid Story at the browser budget boundary can become active;
 - a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
-- a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering.
+- a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
+- a schema-valid visual candidate whose canonical YAML exceeds 1 MiB (for example via an extremely large title) remains pending, never becomes active, and disables MP4 rendering;
+- every browser-eligible active Story serializes to canonical YAML ≤1 MiB and can be parsed again after export/import.
 
 Avoid large snapshot tests of CSS.
 
@@ -205,7 +212,7 @@ Avoid large snapshot tests of CSS.
 - scene order can be changed without React renderer changes;
 - valid edits within the browser authoring budget update the Player;
 - schema-invalid pending visual drafts show actionable errors, do not update the active Story, and disable MP4 rendering until fixed/discarded;
-- schema-valid candidates above 200 scenes or 9,000 frames remain pending visual drafts, do not replace/mount the active Story, disable MP4 rendering, and are reported as browser-policy limits rather than schema errors;
+- schema-valid candidates above 200 scenes, 9,000 frames, or 1 MiB canonical YAML remain pending visual drafts, do not replace/mount the active Story, disable MP4 rendering, and are reported as browser-policy limits rather than schema errors;
 - attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
