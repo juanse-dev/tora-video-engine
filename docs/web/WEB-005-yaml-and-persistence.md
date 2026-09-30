@@ -66,18 +66,25 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 - update preview;
 - persist the new valid Story.
 
-### Return to visual mode with invalid or unapplied YAML
+### Attempt to return to visual mode with invalid or unapplied YAML
 
-Do not silently apply or discard the YAML buffer.
+Do not allow two divergent editor drafts to exist.
 
-The buffer may remain available if the user returns to visual mode, while the visual editor continues showing the last validated Story. The application must keep MP4 rendering disabled until the YAML changes are either:
+If the YAML buffer has unapplied changes and the user attempts to enter visual mode, intercept the transition and require one explicit choice:
 
-- successfully applied; or
-- explicitly discarded/reverted by the user.
+- **Apply** — available only when the YAML parses and validates; commit it as the new validated Story, then enter visual mode;
+- **Discard** — discard the YAML buffer and enter visual mode using the current validated Story;
+- **Stay in YAML** — cancel the mode switch and preserve the buffer verbatim.
 
-Provide a clear discard/revert action so an abandoned invalid buffer does not permanently block rendering.
+Until Apply or Discard is chosen:
 
-The retained dirty YAML buffer is editor-session state, not the persisted project in v0.2. A full page reload restores the last validated Story from localStorage rather than persisting invalid/unapplied YAML.
+- visual editing must not become active;
+- the dirty YAML buffer remains the only editable draft;
+- MP4 rendering remains disabled.
+
+This avoids a retained YAML draft being based on an older Story while newer visual edits are made in parallel.
+
+The retained dirty YAML buffer is editor-session state, not the persisted project in v0.2. A full page reload restores the last successfully persisted validated Story rather than persisting invalid/unapplied YAML.
 
 ## Import
 
@@ -106,12 +113,28 @@ Persist:
 
 Do not persist an invalid Story as the recoverable project.
 
+### Persistence write failures
+
+Every storage write must handle synchronous/browser storage failures such as quota exhaustion, denied storage, or unavailable storage.
+
+If a validated Story is successfully applied/imported but persistence fails:
+
+- keep the new validated Story active in memory;
+- update the visual editor and preview normally;
+- do not roll back the Story merely because autosave failed;
+- show a persistent, actionable warning that local recovery is not guaranteed;
+- offer YAML export as the manual backup path;
+- retain the previously persisted valid Story, if any, rather than treating the failed write as successful.
+
+Do not impose a new Story-schema size limit solely to satisfy localStorage.
+
 On startup:
 
 1. attempt to load stored data;
-2. validate it with the current Story schema;
-3. if valid, restore it;
-4. if invalid/corrupt/unavailable, fall back safely to the canonical/example Story.
+2. handle storage access errors without crashing;
+3. validate any retrieved data with the current Story schema;
+4. if valid, restore it;
+5. if missing, invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface storage unavailability when relevant.
 
 ## Reset
 
@@ -129,7 +152,9 @@ Cover:
 - schema-invalid stored data is rejected;
 - reset restores the default Story;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
-- leaving and re-entering YAML mode preserves the dirty buffer verbatim until apply/discard.
+- attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
+- storage quota/access failures do not reject an otherwise valid Apply/import and leave the newly validated Story active in memory;
+- a failed persistence write surfaces a warning and does not overwrite/claim success for the last persisted snapshot.
 
 ## Acceptance criteria
 
@@ -137,9 +162,10 @@ Cover:
 - YAML can be imported and exported entirely in-browser;
 - invalid YAML never reaches preview/render/persistence;
 - any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
-- switching away from and back to YAML mode restores the retained dirty buffer instead of regenerating YAML from the older validated Story;
+- a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
 - valid YAML round-trips without semantic loss;
-- page reload restores the last valid Story;
+- when persistence succeeds, page reload restores the last persisted valid Story;
+- localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
 
