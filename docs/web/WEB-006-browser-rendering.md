@@ -71,7 +71,7 @@ Any web-renderer API options required for the installed Remotion version should 
 
 WEB-003/WEB-005 already enforce the browser authoring/preview ceiling before a Story can become active:
 
-- maximum visual title: **65,536 UTF-16 code units**, checked before candidate construction/serialization;
+- maximum Story title: **65,536 UTF-16 code units for every candidate source**; the visual editor additionally performs an early raw-input guard before construction;
 - maximum active scenes: **200**;
 - maximum total duration: **300 seconds**;
 - equivalent maximum at fixed 30 FPS: **9,000 frames**;
@@ -81,7 +81,7 @@ WEB-006 does **not** introduce a higher or independent export threshold in v0.2.
 
 Therefore:
 
-- raw visual title above 65,536 code units is rejected before serialization, and a candidate above 200 scenes, 9,000 frames, or 1 MiB canonical YAML is rejected by authoring policy before it becomes active;
+- raw visual title above 65,536 code units is rejected before construction, while YAML/import/restore candidates with the same oversized title are rejected by the centralized post-schema policy before timeline/serialization; a candidate above 200 scenes, 9,000 frames, or 1 MiB canonical YAML is likewise rejected before it becomes active;
 - it cannot reach browser render eligibility as an active Story;
 - the render-time check protects against state corruption, policy drift, or implementation bugs;
 - CLI portability remains available through YAML export for schema-valid candidates.
