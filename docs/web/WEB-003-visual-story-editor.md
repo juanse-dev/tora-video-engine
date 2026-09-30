@@ -102,6 +102,19 @@ Reordering must change Story scene order directly. Absolute frame offsets must c
 - the UI must not silently coerce arbitrary invalid text/numbers into different valid values;
 - field/path information from Zod should be mapped to human-readable editor errors where possible.
 
+## Editor ownership and mode transitions
+
+WEB-005 adds a YAML editing mode over the same validated Story. The visual editor must expose whether its current draft differs from the last validated Story and whether that draft is invalid.
+
+If the visual draft is invalid and the user attempts to switch to YAML mode, do not silently replace it with YAML generated from the previous validated Story. Intercept the transition and require one explicit choice:
+
+- **Discard** — discard the invalid visual draft and enter YAML mode from the current validated Story;
+- **Stay in visual editor** — cancel the transition and preserve the invalid draft exactly as typed.
+
+There is no Apply option for an invalid visual draft. As soon as visual fields form a valid Story, the normal visual-editor flow commits that Story automatically, after which switching to YAML is safe.
+
+The application must never keep both an invalid visual draft and an independently editable YAML draft at the same time.
+
 ## Preview behavior
 
 When a draft is invalid:
@@ -121,7 +134,8 @@ Add automated coverage for state/domain transformations where practical:
 - reorder scenes;
 - invalid duration;
 - empty title/text;
-- optional/default animation handling.
+- optional/default animation handling;
+- invalid visual draft → YAML mode transition requires Discard/Stay.
 
 Avoid large snapshot tests of CSS.
 
@@ -131,6 +145,7 @@ Avoid large snapshot tests of CSS.
 - scene order can be changed without React renderer changes;
 - valid edits update the Player;
 - invalid drafts show actionable errors, do not update the validated Story, and disable MP4 rendering until fixed;
+- attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
 - UI option sets cannot drift silently from the Story schema;
