@@ -92,7 +92,11 @@ A useful automated smoke flow is:
 26. transfer a schema-valid visual candidate rejected for a non-source-size browser policy reason, verify its validated-transfer snapshot permits candidate export without reparsing, then edit the buffer and verify that provenance is cleared;
 27. apply noncanonical YAML A, leave YAML cleanly, commit visual Story B, then transfer rejected candidate C; verify the YAML baseline is freshly generated from B, not retained from A;
 28. invoke Reset with dirty YAML and with a pending visual candidate; verify each requires explicit destructive confirmation and Stay preserves the draft;
-29. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot.
+29. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot;
+30. import/apply YAML under 1 MiB containing a 65,537-code-unit title and verify it passes schema but is rejected by centralized browser policy before timeline derivation/canonical serialization;
+31. place the same 65,537-code-unit Story in localStorage and verify restore rejects it through the same title policy before Player mount;
+32. make YAML dirty and verify reload/navigation/tab close activates the native `beforeunload` confirmation; Apply/Discard removes it once no other loss-risk state remains;
+33. simulate persistence failure after a valid Story becomes active and verify unload protection remains enabled until durable persistence succeeds or the in-memory change is explicitly discarded/reset.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -112,11 +116,11 @@ For each tested browser record:
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision, and Reset cannot silently discard it;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
-- storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning;
+- storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
-- oversized visual title input is rejected before canonical serialization;
+- oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
 - raw/edited YAML sources above 1 MiB are refused before synchronous parsing;
 - an unchanged >1 MiB YAML buffer transferred from an already schema-validated visual candidate remains exportable for CLI use without parsing, while editing it clears that privilege;
@@ -175,7 +179,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
-- [ ] visual title >65,536 UTF-16 code units is rejected before candidate serialization
+- [ ] visual title >65,536 UTF-16 code units is rejected before Story construction
+- [ ] YAML/import/restore title >65,536 is rejected by centralized post-schema policy before timeline/serialization
 - [ ] browser authoring/preview budget blocks >200 scenes, >9,000 frames, or >1 MiB canonical YAML before Player mount
 - [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
@@ -194,9 +199,11 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] YAML baseline is regenerated from current Active Story on candidate transfer
 - [ ] Reset requires explicit destructive confirmation whenever editor/recovery state is pending
+- [ ] beforeunload protects dirty YAML, pending visual drafts, transfer candidates, and active Stories whose persistence failed
+- [ ] unload guard is removed promptly when no loss-risk state remains
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
-- [ ] render start defensively rechecks the same title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
+- [ ] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
 
