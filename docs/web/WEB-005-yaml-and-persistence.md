@@ -45,12 +45,18 @@ An explicit “Apply YAML” action is preferred for v0.2 because it avoids repl
 
 The visual editor may itself contain a temporary invalid draft that has not been committed to the validated Story. Do not generate YAML from the older validated Story while silently abandoning that draft.
 
-If the visual draft is invalid when the user attempts to enter YAML mode, require one explicit choice:
+If the visual candidate is schema-invalid when the user attempts to enter YAML mode, require one explicit choice:
 
-- **Discard visual draft** — restore the visual editor from the current validated Story, then generate canonical YAML and enter YAML mode;
+- **Discard visual draft** — restore the visual editor from the current active Story, then generate canonical YAML and enter YAML mode;
 - **Stay in visual editor** — cancel the transition and preserve the invalid visual draft.
 
-If the visual editor is clean/valid, entering YAML mode generates a canonical YAML representation from the current validated Story.
+If the visual candidate is schema-valid but browser-policy-ineligible, require one explicit choice:
+
+- **Open candidate in YAML** — serialize that exact rejected candidate into the YAML buffer, transfer draft ownership to YAML, and enter YAML mode without changing the active Story;
+- **Discard visual candidate** — restore from the active Story, then enter YAML mode;
+- **Stay in visual editor** — cancel the transition.
+
+If the visual editor has no pending candidate, entering YAML mode generates a canonical YAML representation from the current active Story.
 
 Because dirty YAML cannot be left for visual mode without Apply or Discard, there should not be a retained dirty YAML buffer while the visual editor is active. The two modes must never own divergent drafts concurrently.
 
@@ -87,11 +93,13 @@ Do not allow two divergent editor drafts to exist.
 
 If the YAML buffer has unapplied changes and the user attempts to enter visual mode, intercept the transition and require one explicit choice:
 
-- **Apply** — available only when the YAML parses and validates; commit it as the new validated Story, then enter visual mode;
+- **Apply** — available only when the YAML parses, passes StorySchema, **and passes the centralized browser authoring/preview policy**; commit it as the new active Story, then enter visual mode;
 - **Discard** — discard the YAML buffer and enter visual mode using the current validated Story;
 - **Stay in YAML** — cancel the mode switch and preserve the buffer verbatim.
 
-Until Apply or Discard is chosen:
+For schema-valid but browser-policy-ineligible YAML, **Apply is disabled**. The available choices are Discard or Stay in YAML; the UI must explain that the document is valid for CLI/engine use but cannot become the active browser Story.
+
+Until an eligible Apply or Discard is chosen:
 
 - visual editing must not become active;
 - the dirty YAML buffer remains the only editable draft;
@@ -148,8 +156,10 @@ On startup:
 1. attempt to load stored data;
 2. handle storage access errors without crashing;
 3. validate any retrieved data with the current Story schema;
-4. if valid, restore it;
-5. if missing, invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface storage unavailability when relevant.
+4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player;
+5. if both checks pass, restore it as the active Story;
+6. if the stored payload is schema-valid but over browser budget, do not mount it; fall back to the canonical/example Story and show a browser-limit warning explaining that the stored document is not schema-invalid;
+7. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
 
 ## Reset
 
@@ -165,12 +175,14 @@ Cover:
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - corrupt localStorage falls back safely;
-- valid localStorage restores;
+- schema-valid, browser-eligible localStorage restores;
 - schema-invalid stored data is rejected;
+- schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
 - reset restores the default Story;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
-- attempting to leave an invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older validated Story;
+- attempting to leave a schema-invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older active Story;
+- attempting to leave a browser-policy-rejected visual candidate for YAML requires explicit transfer to YAML, Discard, or Stay;
 - storage quota/access failures do not reject an otherwise valid Apply/import and leave the newly validated Story active in memory;
 - a failed persistence write surfaces a warning and does not overwrite/claim success for the last persisted snapshot.
 
@@ -180,11 +192,13 @@ Cover:
 - YAML can be imported and exported entirely in-browser;
 - invalid YAML never reaches preview/render/persistence;
 - any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
+- Apply is enabled only when YAML is both schema-valid and browser-authoring-eligible;
 - a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
-- an invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
+- a schema-invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
+- a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML and never reaches the live Player/persistence as the active Story;
-- when persistence succeeds, page reload restores the last persisted valid Story;
+- when persistence succeeds, page reload restores the last persisted Story only if it still passes both StorySchema and current browser authoring policy;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
