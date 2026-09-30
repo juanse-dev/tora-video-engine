@@ -30,7 +30,11 @@ No Tora backend is required.
 
 Netlify is the initial deployment target because the application can be served as static output.
 
-The implementation should remain host-neutral enough that the same build artifact can also be served by alternatives such as Cloudflare Pages or another static host.
+The implementation should remain host-neutral enough that the same build artifact can also be served by alternatives such as Cloudflare Pages or another root-path static host.
+
+For v0.2, the supported production deployment model assumes the app is served from the origin root (`/`). Repository-subpath deployments such as the default `/owner/repository/` shape of a GitHub Pages project site are intentionally out of scope because Remotion `staticFile()` asset resolution and the web bundle would require separate base-path handling and verification.
+
+Do not advertise GitHub Pages project-site deployment as supported in v0.2 unless a later change adds and tests subpath-safe bundle and asset resolution.
 
 Do not introduce Netlify Functions merely because Netlify is the first target.
 
@@ -66,7 +70,8 @@ A useful automated smoke flow is:
 4. confirm preview state changes;
 5. verify invalid YAML is rejected and disables MP4 rendering;
 6. discard/revert the invalid YAML and verify rendering becomes eligible again when browser capability allows it;
-7. verify render capability/UI state is detectable.
+7. verify render capability/UI state is detectable;
+8. verify a Story above 300 seconds / 9,000 frames remains schema-valid but browser render is disabled with the documented limit message.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -84,7 +89,8 @@ For each tested browser record:
 - invalid or unapplied YAML visibly blocks MP4 rendering until applied or discarded;
 - reload restores valid local state;
 - browser render capability result;
-- if supported, canonical Story renders and downloads successfully.
+- if supported, canonical Story renders and downloads successfully;
+- an over-budget Story is refused by browser export without being reported as schema-invalid.
 
 At minimum, complete the golden end-to-end render in one supported browser.
 
@@ -140,6 +146,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes
 - [ ] canonical browser MP4 render passes on a supported browser
+- [ ] browser render budget guard passes at and above the 300-second / 9,000-frame boundary
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
 
@@ -152,7 +159,8 @@ Update the root README when implementation reaches this spec so it documents:
 - cloud render;
 - CDN/media pipeline beyond static hosting needs;
 - production analytics;
-- multi-user reliability/SLA.
+- multi-user reliability/SLA;
+- non-root/subpath hosting such as default GitHub Pages project sites.
 
 ## Done when
 
