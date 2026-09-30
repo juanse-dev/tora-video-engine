@@ -71,7 +71,9 @@ A useful automated smoke flow is:
 5. verify invalid YAML is rejected and disables MP4 rendering;
 6. discard/revert the invalid YAML and verify rendering becomes eligible again when browser capability allows it;
 7. verify render capability/UI state is detectable;
-8. verify a Story above 300 seconds / 9,000 frames remains schema-valid but browser render is disabled with the documented limit message.
+8. verify a Story above 300 seconds / 9,000 frames remains schema-valid but browser render is disabled with the documented limit message;
+9. create a dirty YAML buffer and verify switching to visual mode requires Apply, Discard, or Stay rather than enabling parallel visual edits;
+10. simulate a localStorage write failure/quota error and verify Apply remains successful in memory while a persistence warning is shown.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -87,7 +89,9 @@ For each tested browser record:
 - Player controls work;
 - YAML import/apply works;
 - invalid or unapplied YAML visibly blocks MP4 rendering until applied or discarded;
-- reload restores valid local state;
+- dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard decision;
+- reload restores valid local state when persistence succeeds;
+- storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - an over-budget Story is refused by browser export without being reported as schema-invalid.
@@ -144,7 +148,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] visual editor flow passes
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
-- [ ] persistence flow passes
+- [ ] persistence flow passes, including quota/access failure handling
+- [ ] YAML mode-switch conflict guard passes
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] browser render budget guard passes at and above the 300-second / 9,000-frame boundary
 - [ ] existing CLI render still passes
