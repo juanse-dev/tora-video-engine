@@ -15,6 +15,11 @@ A user can change the title and scene list through normal controls and immediate
 The UI needs three distinct concepts:
 
 ~~~text
+Raw visual input
+   │
+   ├── cheap browser field guard
+   │   └── oversized title → local policy error; do not build/serialize candidate
+   ↓
 Visual Candidate
    │
    ├── may be temporarily invalid while the user types
@@ -141,12 +146,30 @@ Required behavior:
 
 Caching already-loaded font coverage is allowed, but it must not weaken the generation/handle ownership rules.
 
+## Cheap pre-serialization visual input guard
+
+The shared schema intentionally leaves `Story.title` unbounded, so the visual editor must not wait until canonical YAML serialization to discover an extreme pasted title.
+
+Define a browser-only visual title limit of **65,536 UTF-16 code units**, checked using the raw JavaScript string length before constructing/validating/serializing the next Story candidate.
+
+Required behavior:
+
+- inspect the proposed title value before calling `StorySchema.safeParse()`, timeline derivation, or `serializeStorySource()`;
+- if `nextTitle.length > 65_536`, reject that visual update as a browser-policy input error and keep the last accepted candidate/active Story unchanged;
+- do not truncate or otherwise silently coerce the title;
+- show an actionable field-level message that the browser editor limit was exceeded and that CLI/YAML remains the path for larger schema-valid titles;
+- scene caption text already has a shared schema bound, so this extra guard specifically covers the currently unbounded visual text field;
+- any future unbounded visual string field must receive an equivalent cheap pre-serialization guard before joining the active Story policy.
+
+This guard is browser UI policy only and must not change `StorySchema` or the CLI contract.
+
 ## Browser authoring / preview budget
 
 Schema validity does not by itself mean a Story is safe to mount into the browser editor and Player. `StoryRenderer` creates one Remotion `Sequence` per scene, so an unbounded schema-valid scene array can freeze the tab before WEB-006 render eligibility is even considered.
 
 For v0.2, define centralized browser-authoring limits:
 
+- maximum visual title: **65,536 UTF-16 code units**, enforced before Story construction/serialization;
 - maximum active scenes: **200**;
 - maximum derived total duration: **300 seconds / 9,000 frames at 30 FPS**;
 - maximum canonical YAML size: **1 MiB (1,048,576 UTF-8 bytes)**, measured from the exact `serializeStorySource(story)` representation introduced by WEB-001.
@@ -155,11 +178,12 @@ These are browser policy limits, not additions to `StorySchema`.
 
 Before a schema-valid candidate becomes the active validated Story used by the visual editor and Player:
 
-1. derive total frames with the existing timeline/render-plan logic;
-2. serialize the candidate through the shared canonical `serializeStorySource()`;
-3. measure the canonical YAML as UTF-8 bytes;
-4. check scene count, total frames, and canonical YAML size against the browser budget;
-5. only commit/mount the candidate when all checks pass.
+1. require that raw visual title input already passed the 65,536-code-unit precheck;
+2. derive total frames with the existing timeline/render-plan logic;
+3. serialize the candidate through the shared canonical `serializeStorySource()`;
+4. measure the canonical YAML as UTF-8 bytes;
+5. check scene count, total frames, and canonical YAML size against the remaining browser budget;
+6. only commit/mount the candidate when all checks pass.
 
 The canonical-size condition is a round-trip invariant: every Story the web app accepts as active must produce a canonical YAML export that the same app can later accept through its 1 MiB pre-parse source guard.
 
@@ -198,10 +222,12 @@ Add automated coverage for state/domain transformations where practical:
 - optional/default animation handling;
 - invalid visual draft → YAML mode transition requires Discard/Stay;
 - multiple consecutive caption edits after Player mount, including overlapping rapid edits, preserve correct font readiness without stale `delayRender` handles;
-- a schema-valid Story at the browser budget boundary can become active;
+- a title exactly at the 65,536-code-unit visual limit can proceed to normal schema/policy checks while a 65,537-code-unit update is rejected before serialization;
+- a schema-valid Story at the remaining browser budget boundary can become active;
 - a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
 - a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
-- a schema-valid visual candidate whose canonical YAML exceeds 1 MiB (for example via an extremely large title) remains pending, never becomes active, disables MP4 rendering, and can be transferred/exported to YAML for CLI use without reparsing while its transferred buffer remains unchanged;
+- raw visual title input above 65,536 code units is rejected before candidate serialization;
+- a schema-valid visual candidate whose canonical YAML exceeds 1 MiB for other reasons remains pending, never becomes active, disables MP4 rendering, and can be transferred/exported to YAML for CLI use without reparsing while its transferred buffer remains unchanged;
 - every browser-eligible active Story serializes to canonical YAML ≤1 MiB and can be parsed again after export/import.
 
 Avoid large snapshot tests of CSS.
@@ -212,7 +238,7 @@ Avoid large snapshot tests of CSS.
 - scene order can be changed without React renderer changes;
 - valid edits within the browser authoring budget update the Player;
 - schema-invalid pending visual drafts show actionable errors, do not update the active Story, and disable MP4 rendering until fixed/discarded;
-- schema-valid candidates above 200 scenes, 9,000 frames, or 1 MiB canonical YAML remain pending visual drafts, do not replace/mount the active Story, disable MP4 rendering, and are reported as browser-policy limits rather than schema errors;
+- oversized raw title input is stopped before serialization, while schema-valid candidates above 200 scenes, 9,000 frames, or 1 MiB canonical YAML remain pending visual drafts, do not replace/mount the active Story, disable MP4 rendering, and are reported as browser-policy limits rather than schema errors;
 - attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
