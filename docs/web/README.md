@@ -37,7 +37,7 @@ The first web version is intentionally single-user, local-first, and backend-fre
 5. **Assets remain deterministic.** v0.2 uses the repository's bundled Tora poses and backgrounds; no network-generated media is required.
 6. **Static hosting only.** The MVP must not require application servers, serverless functions, databases, authentication, or cloud rendering.
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
-8. **Browser authoring and rendering are resource-bounded.** A Story may be valid for the shared engine/CLI while still being too large to mount safely in the browser. v0.2 applies a browser-only authoring/preview budget of at most 200 scenes and 300 seconds / 9,000 frames at 30 FPS. Stories outside that budget remain schema-valid for the engine/CLI but are not committed into the live visual editor/Player. Browser MP4 export uses the same 300-second / 9,000-frame ceiling.
+8. **Browser authoring and rendering are resource-bounded.** A Story may be valid for the shared engine/CLI while still being too large to parse, mount, or render safely in the browser. v0.2 applies browser-only guards: YAML source must be at most 1 MiB UTF-8 before parsing; active Stories must stay within 200 scenes and 300 seconds / 9,000 frames at 30 FPS. Stories outside those browser limits remain portable to the CLI where applicable but never become the live Player/render input. Browser MP4 export defensively rechecks the same active-Story frame ceiling rather than defining a contradictory second threshold.
 9. **Production static hosting is root-path based.** v0.2 targets hosts such as Netlify and Cloudflare Pages where the app can be served from the origin root. Repository-subpath deployments such as a default GitHub Pages project site are outside the supported deployment target unless separately verified.
 10. **Local persistence is best-effort.** A valid Story must remain usable in memory even if browser storage is unavailable or full. Storage failures are surfaced to the user and must never cause Apply/import to fail after validation succeeds.
 11. **A browser render freezes authoring.** From render start until success/failure/cancel, Story-changing and draft-changing controls are read-only. Preview playback may remain available, but the Story shown by the editor cannot diverge from the in-flight render snapshot.
@@ -174,7 +174,7 @@ v0.2 is complete only when all of the following are true:
 - the user can add, edit, reorder, and remove scenes visually;
 - available poses, backgrounds, and animations are visible and selectable;
 - any pending editor candidate that has not become the active Story—because it is schema-invalid, browser-policy-ineligible, or unapplied YAML—produces actionable feedback and disables MP4 export until resolved or discarded;
-- YAML can be imported, validated, edited, and exported without changing the Story contract;
+- YAML can be imported, validated, edited, and exported without changing the Story contract; browser parsing refuses sources above 1 MiB before YAML parsing, while schema-valid policy-rejected YAML can still be exported for CLI use;
 - editor mode switches never discard or fork drafts silently: dirty YAML requires Apply/Discard/Stay before visual mode; invalid visual drafts require Discard/Stay before YAML; browser-policy-rejected visual candidates may be transferred explicitly into YAML, discarded, or kept in visual mode;
 - when browser persistence succeeds, startup restores a stored project only after it passes both StorySchema and the current browser authoring policy; schema-valid but over-budget stored payloads fall back safely with a browser-limit warning; quota/unavailable-storage failures are handled without losing the in-memory active Story and are clearly surfaced;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
@@ -182,7 +182,7 @@ v0.2 is complete only when all of the following are true:
 - the web render matches the Story timing/dimensions used by the CLI;
 - unsupported browser rendering capability is detected and explained before starting a render;
 - schema-valid Stories above the browser authoring/preview budget (200 scenes or 300 seconds / 9,000 frames at 30 FPS) never mount into the live visual editor/Player and are explained as browser-policy limits rather than schema errors;
-- Stories above the v0.2 browser export budget (300 seconds / 9,000 frames at 30 FPS) remain valid for the engine/CLI but browser MP4 export is disabled with an actionable explanation;
+- browser MP4 export rechecks that the active Story is still within the same 300-second / 9,000-frame browser ceiling; over-budget candidates are rejected earlier by authoring policy and cannot become active/renderable;
 - no custom backend is required to use the application.
 
 ## Remotion constraint
