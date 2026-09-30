@@ -69,26 +69,22 @@ Any web-renderer API options required for the installed Remotion version should 
 
 ## Browser render budget
 
-Schema validity is necessary but not sufficient for safe browser rendering.
+WEB-003/WEB-005 already enforce the browser authoring/preview ceiling before a Story can become active:
 
-The shared `StorySchema` intentionally remains environment-agnostic and allows any duration whose derived frame count is a safe positive integer. Do not tighten that contract solely for the web UI, because the local CLI may reasonably support workloads outside the browser MVP.
-
-For v0.2, define a browser-only export budget:
-
+- maximum active scenes: **200**;
 - maximum total duration: **300 seconds**;
-- equivalent maximum at the fixed 30 FPS: **9,000 frames**.
+- equivalent maximum at fixed 30 FPS: **9,000 frames**.
 
-Compute eligibility from the same derived total duration/frame metadata used by the renderer, not by introducing a second timing calculation.
+WEB-006 does **not** introduce a higher or independent export threshold in v0.2. Instead, render eligibility defensively rechecks the same centralized policy immediately before starting the web renderer.
 
-A valid Story above this limit:
+Therefore:
 
-- remains valid for the shared engine/CLI;
-- is already prevented by the WEB-003/WEB-005 browser authoring policy from replacing the active live Story when it exceeds the shared 9,000-frame authoring ceiling;
-- must have browser MP4 export disabled;
-- must show an explanation that the Story exceeds the v0.2 browser render limit;
-- should point to the local CLI as the alternative render path.
+- a candidate above 200 scenes or 9,000 frames is rejected by authoring policy before it becomes active;
+- it cannot reach browser render eligibility as an active Story;
+- the render-time check protects against state corruption, policy drift, or implementation bugs;
+- CLI portability remains available through YAML export for schema-valid candidates.
 
-Keep this limit named/centralized so it can be revisited later based on real browser performance without changing the Story schema.
+Do not describe an over-budget Story as being rejected *only* by render eligibility.
 
 ## Render eligibility
 
@@ -102,7 +98,7 @@ The primary render action must only be enabled when all of the following are tru
 
 If either editor has pending content that is not the active Story—schema-invalid visual input, browser-policy-rejected visual input, or unapplied YAML—do not offer to render the older active Story behind it. Disable the action and explain what must be fixed, reduced into budget, transferred, applied, or discarded first.
 
-If the Story is valid but exceeds the browser render budget, disable only browser MP4 export and explain that this is a browser resource constraint rather than a Story validation error.
+If the defensive render-time policy check somehow finds that the active Story exceeds the browser budget, abort before rendering, report an internal/policy mismatch, and keep the CLI/YAML alternative available. Under the required authoring gate, this state should not arise during normal use.
 
 ## Render UI state
 
@@ -161,8 +157,9 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
 - MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
-- a Story at or below 300 seconds / 9,000 frames remains eligible when all other requirements pass;
-- a valid Story above 300 seconds / 9,000 frames is rejected only by browser render eligibility, with a clear CLI alternative;
+- an active Story at or below 200 scenes and 300 seconds / 9,000 frames remains render-eligible when all other requirements pass;
+- schema-valid candidates above the browser budget are rejected by authoring policy before activation and cannot reach normal browser rendering;
+- render start defensively rechecks the same centralized authoring policy and aborts on any mismatch;
 - unsupported browsers receive a useful message and can still edit/preview;
 - render uses an immutable validated Story snapshot;
 - all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
