@@ -51,7 +51,9 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 
 - validate on demand or live with debounce;
 - show parse/schema errors with useful paths/context;
-- do not update preview/render state until valid YAML is applied.
+- mark the YAML buffer as having unapplied changes as soon as it differs from the validated Story representation;
+- do not update preview/render state until valid YAML is applied;
+- disable MP4 rendering while the YAML buffer has unapplied changes, whether those changes are valid or invalid, so rendering cannot silently export an older Story.
 
 ### Apply valid YAML
 
@@ -60,11 +62,16 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 - update preview;
 - persist the new valid Story.
 
-### Return to visual mode with invalid YAML
+### Return to visual mode with invalid or unapplied YAML
 
-Do not silently apply invalid text.
+Do not silently apply or discard the YAML buffer.
 
-The invalid YAML buffer may remain available if the user returns to YAML mode, but the visual editor continues showing the last validated Story.
+The buffer may remain available if the user returns to visual mode, while the visual editor continues showing the last validated Story. The application must keep MP4 rendering disabled until the YAML changes are either:
+
+- successfully applied; or
+- explicitly discarded/reverted by the user.
+
+Provide a clear discard/revert action so an abandoned invalid buffer does not permanently block rendering.
 
 ## Import
 
@@ -114,13 +121,15 @@ Cover:
 - corrupt localStorage falls back safely;
 - valid localStorage restores;
 - schema-invalid stored data is rejected;
-- reset restores the default Story.
+- reset restores the default Story;
+- dirty/unapplied YAML blocks rendering, and apply/discard clears that block.
 
 ## Acceptance criteria
 
 - visual and YAML modes operate on one validated Story;
 - YAML can be imported and exported entirely in-browser;
 - invalid YAML never reaches preview/render/persistence;
+- any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
 - valid YAML round-trips without semantic loss;
 - page reload restores the last valid Story;
 - persistence requires no backend, account, or database;
