@@ -64,20 +64,43 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 
 ### Edit YAML
 
+Track YAML dirty state relative to a **YAML baseline buffer**, not by comparing text to canonical serialization of the active Story.
+
+- when YAML mode opens from the active Story, generate canonical YAML and set that exact text as both buffer and clean baseline;
+- when a visual candidate is explicitly transferred to YAML, set the transferred serialization as the buffer; it remains dirty relative to the active Story because it has not been applied;
+- after a successful Apply, set the **current exact YAML buffer** as the new clean baseline without rewriting whitespace/comments/quotes/key order;
+- subsequent edits are dirty only when they differ from that baseline;
+- leaving and later re-entering YAML after a clean Apply may regenerate canonical YAML from the active Story, consistent with v0.2 not promising formatting/comment preservation across mode changes;
 - validate on demand or live with debounce;
-- show parse/schema errors with useful paths/context;
-- mark the YAML buffer as having unapplied changes as soon as it differs from the validated Story representation;
-- do not update preview/render state until valid YAML is applied;
-- disable MP4 rendering while the YAML buffer has unapplied changes, whether those changes are valid or invalid, so rendering cannot silently export an older Story.
+- show source-size/parse/schema/browser-policy errors distinctly;
+- do not update preview/render state until eligible YAML is applied;
+- disable MP4 rendering while the YAML buffer is dirty, whether its content is invalid, schema-valid, or browser-policy-ineligible.
+
+This ensures noncanonical but successfully applied YAML becomes clean immediately instead of being marked dirty again merely because canonical serialization would look different.
+
+### Browser YAML source-size guard
+
+Do not synchronously parse arbitrarily large YAML on the UI thread.
+
+For v0.2, define a browser-only maximum YAML source size of **1 MiB (1,048,576 UTF-8 bytes)**.
+
+Apply the guard **before** calling `parseStorySource()`:
+
+- for file import, inspect `File.size` before reading/parsing the file;
+- for pasted/edited YAML, measure the current buffer as UTF-8 bytes (for example with `TextEncoder`) before parsing;
+- if the source exceeds 1 MiB, do not invoke YAML parsing or Zod validation;
+- keep the existing active Story untouched;
+- show a browser source-size warning and offer the CLI path;
+- this limit is a browser safety policy, not a change to the shared Story/YAML contract or local CLI.
 
 ### Apply valid YAML
 
-Schema validation and browser authoring eligibility are separate checks.
+Source-size, schema validation, and browser authoring eligibility are separate checks.
 
-After YAML parses and passes `StorySchema`:
+After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 
 1. evaluate the WEB-003 browser authoring/preview budget using the shared centralized policy;
-2. if the candidate is within **200 scenes** and **9,000 derived frames**, replace the active validated Story, update the visual editor/preview, and attempt persistence;
+2. if the candidate is within **200 scenes** and **9,000 derived frames**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
 3. if the candidate exceeds either browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
 
 For an over-budget but schema-valid candidate:
@@ -113,15 +136,33 @@ The retained dirty YAML buffer is editor-session state, not the persisted projec
 
 Support a browser file input for \`.yaml\` / \`.yml\`.
 
-Imported text must go through the same parser and validator as pasted/edited YAML.
+Imported text must use the same source-size guard, parser, schema, and browser authoring policy as pasted/edited YAML.
 
-No separate import schema is allowed. After schema validation, import must also pass the same browser authoring/preview policy used by Apply before it can become the active Story. Importing a huge schema-valid Story must never synchronously mount its scenes into the live Player before that policy check.
+For files, reject `File.size > 1 MiB` before `File.text()` / parsing. No separate import schema is allowed. After schema validation, import must also pass the same browser authoring/preview policy used by Apply before it can become the active Story.
 
 ## Export
 
-Serialize the current validated Story to deterministic, human-readable YAML and download it with a stable filename derived from the Story title or a documented fallback.
+Provide two unambiguous export paths so the user never downloads the older active Story when intending to take a pending candidate to the CLI.
 
-Serialization is a representation concern; it must not change Story semantics.
+### Export active Story
+
+Serialize the active validated Story to deterministic, human-readable canonical YAML and download it with a stable filename derived from the active Story title or a documented fallback.
+
+### Export current YAML candidate
+
+When the current YAML buffer is within the 1 MiB source limit and parses/passes `StorySchema`, allow downloading that **exact buffer** even if it fails the browser authoring/preview budget and therefore cannot be Applied.
+
+This action:
+
+- is available for schema-valid policy-ineligible YAML, including a visual over-budget candidate transferred into YAML;
+- preserves the user's current YAML formatting/comments because it downloads the buffer verbatim;
+- does not make the candidate active, mount it in Player, persist it, or enable MP4 browser render;
+- is disabled for source-oversized, parse-invalid, or schema-invalid YAML;
+- uses the parsed candidate title for the filename when available, with a documented fallback.
+
+Label the actions so it is clear whether the download represents the **active Story** or the **current YAML candidate**.
+
+Serialization/export must not change Story semantics.
 
 ## Persistence
 
@@ -170,10 +211,15 @@ Provide a clear way to reset the local project to the canonical/default Story.
 Cover:
 
 - Story → YAML → Story semantic round-trip;
+- applying schema-valid noncanonical YAML establishes the exact applied buffer as clean baseline and does not immediately re-dirty it;
+- editing after Apply dirties relative to the applied baseline;
 - invalid YAML does not replace validated Story;
+- a >1 MiB file is rejected before file text parsing;
+- a >1 MiB pasted/edited buffer is rejected before `parseStorySource()`;
 - imported schema-valid, browser-eligible YAML updates the Story;
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
+- schema-valid browser-policy-ineligible YAML can be exported verbatim as the current candidate for CLI use without exporting the older active Story;
 - corrupt localStorage falls back safely;
 - schema-valid, browser-eligible localStorage restores;
 - schema-invalid stored data is rejected;
@@ -190,14 +236,16 @@ Cover:
 
 - visual and YAML modes operate on one validated Story;
 - YAML can be imported and exported entirely in-browser;
+- browser YAML parsing is never attempted for source text above 1 MiB UTF-8;
 - invalid YAML never reaches preview/render/persistence;
-- any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
+- dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
+- any dirty/unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
 - Apply is enabled only when YAML is both schema-valid and browser-authoring-eligible;
 - a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
 - a schema-invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
 - a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
-- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML and never reaches the live Player/persistence as the active Story;
+- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes both StorySchema and current browser authoring policy;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
