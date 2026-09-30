@@ -96,7 +96,10 @@ A useful automated smoke flow is:
 30. import/apply YAML under 1 MiB containing a 65,537-code-unit title and verify it passes schema but is rejected by centralized browser policy before timeline derivation/canonical serialization;
 31. place the same 65,537-code-unit Story in localStorage and verify restore rejects it through the same title policy before Player mount;
 32. make YAML dirty and verify reload/navigation/tab close activates the native `beforeunload` confirmation; Apply/Discard removes it once no other loss-risk state remains;
-33. simulate persistence failure after a valid Story becomes active and verify unload protection remains enabled until durable persistence succeeds or the in-memory change is explicitly discarded/reset.
+33. simulate persistence failure after a valid Story becomes active and verify unload protection remains enabled until durable persistence succeeds or the in-memory change is explicitly discarded/reset;
+34. restore a policy-rejected stored recovery snapshot, edit the in-memory fallback Story, and verify autosave remains suppressed **but** the edit is marked unpersisted, activates `beforeunload`, and offers active-Story YAML export; release the recovery slot and verify persistence is attempted before the unload guard clears;
+35. with dirty YAML, a pending visual draft, and an unpersisted active Story in separate cases, validate an import candidate and verify it cannot commit without explicit **Discard current pending/recovery work and import** confirmation; Cancel import preserves the prior state;
+36. try an invalid import while current work is pending and verify the import error does not discard or alter the existing draft.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -110,13 +113,14 @@ For each tested browser record:
 - assets load;
 - visual editor works;
 - Player controls work;
-- YAML import/apply works;
+- YAML import/apply works, and import cannot overwrite pending/unpersisted/recovery state without explicit destructive confirmation;
 - invalid, over-budget, or otherwise dirty YAML visibly blocks MP4 rendering until an eligible Apply or discard;
 - a successful Apply of noncanonical YAML clears dirty state without requiring canonical text equality;
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision, and Reset cannot silently discard it;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
+- edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
@@ -195,12 +199,14 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
-- [ ] persistence flow passes, including quota/access failure handling
+- [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] YAML baseline is regenerated from current Active Story on candidate transfer
 - [ ] Reset requires explicit destructive confirmation whenever editor/recovery state is pending
-- [ ] beforeunload protects dirty YAML, pending visual drafts, transfer candidates, and active Stories whose persistence failed
+- [ ] beforeunload protects dirty YAML, pending visual drafts, transfer candidates, and active Stories not durably stored because persistence failed or was intentionally suppressed
 - [ ] unload guard is removed promptly when no loss-risk state remains
+- [ ] import commit is gated by explicit destructive confirmation whenever pending/unpersisted/recovery state exists
+- [ ] invalid/cancelled imports preserve existing pending work
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
 - [ ] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
