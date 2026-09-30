@@ -77,6 +77,7 @@ The refactor must preserve:
 src/story/
 ├── schema.ts
 ├── parseStory.ts       # browser-safe YAML + Zod boundary
+├── serializeStory.ts   # browser-safe deterministic YAML output
 ├── loadStory.ts        # Node-only filesystem adapter
 ├── timeline.ts
 └── types.ts
@@ -93,7 +94,9 @@ Add coverage for \`parseStorySource()\` independent of filesystem access:
 - invalid enum;
 - invalid duration;
 - unsupported caption text;
-- source name included in useful error output.
+- source name included in useful error output;
+- Story → canonical YAML → Story semantic round-trip;
+- deterministic serialization for the same Story.
 
 Keep the existing file-loader tests to prove the Node adapter still works.
 
@@ -102,13 +105,13 @@ Keep the existing file-loader tests to prove the Node adapter still works.
 - browser-safe Story parsing can be imported without importing any \`node:*\` module;
 - \`loadStory()\` delegates parsing/validation rather than duplicating it;
 - valid YAML produces the same Story object as before;
+- validated Story serialization is deterministic, browser-safe, and round-trips semantically;
 - invalid YAML/schema input fails before any render path;
 - \`npm test\`, \`npm run lint\`, and the existing CLI render workflow remain green;
 - no web UI, Player, persistence, or browser rendering is introduced in this spec.
 
 ## Out of scope
 
-- YAML serialization;
 - browser file picker;
 - localStorage;
 - React state;
