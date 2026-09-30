@@ -81,7 +81,11 @@ A useful automated smoke flow is:
 15. perform several consecutive caption edits after Player mount, including rapid overlapping edits, and verify font readiness follows the newest caption without deadlock or stale completion;
 16. create a 201st visual scene and verify the candidate remains visible as pending, the previous active Story stays in Player, and MP4 render is disabled until the candidate is reduced/discarded/transferred;
 17. load schema-valid but >200-scene or >9,000-frame data from localStorage and verify startup rejects it before Player mount, falls back safely, and shows a browser-policy warning;
-18. verify schema-valid but browser-over-budget YAML cannot enable Apply or enter visual mode.
+18. verify schema-valid but browser-over-budget YAML cannot enable Apply or enter visual mode;
+19. Apply YAML with comments/noncanonical spacing/key order and verify it becomes clean immediately; edit one character afterward and verify it becomes dirty;
+20. reject an imported YAML file above 1 MiB before reading/parsing it, and reject a >1 MiB pasted buffer before `parseStorySource()`;
+21. transfer an over-budget visual candidate to YAML and verify **Export current YAML candidate** downloads that candidate rather than the older active Story;
+22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -96,7 +100,8 @@ For each tested browser record:
 - visual editor works;
 - Player controls work;
 - YAML import/apply works;
-- invalid, over-budget, or otherwise unapplied YAML visibly blocks MP4 rendering until an eligible Apply or discard;
+- invalid, over-budget, or otherwise dirty YAML visibly blocks MP4 rendering until an eligible Apply or discard;
+- a successful Apply of noncanonical YAML clears dirty state without requiring canonical text equality;
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores valid local state when persistence succeeds;
@@ -105,8 +110,10 @@ For each tested browser record:
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
-- an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount and by browser export without being reported as schema-invalid;
+- YAML sources above 1 MiB are refused before synchronous parsing;
+- an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
+- schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
 - repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle.
 
 At minimum, complete the golden end-to-end render in one supported browser.
@@ -163,6 +170,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
 - [ ] persisted Stories are rechecked against browser policy before restore
 - [ ] YAML Apply requires both schema validity and browser eligibility
+- [ ] successful Apply resets YAML dirty baseline even for noncanonical source
+- [ ] >1 MiB YAML is rejected before parse
+- [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
@@ -170,7 +180,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
-- [ ] browser render budget guard passes at and above the 300-second / 9,000-frame boundary
+- [ ] render start defensively rechecks the same 200-scene / 9,000-frame authoring policy
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
 
