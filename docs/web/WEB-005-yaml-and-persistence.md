@@ -43,9 +43,13 @@ An explicit “Apply YAML” action is preferred for v0.2 because it avoids repl
 
 ### Enter YAML mode
 
-Generate a canonical YAML representation from the current validated Story.
+If a YAML draft buffer with unapplied changes already exists in the current editor session, restore that buffer exactly as the user left it.
 
-Exact whitespace/comments from an originally imported file do not need to be preserved.
+Only generate a fresh canonical YAML representation from the current validated Story when there is no retained unapplied YAML buffer.
+
+This prevents switching visual → YAML → visual → YAML from silently overwriting work that has not been applied or explicitly discarded.
+
+Exact whitespace/comments from an originally imported file do not need to be preserved after the YAML has been successfully applied and later regenerated from the validated Story.
 
 ### Edit YAML
 
@@ -72,6 +76,8 @@ The buffer may remain available if the user returns to visual mode, while the vi
 - explicitly discarded/reverted by the user.
 
 Provide a clear discard/revert action so an abandoned invalid buffer does not permanently block rendering.
+
+The retained dirty YAML buffer is editor-session state, not the persisted project in v0.2. A full page reload restores the last validated Story from localStorage rather than persisting invalid/unapplied YAML.
 
 ## Import
 
@@ -122,7 +128,8 @@ Cover:
 - valid localStorage restores;
 - schema-invalid stored data is rejected;
 - reset restores the default Story;
-- dirty/unapplied YAML blocks rendering, and apply/discard clears that block.
+- dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
+- leaving and re-entering YAML mode preserves the dirty buffer verbatim until apply/discard.
 
 ## Acceptance criteria
 
@@ -130,6 +137,7 @@ Cover:
 - YAML can be imported and exported entirely in-browser;
 - invalid YAML never reaches preview/render/persistence;
 - any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
+- switching away from and back to YAML mode restores the retained dirty buffer instead of regenerating YAML from the older validated Story;
 - valid YAML round-trips without semantic loss;
 - page reload restores the last valid Story;
 - persistence requires no backend, account, or database;
