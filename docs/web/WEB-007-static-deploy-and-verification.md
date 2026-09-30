@@ -86,14 +86,13 @@ A useful automated smoke flow is:
 20. reject an imported YAML file above 1 MiB before reading/parsing it, and reject a >1 MiB pasted buffer before `parseStorySource()`;
 21. transfer an over-budget visual candidate to YAML and verify **Export current YAML candidate** downloads that candidate rather than the older active Story;
 22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path;
-23. create a schema-valid visual candidate with a title large enough that canonical YAML exceeds 1 MiB, verify it remains pending and never reaches Player/persistence/render;
-24. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard;
-25. create a schema-valid visual candidate whose canonical YAML is >1 MiB, transfer it with **Open candidate in YAML**, and verify **Export current YAML candidate** succeeds without invoking `parseStorySource()`;
-26. edit that oversized transferred YAML by one character and verify its validated-transfer provenance is cleared and candidate export is disabled until the source is reduced to ≤1 MiB and parsed successfully;
-27. attempt a visual title update of 65,537 UTF-16 code units and verify it is rejected before `StorySchema.safeParse()` / `serializeStorySource()`; verify 65,536 proceeds to normal policy checks;
-28. apply noncanonical YAML A, leave YAML cleanly, commit visual Story B, then transfer rejected candidate C; verify the YAML baseline is freshly generated from B, not retained from A;
-29. invoke Reset with dirty YAML and with a pending visual candidate; verify each requires explicit destructive confirmation and Stay preserves the draft;
-30. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot.
+23. attempt a visual title update of 65,537 UTF-16 code units and verify it is rejected before `StorySchema.safeParse()` / `serializeStorySource()`; verify 65,536 proceeds to normal policy checks;
+24. feed a ≤1 MiB YAML source whose parsed Story serializes canonically above 1 MiB and verify browser authoring rejects it before activation while CLI candidate export remains available through the parsed-candidate path;
+25. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard;
+26. transfer a schema-valid visual candidate rejected for a non-source-size browser policy reason, verify its validated-transfer snapshot permits candidate export without reparsing, then edit the buffer and verify that provenance is cleared;
+27. apply noncanonical YAML A, leave YAML cleanly, commit visual Story B, then transfer rejected candidate C; verify the YAML baseline is freshly generated from B, not retained from A;
+28. invoke Reset with dirty YAML and with a pending visual candidate; verify each requires explicit destructive confirmation and Stay preserves the draft;
+29. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
