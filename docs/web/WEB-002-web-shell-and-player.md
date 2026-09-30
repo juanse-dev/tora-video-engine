@@ -70,14 +70,15 @@ The browser may scale the visual Player responsively; composition coordinates re
 
 ## Static assets
 
-The Player must resolve the existing assets from \`public/\`:
+The Player must resolve the existing image assets from `public/`:
 
 - all four Tora poses;
 - office;
-- server-room;
-- bundled caption font.
+- server-room.
 
-No duplicated copies of those assets should be added for the web app.
+The caption font follows a different existing path: `src/fonts.ts` imports `@fontsource-variable/inter/wght.css`, and the current font-loading logic uses that bundled dependency. The web bundler must preserve that path rather than treating the font as a file under `public/`.
+
+Do not add duplicate image assets or copy font files into `public/` for the web app.
 
 ## Suggested structure
 
@@ -101,6 +102,7 @@ Exact placement may differ if the build remains clearly separated from the Remot
 - the canonical story is visible and playable in a Remotion Player;
 - Player duration matches the canonical compiled Story duration;
 - Tora images, backgrounds, captions, and animations render correctly;
+- the caption font is bundled through the existing \`@fontsource-variable/inter\` import/font-loading path rather than duplicated under \`public/\`;
 - resizing the browser does not change composition semantics or crop the Player controls unexpectedly;
 - existing \`npm run dev\` still opens Remotion Studio;
 - existing \`npm run video -- stories/friday-deploy.yaml\` still renders successfully;
