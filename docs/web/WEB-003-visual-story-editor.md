@@ -12,28 +12,34 @@ A user can change the title and scene list through normal controls and immediate
 
 ## State model
 
-The UI needs two distinct concepts:
+The UI needs three distinct concepts:
 
 ~~~text
-Editor Draft
+Visual Candidate
    │
    ├── may be temporarily invalid while the user types
    │
    ↓
 StorySchema.safeParse()
    │
-   ├── invalid → field errors, do not publish
+   ├── invalid → pending visual draft + field errors
    │
-   └── valid
+   └── schema-valid
           ↓
-    Validated Story
-          ↓
-  timeline / preview / persistence / render
+   Browser policy check
+          │
+          ├── over budget → pending visual draft + policy error
+          │
+          └── eligible
+                 ↓
+          Active Validated Story
+                 ↓
+     timeline / preview / persistence / render
 ~~~
 
-This distinction is required for normal editing behavior. For example, a user must be able to temporarily empty a text field while replacing its content without an invalid Story reaching the renderer.
+This distinction is required for normal editing behavior. A pending visual draft can exist for two reasons: schema-invalid input while typing, or a schema-valid candidate rejected by browser authoring policy. In both cases the previously active Story may remain visible in the Player, but it is not the same content the user is currently editing.
 
-Do not introduce a second permanent domain model. Draft state is a UI concern only.
+Do not introduce another permanent domain model. Candidate/draft state is a UI concern only; the active validated Story remains the only browser render/persistence input.
 
 ## Scope
 
@@ -98,22 +104,24 @@ Reordering must change Story scene order directly. Absolute frame offsets must c
 
 - invalid draft values are visible to the user;
 - the render/export path never receives invalid draft state;
-- MP4 rendering is disabled while the visible visual draft is invalid, so the user cannot accidentally export the previous validated Story as if it included the current edits;
+- MP4 rendering is disabled whenever the visual candidate differs from the active Story because it is schema-invalid or browser-policy-ineligible, so the previous active Story cannot be exported as if it included the current edits;
 - the UI must not silently coerce arbitrary invalid text/numbers into different valid values;
 - field/path information from Zod should be mapped to human-readable editor errors where possible.
 
 ## Editor ownership and mode transitions
 
-WEB-005 adds a YAML editing mode over the same validated Story. The visual editor must expose whether its current draft differs from the last validated Story and whether that draft is invalid.
+WEB-005 adds a YAML editing mode over the same active validated Story. The visual editor must expose whether its current candidate differs from the active Story and why it has not been committed: schema-invalid or browser-policy-ineligible.
 
 If the visual draft is invalid and the user attempts to switch to YAML mode, do not silently replace it with YAML generated from the previous validated Story. Intercept the transition and require one explicit choice:
 
 - **Discard** — discard the invalid visual draft and enter YAML mode from the current validated Story;
 - **Stay in visual editor** — cancel the transition and preserve the invalid draft exactly as typed.
 
-There is no Apply option for an invalid visual draft. As soon as visual fields form a valid Story, the normal visual-editor flow commits that Story automatically, after which switching to YAML is safe.
+There is no Apply option for an invalid visual draft. As soon as visual fields form a schema-valid and browser-eligible Story, the normal visual-editor flow commits that Story automatically.
 
-The application must never keep both an invalid visual draft and an independently editable YAML draft at the same time.
+For a schema-valid but browser-policy-rejected visual candidate, WEB-005 may offer an explicit **Open candidate in YAML** transition that serializes/transfers that exact candidate into the YAML buffer. Otherwise the user must Discard or Stay in the visual editor. Never generate YAML from the older active Story while silently dropping the rejected candidate.
+
+The application must never keep both a pending visual draft and an independently editable YAML draft at the same time.
 
 ## Live caption font updates
 
@@ -153,8 +161,10 @@ Before a schema-valid candidate becomes the active validated Story used by the v
 A schema-valid candidate above either limit:
 
 - remains valid for the engine/CLI;
-- must not replace the current live browser Story;
+- remains the pending visual candidate so the user can remove scenes/reduce duration or explicitly transfer it to YAML;
+- must not replace the current active browser Story;
 - must not be mounted into `StoryRenderer` / Remotion Player;
+- must disable browser MP4 rendering while it differs from the active Story;
 - must show an actionable explanation that the browser authoring limit was exceeded;
 - should direct the user to YAML/CLI workflows rather than labeling the document schema-invalid.
 
@@ -162,11 +172,12 @@ Keep these limits named and centralized so WEB-005 import and WEB-006 rendering 
 
 ## Preview behavior
 
-When a draft is invalid:
+When a visual candidate is either schema-invalid or browser-policy-ineligible:
 
-- show the validation problem prominently;
-- do not render the invalid candidate;
-- the Player may keep the last valid Story visible, but it must be visually clear that the preview is not reflecting the invalid draft.
+- show the schema/policy problem prominently;
+- do not render or persist that candidate;
+- disable MP4 export;
+- the Player may keep the active Story visible, but it must be visually clear that preview/export do not reflect the pending visual candidate.
 
 ## Tests
 
@@ -183,8 +194,8 @@ Add automated coverage for state/domain transformations where practical:
 - invalid visual draft → YAML mode transition requires Discard/Stay;
 - multiple consecutive caption edits after Player mount, including overlapping rapid edits, preserve correct font readiness without stale `delayRender` handles;
 - a schema-valid Story at the browser budget boundary can become active;
-- a schema-valid Story with 201 scenes is rejected by browser authoring policy before Player mount;
-- a schema-valid Story above 9,000 derived frames is rejected by browser authoring policy before Player mount.
+- a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
+- a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering.
 
 Avoid large snapshot tests of CSS.
 
@@ -193,8 +204,8 @@ Avoid large snapshot tests of CSS.
 - every current Story field is editable visually;
 - scene order can be changed without React renderer changes;
 - valid edits within the browser authoring budget update the Player;
-- invalid drafts show actionable errors, do not update the validated Story, and disable MP4 rendering until fixed;
-- schema-valid candidates above 200 scenes or 9,000 frames do not replace/mount the live browser Story and are reported as browser-policy limits, not schema errors;
+- schema-invalid pending visual drafts show actionable errors, do not update the active Story, and disable MP4 rendering until fixed/discarded;
+- schema-valid candidates above 200 scenes or 9,000 frames remain pending visual drafts, do not replace/mount the active Story, disable MP4 rendering, and are reported as browser-policy limits rather than schema errors;
 - attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
