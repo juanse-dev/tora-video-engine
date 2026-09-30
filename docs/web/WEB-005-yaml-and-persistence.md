@@ -78,11 +78,11 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 Track YAML dirty state relative to a **YAML baseline buffer**, not by comparing text to canonical serialization of the active Story.
 
 - when YAML mode opens from the active Story, generate canonical YAML and set that exact text as both buffer and clean baseline;
-- when a browser-policy-rejected visual candidate is explicitly transferred to YAML, keep the active Story's clean baseline and replace only the buffer with the transferred serialization, so the candidate is immediately dirty/unapplied; attach the validated transfer snapshot to that exact buffer;
+- when a browser-policy-rejected visual candidate is explicitly transferred to YAML, **regenerate the clean baseline from the current active Story at transfer time** using `serializeStorySource(activeStory)`, then replace only the buffer with the transferred candidate serialization so the candidate is immediately dirty/unapplied; attach the validated transfer snapshot to that exact buffer; never reuse a baseline retained from an earlier YAML session;
 - any edit that changes the transferred YAML buffer immediately clears the validated transfer snapshot, because the edited text is no longer known to represent the previously validated Story;
 - after a successful Apply, set the **current exact YAML buffer** as the new clean baseline without rewriting whitespace/comments/quotes/key order and clear any transfer snapshot because the Story is now active;
 - subsequent edits are dirty only when they differ from that baseline;
-- leaving and later re-entering YAML after a clean Apply may regenerate canonical YAML from the active Story, consistent with v0.2 not promising formatting/comment preservation across mode changes;
+- once YAML mode is left cleanly, its baseline is session-local and must not be treated as authoritative after later visual commits; the next YAML entry or visual→YAML transfer establishes a fresh baseline from the then-current active Story;
 - validate on demand or live with debounce;
 - show source-size/parse/schema/browser-policy errors distinctly;
 - do not update preview/render state until eligible YAML is applied;
@@ -220,12 +220,26 @@ On startup:
 3. validate any retrieved data with the current Story schema;
 4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player;
 5. if both checks pass, restore it as the active Story;
-6. if the stored payload is schema-valid but over browser budget, do not mount it; fall back to the canonical/example Story and show a browser-limit warning explaining that the stored document is not schema-invalid;
-7. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
+6. if the stored payload is schema-valid but browser-policy-ineligible, do not mount it. Retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the canonical/example Story only as an in-memory fallback, and show a persistent recovery banner;
+7. while a rejected stored recovery snapshot exists, do **not** automatically persist the fallback Story or later fallback-based edits into the same storage slot, because that would destroy the only stored copy;
+8. provide **Export stored project YAML** using the already validated recovery snapshot (serialization may exceed the browser import guard because this is a CLI recovery path) and **Discard stored project and continue** as an explicit destructive action;
+9. exporting the recovery snapshot alone must not delete/overwrite it; only explicit discard/reset acknowledgement may release the protected storage slot;
+10. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
 
 ## Reset
 
-Provide a clear way to reset the local project to the canonical/default Story.
+Provide a clear way to reset the local project to the canonical/default Story, but treat reset as a destructive state transition.
+
+If there is no pending visual/YAML draft and no rejected stored recovery snapshot, reset may proceed directly.
+
+If YAML is dirty, a visual candidate is pending, a validated transfer snapshot exists, or a rejected stored recovery snapshot is protected, intercept Reset and require an explicit choice:
+
+- **Discard pending/recovery state and reset** — clearly state what will be lost, then atomically clear editor drafts/transfer provenance/recovery protection, activate the canonical Story, and attempt best-effort persistence;
+- **Stay** — cancel Reset and preserve all current state.
+
+Do not auto-Apply a dirty YAML draft merely to perform Reset. When a schema-valid candidate/recovery snapshot can be exported, keep its export action available before destructive confirmation.
+
+A confirmed reset that fails to persist still changes the active in-memory Story to the canonical default and surfaces the normal persistence warning; it must not falsely claim that durable reset succeeded.
 
 ## Tests
 
@@ -244,14 +258,19 @@ Cover:
 - a visual candidate rejected because canonical YAML exceeds 1 MiB can be transferred and exported without reparsing while the buffer remains unchanged;
 - editing that oversized transferred buffer invalidates its transfer snapshot and disables validated-candidate export until it is ≤1 MiB and parses successfully;
 - corrupt localStorage falls back safely;
+- schema-valid but browser-policy-rejected storage is retained as a recovery snapshot, is exportable for CLI use, and is not overwritten by fallback autosave;
+- exporting a rejected stored recovery snapshot does not clear it; explicit discard/reset acknowledgement is required before its storage slot can be replaced;
 - schema-valid, browser-eligible localStorage restores, including a recheck that canonical YAML is ≤1 MiB;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
-- reset restores the default Story;
+- reset restores the default Story when no draft is pending;
+- Reset with dirty YAML/pending visual state requires explicit destructive confirmation and never silently discards the draft;
+- Reset with a rejected stored recovery snapshot requires explicit discard acknowledgement before protected storage can be replaced;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
 - attempting to leave a schema-invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older active Story;
 - attempting to leave a browser-policy-rejected visual candidate for YAML requires explicit transfer to YAML, Discard, or Stay;
+- transferring a candidate always regenerates the YAML clean baseline from the **current** active Story, so an older YAML session cannot become a stale-clean baseline;
 - storage quota/access failures do not reject an otherwise valid Apply/import and leave the newly validated Story active in memory;
 - a failed persistence write surfaces a warning and does not overwrite/claim success for the last persisted snapshot.
 
@@ -270,7 +289,7 @@ Cover:
 - browser-eligible valid YAML round-trips without semantic loss;
 - every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow;
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
-- when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including canonical YAML ≤1 MiB;
+- when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
