@@ -33,12 +33,13 @@ The first web version is intentionally single-user, local-first, and backend-fre
 1. **Validated Story remains the rendering boundary.** The web UI must not create a second rendering model.
 2. **One renderer, multiple entry points.** Preview, browser export, Remotion Studio, and the local CLI reuse the same Story, timeline logic, scene components, assets, and video configuration.
 3. **The CLI must keep working.** Web work must not regress \`npm run video -- stories/friday-deploy.yaml\`.
-4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid, but only a validated \`Story\` can reach preview/persistence/rendering. MP4 rendering must be disabled whenever the visible editor has invalid or unapplied changes so a stale validated Story cannot be exported by mistake.
+4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid, but only a validated `Story` can reach preview/persistence/rendering. MP4 rendering must be disabled whenever the visible editor has invalid or unapplied changes so a stale validated Story cannot be exported by mistake. A dirty YAML buffer also blocks switching into editable visual mode until the user explicitly applies it, discards it, or stays in YAML, preventing two divergent drafts.
 5. **Assets remain deterministic.** v0.2 uses the repository's bundled Tora poses and backgrounds; no network-generated media is required.
 6. **Static hosting only.** The MVP must not require application servers, serverless functions, databases, authentication, or cloud rendering.
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
 8. **Browser rendering is resource-bounded.** A Story may be valid for the shared engine/CLI while still being too large for safe browser export. v0.2 applies a browser-only render budget of at most 300 seconds / 9,000 frames at 30 FPS without changing the Story schema.
 9. **Production static hosting is root-path based.** v0.2 targets hosts such as Netlify and Cloudflare Pages where the app can be served from the origin root. Repository-subpath deployments such as a default GitHub Pages project site are outside the supported deployment target unless separately verified.
+10. **Local persistence is best-effort.** A valid Story must remain usable in memory even if browser storage is unavailable or full. Storage failures are surfaced to the user and must never cause Apply/import to fail after validation succeeds.
 
 ## System architecture
 
@@ -162,7 +163,8 @@ v0.2 is complete only when all of the following are true:
 - available poses, backgrounds, and animations are visible and selectable;
 - invalid or unapplied draft data produces actionable feedback, never reaches rendering, and disables MP4 export until fixed, applied, or discarded;
 - YAML can be imported, validated, edited, and exported without changing the Story contract;
-- the last valid project is restored locally on reload;
+- dirty YAML cannot coexist with subsequent visual edits: switching to visual mode requires Apply, Discard, or Stay in YAML;
+- when browser persistence succeeds, the last valid project is restored locally on reload; quota/unavailable-storage failures are handled without losing the in-memory valid Story and are clearly surfaced;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
 - the web render matches the Story timing/dimensions used by the CLI;
 - unsupported browser rendering capability is detected and explained before starting a render;
