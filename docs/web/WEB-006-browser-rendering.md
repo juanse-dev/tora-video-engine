@@ -71,6 +71,7 @@ Any web-renderer API options required for the installed Remotion version should 
 
 WEB-003/WEB-005 already enforce the browser authoring/preview ceiling before a Story can become active:
 
+- maximum visual title: **65,536 UTF-16 code units**, checked before candidate construction/serialization;
 - maximum active scenes: **200**;
 - maximum total duration: **300 seconds**;
 - equivalent maximum at fixed 30 FPS: **9,000 frames**;
@@ -80,7 +81,7 @@ WEB-006 does **not** introduce a higher or independent export threshold in v0.2.
 
 Therefore:
 
-- a candidate above 200 scenes, 9,000 frames, or 1 MiB canonical YAML is rejected by authoring policy before it becomes active;
+- raw visual title above 65,536 code units is rejected before serialization, and a candidate above 200 scenes, 9,000 frames, or 1 MiB canonical YAML is rejected by authoring policy before it becomes active;
 - it cannot reach browser render eligibility as an active Story;
 - the render-time check protects against state corruption, policy drift, or implementation bugs;
 - CLI portability remains available through YAML export for schema-valid candidates.
@@ -158,7 +159,7 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
 - MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
-- an active Story at or below 200 scenes, 300 seconds / 9,000 frames, and 1 MiB canonical YAML remains render-eligible when all other requirements pass;
+- an active Story whose title is within the visual bound and that is at or below 200 scenes, 300 seconds / 9,000 frames, and 1 MiB canonical YAML remains render-eligible when all other requirements pass;
 - schema-valid candidates above the browser budget are rejected by authoring policy before activation and cannot reach normal browser rendering;
 - render start defensively rechecks the same centralized authoring policy and aborts on any mismatch;
 - unsupported browsers receive a useful message and can still edit/preview;
