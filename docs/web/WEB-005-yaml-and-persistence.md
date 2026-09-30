@@ -66,10 +66,20 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 
 ### Apply valid YAML
 
-- replace the validated Story;
-- update the visual editor;
-- update preview;
-- persist the new valid Story.
+Schema validation and browser authoring eligibility are separate checks.
+
+After YAML parses and passes `StorySchema`:
+
+1. evaluate the WEB-003 browser authoring/preview budget using the shared centralized policy;
+2. if the candidate is within **200 scenes** and **9,000 derived frames**, replace the active validated Story, update the visual editor/preview, and attempt persistence;
+3. if the candidate exceeds either browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
+
+For an over-budget but schema-valid candidate:
+
+- keep the YAML buffer intact;
+- show that the document is valid for the engine/CLI but too large for v0.2 browser authoring;
+- keep MP4 browser rendering disabled;
+- offer Discard/Stay and the CLI/YAML portability path rather than presenting a schema error.
 
 ### Attempt to return to visual mode with invalid or unapplied YAML
 
@@ -97,7 +107,7 @@ Support a browser file input for \`.yaml\` / \`.yml\`.
 
 Imported text must go through the same parser and validator as pasted/edited YAML.
 
-No separate import schema is allowed.
+No separate import schema is allowed. After schema validation, import must also pass the same browser authoring/preview policy used by Apply before it can become the active Story. Importing a huge schema-valid Story must never synchronously mount its scenes into the live Player before that policy check.
 
 ## Export
 
@@ -151,7 +161,9 @@ Cover:
 
 - Story → YAML → Story semantic round-trip;
 - invalid YAML does not replace validated Story;
-- imported valid YAML updates the Story;
+- imported schema-valid, browser-eligible YAML updates the Story;
+- imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
+- imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - corrupt localStorage falls back safely;
 - valid localStorage restores;
 - schema-invalid stored data is rejected;
@@ -170,7 +182,8 @@ Cover:
 - any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
 - a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
 - an invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
-- valid YAML round-trips without semantic loss;
+- browser-eligible valid YAML round-trips without semantic loss;
+- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML and never reaches the live Player/persistence as the active Story;
 - when persistence succeeds, page reload restores the last persisted valid Story;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
