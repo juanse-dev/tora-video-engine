@@ -82,8 +82,8 @@ Compute eligibility from the same derived total duration/frame metadata used by 
 
 A valid Story above this limit:
 
-- remains valid and editable;
-- may continue to use the normal preview where practical;
+- remains valid for the shared engine/CLI;
+- is already prevented by the WEB-003/WEB-005 browser authoring policy from replacing the active live Story when it exceeds the shared 9,000-frame authoring ceiling;
 - must have browser MP4 export disabled;
 - must show an explanation that the Story exceeds the v0.2 browser render limit;
 - should point to the local CLI as the alternative render path.
@@ -97,7 +97,7 @@ The primary render action must only be enabled when all of the following are tru
 - the current browser supports the requested H.264/MP4 render configuration;
 - the visual editor has no invalid draft values;
 - the YAML editor has no unapplied buffer changes;
-- a validated Story is available;
+- an active validated Story that has already passed the browser authoring/preview budget is available;
 - the Story's derived total duration/frame count is within the v0.2 browser render budget.
 
 If the visible editor state is invalid or unapplied, do not offer to render the previous validated Story behind it. Disable the action and explain what must be fixed, applied, or discarded first.
