@@ -37,6 +37,8 @@ The first web version is intentionally single-user, local-first, and backend-fre
 5. **Assets remain deterministic.** v0.2 uses the repository's bundled Tora poses and backgrounds; no network-generated media is required.
 6. **Static hosting only.** The MVP must not require application servers, serverless functions, databases, authentication, or cloud rendering.
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
+8. **Browser rendering is resource-bounded.** A Story may be valid for the shared engine/CLI while still being too large for safe browser export. v0.2 applies a browser-only render budget of at most 300 seconds / 9,000 frames at 30 FPS without changing the Story schema.
+9. **Production static hosting is root-path based.** v0.2 targets hosts such as Netlify and Cloudflare Pages where the app can be served from the origin root. Repository-subpath deployments such as a default GitHub Pages project site are outside the supported deployment target unless separately verified.
 
 ## System architecture
 
@@ -44,7 +46,7 @@ The first web version is intentionally single-user, local-first, and backend-fre
 flowchart LR
     U[User] --> UI[Web UI]
 
-    H[Static hosting<br/>Netlify / Cloudflare Pages / GitHub Pages] --> UI
+    H[Static hosting<br/>Netlify / Cloudflare Pages] --> UI
     H --> A[Static asset catalog]
 
     subgraph Browser
@@ -96,6 +98,7 @@ sequenceDiagram
 
     User->>UI: Click Render MP4
     UI->>Story: Read current validated Story
+    UI->>UI: Check browser capability + render budget
     Story->>Render: Composition + input props
     Render->>Render: Generate frames + encode in browser
     Render->>File: Produce MP4 Blob
@@ -163,6 +166,7 @@ v0.2 is complete only when all of the following are true:
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
 - the web render matches the Story timing/dimensions used by the CLI;
 - unsupported browser rendering capability is detected and explained before starting a render;
+- Stories above the v0.2 browser export budget (300 seconds / 9,000 frames at 30 FPS) remain valid for the engine/CLI but browser MP4 export is disabled with an actionable explanation;
 - no custom backend is required to use the application.
 
 ## Remotion constraint
