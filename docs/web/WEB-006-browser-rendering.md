@@ -67,6 +67,29 @@ Target output:
 
 Any web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
 
+## Browser render budget
+
+Schema validity is necessary but not sufficient for safe browser rendering.
+
+The shared `StorySchema` intentionally remains environment-agnostic and allows any duration whose derived frame count is a safe positive integer. Do not tighten that contract solely for the web UI, because the local CLI may reasonably support workloads outside the browser MVP.
+
+For v0.2, define a browser-only export budget:
+
+- maximum total duration: **300 seconds**;
+- equivalent maximum at the fixed 30 FPS: **9,000 frames**.
+
+Compute eligibility from the same derived total duration/frame metadata used by the renderer, not by introducing a second timing calculation.
+
+A valid Story above this limit:
+
+- remains valid and editable;
+- may continue to use the normal preview where practical;
+- must have browser MP4 export disabled;
+- must show an explanation that the Story exceeds the v0.2 browser render limit;
+- should point to the local CLI as the alternative render path.
+
+Keep this limit named/centralized so it can be revisited later based on real browser performance without changing the Story schema.
+
 ## Render eligibility
 
 The primary render action must only be enabled when all of the following are true:
@@ -74,9 +97,12 @@ The primary render action must only be enabled when all of the following are tru
 - the current browser supports the requested H.264/MP4 render configuration;
 - the visual editor has no invalid draft values;
 - the YAML editor has no unapplied buffer changes;
-- a validated Story is available.
+- a validated Story is available;
+- the Story's derived total duration/frame count is within the v0.2 browser render budget.
 
 If the visible editor state is invalid or unapplied, do not offer to render the previous validated Story behind it. Disable the action and explain what must be fixed, applied, or discarded first.
+
+If the Story is valid but exceeds the browser render budget, disable only browser MP4 export and explain that this is a browser resource constraint rather than a Story validation error.
 
 ## Render UI state
 
@@ -131,6 +157,8 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
 - MP4 rendering is disabled whenever visual draft state is invalid or YAML contains unapplied changes, preventing accidental export of a stale validated Story;
+- a Story at or below 300 seconds / 9,000 frames remains eligible when all other requirements pass;
+- a valid Story above 300 seconds / 9,000 frames is rejected only by browser render eligibility, with a clear CLI alternative;
 - unsupported browsers receive a useful message and can still edit/preview;
 - render uses an immutable validated Story snapshot;
 - final filename is deterministic;
