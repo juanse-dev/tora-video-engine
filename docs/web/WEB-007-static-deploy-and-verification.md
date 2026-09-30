@@ -64,8 +64,9 @@ A useful automated smoke flow is:
 2. confirm the canonical Story appears;
 3. change one visual field;
 4. confirm preview state changes;
-5. verify invalid YAML is rejected;
-6. verify render capability/UI state is detectable.
+5. verify invalid YAML is rejected and disables MP4 rendering;
+6. discard/revert the invalid YAML and verify rendering becomes eligible again when browser capability allows it;
+7. verify render capability/UI state is detectable.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -80,6 +81,7 @@ For each tested browser record:
 - visual editor works;
 - Player controls work;
 - YAML import/apply works;
+- invalid or unapplied YAML visibly blocks MP4 rendering until applied or discarded;
 - reload restores valid local state;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully.
