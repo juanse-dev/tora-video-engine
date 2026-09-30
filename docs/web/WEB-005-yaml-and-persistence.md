@@ -105,13 +105,14 @@ Apply the guard **before** calling `parseStorySource()`:
 
 ### Apply valid YAML
 
-Source-size, schema validation, and browser authoring eligibility are separate checks.
+Source-size, schema validation, and browser authoring eligibility are separate checks. Browser authoring eligibility includes the candidate's **canonical** `serializeStorySource()` size, even when the incoming YAML buffer itself is under 1 MiB.
 
 After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 
 1. evaluate the WEB-003 browser authoring/preview budget using the shared centralized policy;
-2. if the candidate is within **200 scenes** and **9,000 derived frames**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
-3. if the candidate exceeds either browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
+2. canonicalize the parsed candidate with WEB-001 `serializeStorySource()` and require its UTF-8 size to be ≤ **1 MiB**;
+3. if the candidate is within **200 scenes**, **9,000 derived frames**, and **1 MiB canonical YAML**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
+4. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
 
 For an over-budget but schema-valid candidate:
 
@@ -156,7 +157,9 @@ Provide two unambiguous export paths so the user never downloads the older activ
 
 ### Export active Story
 
-Serialize the active validated Story to deterministic, human-readable canonical YAML and download it with a stable filename derived from the active Story title or a documented fallback.
+Serialize the active validated Story with WEB-001 `serializeStorySource()` and download it with a stable filename derived from the active Story title or a documented fallback.
+
+Because canonical YAML size ≤1 MiB is part of browser authoring eligibility, this export is guaranteed to remain within the browser import source-size guard and must be re-importable by the same web app.
 
 ### Export current YAML candidate
 
@@ -231,7 +234,7 @@ Cover:
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - schema-valid browser-policy-ineligible YAML can be exported verbatim as the current candidate for CLI use without exporting the older active Story;
 - corrupt localStorage falls back safely;
-- schema-valid, browser-eligible localStorage restores;
+- schema-valid, browser-eligible localStorage restores, including a recheck that canonical YAML is ≤1 MiB;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
 - reset restores the default Story;
@@ -255,8 +258,9 @@ Cover:
 - a schema-invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
 - a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
+- every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow;
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate;
-- when persistence succeeds, page reload restores the last persisted Story only if it still passes both StorySchema and current browser authoring policy;
+- when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including canonical YAML ≤1 MiB;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
