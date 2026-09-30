@@ -168,11 +168,36 @@ If client-side routing is added later, route transitions must honor the same los
 
 ## Import
 
-Support a browser file input for \`.yaml\` / \`.yml\`.
+Support a browser file input for \.yaml / \.yml.
 
 Imported text must use the same source-size guard, parser, schema, and browser authoring policy as pasted/edited YAML.
 
 For files, reject `File.size > 1 MiB` before `File.text()` / parsing. No separate import schema is allowed. After schema validation, import must also pass the same browser authoring/preview policy used by Apply before it can become the active Story.
+
+### Import is a transactional destructive transition
+
+An import candidate may be size-checked, parsed, schema-validated, and browser-policy-checked in isolation, but those steps must not mutate the active Story, editor draft ownership, YAML baseline, transfer provenance, recovery protection, or persistence.
+
+Only after the imported candidate is fully schema-valid and browser-eligible may the app attempt to commit it.
+
+Before commit, evaluate the same loss-risk predicate used by unload protection plus protected recovery state. If any of the following exists:
+
+- dirty/unapplied YAML;
+- a pending visual draft;
+- a validated transfer snapshot/current transferred candidate;
+- an active Story that differs from durable storage because persistence failed or was intentionally suppressed;
+- a rejected stored recovery snapshot whose protected slot would need to be released before the import can persist;
+
+require an explicit choice:
+
+- **Discard current pending/recovery work and import** — clearly identify which current state will be lost; after confirmation, atomically clear the identified draft/transfer state, explicitly release protected recovery storage when applicable, commit the already validated imported Story, and attempt best-effort persistence;
+- **Cancel import** — discard only the temporary import candidate and leave all pre-import state unchanged.
+
+If the current pending/recovery state is exportable, keep its export action available before the destructive confirmation.
+
+An invalid or browser-policy-ineligible import candidate must never trigger the destructive confirmation or alter current work; report the import error and discard only the temporary import candidate.
+
+The temporary import candidate is non-editable transaction state, not a second authoring draft. The app must never expose it concurrently as an independently editable project.
 
 ## Export
 
