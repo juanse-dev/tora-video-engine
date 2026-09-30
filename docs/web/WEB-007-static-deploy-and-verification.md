@@ -78,7 +78,10 @@ A useful automated smoke flow is:
 12. start a browser render and verify all Story/draft-mutating controls remain locked until completion/failure/cancel;
 13. import a schema-valid Story with 201+ scenes and verify it never mounts into the visual editor/Player, remains identified as schema-valid, and receives the browser-limit/CLI guidance;
 14. import a schema-valid Story above 9,000 frames and verify the same preview-suppression behavior;
-15. perform several consecutive caption edits after Player mount, including rapid overlapping edits, and verify font readiness follows the newest caption without deadlock or stale completion.
+15. perform several consecutive caption edits after Player mount, including rapid overlapping edits, and verify font readiness follows the newest caption without deadlock or stale completion;
+16. create a 201st visual scene and verify the candidate remains visible as pending, the previous active Story stays in Player, and MP4 render is disabled until the candidate is reduced/discarded/transferred;
+17. load schema-valid but >200-scene or >9,000-frame data from localStorage and verify startup rejects it before Player mount, falls back safely, and shows a browser-policy warning;
+18. verify schema-valid but browser-over-budget YAML cannot enable Apply or enter visual mode.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -93,7 +96,7 @@ For each tested browser record:
 - visual editor works;
 - Player controls work;
 - YAML import/apply works;
-- invalid or unapplied YAML visibly blocks MP4 rendering until applied or discarded;
+- invalid, over-budget, or otherwise unapplied YAML visibly blocks MP4 rendering until an eligible Apply or discard;
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores valid local state when persistence succeeds;
@@ -101,7 +104,9 @@ For each tested browser record:
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
-- an over-budget Story is refused by browser authoring/preview before Player mount and by browser export without being reported as schema-invalid;
+- an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
+- an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount and by browser export without being reported as schema-invalid;
+- YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle.
 
 At minimum, complete the golden end-to-end render in one supported browser.
@@ -155,6 +160,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
 - [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount
+- [ ] policy-rejected visual candidates remain pending and disable stale render/export
+- [ ] persisted Stories are rechecked against browser policy before restore
+- [ ] YAML Apply requires both schema validity and browser eligibility
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
