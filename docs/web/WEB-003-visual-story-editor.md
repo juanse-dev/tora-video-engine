@@ -98,6 +98,7 @@ Reordering must change Story scene order directly. Absolute frame offsets must c
 
 - invalid draft values are visible to the user;
 - the render/export path never receives invalid draft state;
+- MP4 rendering is disabled while the visible visual draft is invalid, so the user cannot accidentally export the previous validated Story as if it included the current edits;
 - the UI must not silently coerce arbitrary invalid text/numbers into different valid values;
 - field/path information from Zod should be mapped to human-readable editor errors where possible.
 
@@ -129,7 +130,7 @@ Avoid large snapshot tests of CSS.
 - every current Story field is editable visually;
 - scene order can be changed without React renderer changes;
 - valid edits update the Player;
-- invalid drafts show actionable errors and do not update the validated Story;
+- invalid drafts show actionable errors, do not update the validated Story, and disable MP4 rendering until fixed;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
 - UI option sets cannot drift silently from the Story schema;
