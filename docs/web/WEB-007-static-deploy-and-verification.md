@@ -75,7 +75,10 @@ A useful automated smoke flow is:
 9. create a dirty YAML buffer and verify switching to visual mode requires Apply, Discard, or Stay rather than enabling parallel visual edits;
 10. simulate a localStorage write failure/quota error and verify Apply remains successful in memory while a persistence warning is shown;
 11. create an invalid visual draft and verify switching to YAML requires Discard or Stay rather than losing the draft;
-12. start a browser render and verify all Story/draft-mutating controls remain locked until completion/failure/cancel.
+12. start a browser render and verify all Story/draft-mutating controls remain locked until completion/failure/cancel;
+13. import a schema-valid Story with 201+ scenes and verify it never mounts into the visual editor/Player, remains identified as schema-valid, and receives the browser-limit/CLI guidance;
+14. import a schema-valid Story above 9,000 frames and verify the same preview-suppression behavior;
+15. perform several consecutive caption edits after Player mount, including rapid overlapping edits, and verify font readiness follows the newest caption without deadlock or stale completion.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -98,7 +101,8 @@ For each tested browser record:
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
-- an over-budget Story is refused by browser export without being reported as schema-invalid.
+- an over-budget Story is refused by browser authoring/preview before Player mount and by browser export without being reported as schema-invalid;
+- repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle.
 
 At minimum, complete the golden end-to-end render in one supported browser.
 
@@ -150,6 +154,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
+- [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount
+- [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling
