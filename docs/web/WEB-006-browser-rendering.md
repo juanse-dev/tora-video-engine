@@ -118,9 +118,13 @@ While rendering:
 - prevent accidental duplicate concurrent renders from the primary button;
 - surface available progress information from the renderer;
 - keep an understandable status if progress is coarse;
-- do not allow editor changes to replace the validated Story snapshot being rendered.
+- lock every control that can change either the validated Story or an editor draft, including visual fields, asset selection, scene add/delete/reorder, YAML editing/apply/import, reset, and editor-mode transitions;
+- allow non-mutating interactions such as preview playback if they do not affect the render input;
+- unlock authoring only after the render has succeeded, failed, or been explicitly cancelled if cancellation is supported.
 
-The render should capture one immutable Story snapshot at start so edits made during rendering cannot mutate the in-flight output.
+The render must capture one immutable Story snapshot at start. The UI lock ensures that the visible authoring state remains the same snapshot for the lifetime of the render, so a successful download cannot silently represent an older Story than the editor currently shows.
+
+Do not auto-download an output after authoring state has somehow diverged from the render snapshot. This should be unreachable under the required lock; treat any such divergence as a safety assertion/failure rather than presenting the Blob as current.
 
 ## Download
 
@@ -161,6 +165,8 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - a valid Story above 300 seconds / 9,000 frames is rejected only by browser render eligibility, with a clear CLI alternative;
 - unsupported browsers receive a useful message and can still edit/preview;
 - render uses an immutable validated Story snapshot;
+- all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
+- a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final filename is deterministic;
 - output timing/dimensions match the engine configuration;
 - local CLI rendering remains functional;
