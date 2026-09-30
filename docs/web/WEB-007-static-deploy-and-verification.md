@@ -85,7 +85,9 @@ A useful automated smoke flow is:
 19. Apply YAML with comments/noncanonical spacing/key order and verify it becomes clean immediately; edit one character afterward and verify it becomes dirty;
 20. reject an imported YAML file above 1 MiB before reading/parsing it, and reject a >1 MiB pasted buffer before `parseStorySource()`;
 21. transfer an over-budget visual candidate to YAML and verify **Export current YAML candidate** downloads that candidate rather than the older active Story;
-22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path.
+22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path;
+23. create a schema-valid visual candidate with a title large enough that canonical YAML exceeds 1 MiB, verify it remains pending and never reaches Player/persistence/render;
+24. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -109,7 +111,7 @@ For each tested browser record:
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
-- an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
+- an over-budget visual candidate—including one rejected solely because its canonical YAML exceeds 1 MiB—remains pending and blocks render rather than allowing export of the previous active Story;
 - YAML sources above 1 MiB are refused before synchronous parsing;
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
@@ -166,7 +168,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
-- [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount
+- [ ] browser authoring/preview budget blocks >200 scenes, >9,000 frames, or >1 MiB canonical YAML before Player mount
+- [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
 - [ ] persisted Stories are rechecked against browser policy before restore
 - [ ] YAML Apply requires both schema validity and browser eligibility
@@ -180,7 +183,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
-- [ ] render start defensively rechecks the same 200-scene / 9,000-frame authoring policy
+- [ ] render start defensively rechecks the same 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
 
