@@ -156,11 +156,11 @@ Install a `beforeunload` handler while any state exists that would be lost by le
 - YAML buffer is dirty/unapplied;
 - a pending visual draft differs from the active Story;
 - a validated transfer snapshot/current transferred candidate exists;
-- the active in-memory Story is newer than durable storage because the latest persistence attempt failed.
+- the active in-memory Story differs from durable storage for any reason, including a failed persistence attempt **or persistence intentionally suppressed while a rejected stored recovery snapshot protects the storage slot**.
 
 The handler must use the standard browser-native confirmation mechanism (`event.preventDefault()` plus the compatibility `event.returnValue` assignment where required). Do not depend on custom dialog text because modern browsers control the warning wording.
 
-Remove the listener immediately when none of those loss-risk conditions remain, such as after successful Apply + persistence, explicit Discard/Reset, or successful persistence of the active Story.
+Remove the listener immediately when none of those loss-risk conditions remain, such as after successful Apply + persistence, explicit Discard/Reset, or successful persistence of the active Story. Merely suppressing a write because the recovery slot is protected does **not** make the active Story durable and must not clear unload protection.
 
 A rejected stored recovery snapshot does not by itself require `beforeunload` because its durable storage slot is protected; its protection is governed by the recovery rules below.
 
@@ -241,9 +241,11 @@ On startup:
 5. if both checks pass, restore it as the active Story;
 6. if the stored payload is schema-valid but browser-policy-ineligible, do not mount it. Retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the canonical/example Story only as an in-memory fallback, and show a persistent recovery banner;
 7. while a rejected stored recovery snapshot exists, do **not** automatically persist the fallback Story or later fallback-based edits into the same storage slot, because that would destroy the only stored copy;
-8. provide **Export stored project YAML** using the already validated recovery snapshot (serialization may exceed the browser import guard because this is a CLI recovery path) and **Discard stored project and continue** as an explicit destructive action;
-9. exporting the recovery snapshot alone must not delete/overwrite it; only explicit discard/reset acknowledgement may release the protected storage slot;
-10. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
+8. any valid fallback edit committed while that slot is protected immediately makes the active Story **unpersisted loss-risk state**: show the persistence/recovery warning, enable `beforeunload`, and offer **Export active Story YAML** as backup even though no storage write was attempted;
+9. provide **Export stored project YAML** using the already validated recovery snapshot (serialization may exceed the browser import guard because this is a CLI recovery path) and **Discard stored project and continue** as an explicit destructive action;
+10. exporting the recovery snapshot alone must not delete/overwrite it; only explicit discard/reset/import acknowledgement may release the protected storage slot;
+11. after the user explicitly releases the recovery snapshot, if the current active Story differs from durable storage, immediately attempt to persist that active Story; unload protection remains until that persistence succeeds or the in-memory change is explicitly discarded/reset;
+12. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
 
 ## Reset
 
@@ -271,7 +273,10 @@ Cover:
 - a >1 MiB file is rejected before file text parsing;
 - a >1 MiB pasted/edited buffer is rejected before `parseStorySource()`;
 - imported schema-valid YAML with a 65,537-code-unit title is rejected by browser policy before timeline/canonical serialization even though the YAML source itself is ≤1 MiB;
-- imported schema-valid, browser-eligible YAML updates the Story;
+- an invalid/import-policy-ineligible file never discards an existing dirty YAML or pending visual draft;
+- an eligible import with dirty YAML/pending visual/transfer/unpersisted/recovery state requires explicit destructive confirmation before commit;
+- cancelling that confirmation preserves the pre-import state byte-for-byte/logically unchanged;
+- imported schema-valid, browser-eligible YAML updates the Story after the destructive-transition guard passes;
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - schema-valid browser-policy-ineligible YAML can be exported verbatim as the current candidate for CLI use without exporting the older active Story;
@@ -289,6 +294,8 @@ Cover:
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - dirty YAML installs unload protection; applying/discarding it removes the guard once no other loss-risk state remains;
 - a persistence write failure on a newly active Story keeps unload protection enabled until that Story is durably saved or explicitly discarded/reset;
+- editing the fallback while a rejected recovery snapshot protects the storage slot also enables unload protection even though no write is attempted;
+- releasing the recovery slot triggers persistence of the current active Story when it differs from durable storage, and unload protection remains until that succeeds;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
 - attempting to leave a schema-invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older active Story;
 - attempting to leave a browser-policy-rejected visual candidate for YAML requires explicit transfer to YAML, Discard, or Stay;
@@ -300,6 +307,7 @@ Cover:
 
 - visual and YAML modes operate on one validated Story;
 - YAML can be imported and exported entirely in-browser;
+- an eligible import cannot replace dirty/pending/unpersisted/recovery state without explicit destructive confirmation, while invalid imports leave existing work untouched;
 - browser YAML parsing is never attempted for raw/edited source text above 1 MiB UTF-8; unchanged oversized text originating from a validated visual transfer may be exported without parsing;
 - invalid YAML never reaches preview/render/persistence;
 - dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
@@ -313,6 +321,7 @@ Cover:
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including title ≤65,536 and canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
+- intentionally suppressed persistence while protecting a rejected recovery snapshot is treated identically as loss-risk for unload purposes;
 - reload/navigation/tab close raises a native confirmation whenever dirty/pending/unpersisted session state would otherwise be lost;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
