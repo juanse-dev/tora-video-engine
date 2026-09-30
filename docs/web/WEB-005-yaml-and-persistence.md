@@ -168,7 +168,7 @@ If client-side routing is added later, route transitions must honor the same los
 
 ## Import
 
-Support a browser file input for \.yaml / \.yml.
+Support a browser file input for `.yaml` / `.yml`.
 
 Imported text must use the same source-size guard, parser, schema, and browser authoring policy as pasted/edited YAML.
 
