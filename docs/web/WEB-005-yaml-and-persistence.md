@@ -276,14 +276,22 @@ On startup:
 
 Provide a clear way to reset the local project to the canonical/default Story, but treat reset as a destructive state transition.
 
-If there is no pending visual/YAML draft and no rejected stored recovery snapshot, reset may proceed directly.
+Reset must use the same loss-risk predicate as `beforeunload` and transactional import.
 
-If YAML is dirty, a visual candidate is pending, a validated transfer snapshot exists, or a rejected stored recovery snapshot is protected, intercept Reset and require an explicit choice:
+Reset may proceed directly **only** when all of the following are false:
 
-- **Discard pending/recovery state and reset** — clearly state what will be lost, then atomically clear editor drafts/transfer provenance/recovery protection, activate the canonical Story, and attempt best-effort persistence;
+- YAML is dirty/unapplied;
+- a visual candidate is pending;
+- a validated transfer snapshot/current transferred candidate exists;
+- the active in-memory Story differs from durable storage because persistence failed or was intentionally suppressed;
+- a rejected stored recovery snapshot is protected.
+
+If any condition is true, intercept Reset and require an explicit choice:
+
+- **Discard pending/unpersisted/recovery state and reset** — clearly identify what will be lost, including an active Story whose only current copy is in memory; then atomically clear editor drafts/transfer provenance/recovery protection, activate the canonical Story, and attempt best-effort persistence;
 - **Stay** — cancel Reset and preserve all current state.
 
-Do not auto-Apply a dirty YAML draft merely to perform Reset. When a schema-valid candidate/recovery snapshot can be exported, keep its export action available before destructive confirmation.
+Do not auto-Apply a dirty YAML draft merely to perform Reset. When a schema-valid candidate, recovery snapshot, or unpersisted active Story can be exported, keep the appropriate YAML export action available before destructive confirmation.
 
 A confirmed reset that fails to persist still changes the active in-memory Story to the canonical default and surfaces the normal persistence warning; it must not falsely claim that durable reset succeeded.
 
@@ -313,9 +321,9 @@ Cover:
 - schema-valid, browser-eligible localStorage restores, including a recheck that canonical YAML is ≤1 MiB;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
-- reset restores the default Story when no draft is pending;
-- Reset with dirty YAML/pending visual state requires explicit destructive confirmation and never silently discards the draft;
-- Reset with a rejected stored recovery snapshot requires explicit discard acknowledgement before protected storage can be replaced;
+- reset restores the default Story directly only when no loss-risk or protected recovery state exists;
+- Reset with dirty YAML, pending visual state, transfer provenance, an unpersisted active Story, or a rejected stored recovery snapshot requires explicit destructive confirmation and never silently discards the only current copy of work;
+- a reset confirmation involving an unpersisted active Story keeps **Export active Story YAML** available before discard;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - dirty YAML installs unload protection; applying/discarding it removes the guard once no other loss-risk state remains;
 - a persistence write failure on a newly active Story keeps unload protection enabled until that Story is durably saved or explicitly discarded/reset;
@@ -348,6 +356,7 @@ Cover:
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
 - intentionally suppressed persistence while protecting a rejected recovery snapshot is treated identically as loss-risk for unload purposes;
 - reload/navigation/tab close raises a native confirmation whenever dirty/pending/unpersisted session state would otherwise be lost;
+- Reset uses the same loss-risk predicate and cannot directly discard an active Story that differs from durable storage;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
 
