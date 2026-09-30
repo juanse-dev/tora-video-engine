@@ -109,14 +109,16 @@ The guard prevents parsing oversized text; it does **not** prohibit downloading 
 
 ### Apply valid YAML
 
-Source-size, schema validation, and browser authoring eligibility are separate checks. Browser authoring eligibility includes the candidate's **canonical** `serializeStorySource()` size, even when the incoming YAML buffer itself is under 1 MiB.
+Source-size, schema validation, and browser authoring eligibility are separate checks. Browser authoring eligibility includes the candidate title and canonical `serializeStorySource()` size, even when the incoming YAML buffer itself is under 1 MiB.
 
 After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 
-1. evaluate the WEB-003 browser authoring/preview budget using the shared centralized policy;
-2. canonicalize the parsed candidate with WEB-001 `serializeStorySource()` and require its UTF-8 size to be ≤ **1 MiB**;
-3. if the candidate is within **200 scenes**, **9,000 derived frames**, and **1 MiB canonical YAML**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
-4. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
+1. run the same centralized policy used by WEB-003 for every candidate source;
+2. first require `candidate.title.length <= 65_536`; if it fails, stop **before** timeline derivation or canonical serialization and report a browser-policy title error, not a schema error;
+3. derive/check scene count and total frames;
+4. canonicalize the parsed candidate with WEB-001 `serializeStorySource()` and require its UTF-8 size to be ≤ **1 MiB**;
+5. if the candidate satisfies the title bound, **200 scenes**, **9,000 derived frames**, and **1 MiB canonical YAML**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
+6. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
 
 For an over-budget but schema-valid candidate:
 
@@ -145,7 +147,24 @@ Until an eligible Apply or Discard is chosen:
 
 This avoids a retained YAML draft being based on an older Story while newer visual edits are made in parallel.
 
-The retained dirty YAML buffer is editor-session state, not the persisted project in v0.2. A full page reload restores the last successfully persisted validated Story rather than persisting invalid/unapplied YAML.
+The retained dirty YAML buffer is editor-session state, not the persisted project in v0.2. A reload still restores the last successfully persisted validated Story, but the browser must warn before a reload/navigation/tab close would discard dirty YAML.
+
+### Unload protection for session-only work
+
+Install a `beforeunload` handler while any state exists that would be lost by leaving the page:
+
+- YAML buffer is dirty/unapplied;
+- a pending visual draft differs from the active Story;
+- a validated transfer snapshot/current transferred candidate exists;
+- the active in-memory Story is newer than durable storage because the latest persistence attempt failed.
+
+The handler must use the standard browser-native confirmation mechanism (`event.preventDefault()` plus the compatibility `event.returnValue` assignment where required). Do not depend on custom dialog text because modern browsers control the warning wording.
+
+Remove the listener immediately when none of those loss-risk conditions remain, such as after successful Apply + persistence, explicit Discard/Reset, or successful persistence of the active Story.
+
+A rejected stored recovery snapshot does not by itself require `beforeunload` because its durable storage slot is protected; its protection is governed by the recovery rules below.
+
+If client-side routing is added later, route transitions must honor the same loss-risk predicate rather than relying only on `beforeunload`.
 
 ## Import
 
@@ -218,7 +237,7 @@ On startup:
 1. attempt to load stored data;
 2. handle storage access errors without crashing;
 3. validate any retrieved data with the current Story schema;
-4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player;
+4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player; this starts with `storedStory.title.length <= 65_536` before timeline derivation/canonical serialization;
 5. if both checks pass, restore it as the active Story;
 6. if the stored payload is schema-valid but browser-policy-ineligible, do not mount it. Retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the canonical/example Story only as an in-memory fallback, and show a persistent recovery banner;
 7. while a rejected stored recovery snapshot exists, do **not** automatically persist the fallback Story or later fallback-based edits into the same storage slot, because that would destroy the only stored copy;
@@ -251,6 +270,7 @@ Cover:
 - invalid YAML does not replace validated Story;
 - a >1 MiB file is rejected before file text parsing;
 - a >1 MiB pasted/edited buffer is rejected before `parseStorySource()`;
+- imported schema-valid YAML with a 65,537-code-unit title is rejected by browser policy before timeline/canonical serialization even though the YAML source itself is ≤1 MiB;
 - imported schema-valid, browser-eligible YAML updates the Story;
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
@@ -267,6 +287,8 @@ Cover:
 - Reset with dirty YAML/pending visual state requires explicit destructive confirmation and never silently discards the draft;
 - Reset with a rejected stored recovery snapshot requires explicit discard acknowledgement before protected storage can be replaced;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
+- dirty YAML installs unload protection; applying/discarding it removes the guard once no other loss-risk state remains;
+- a persistence write failure on a newly active Story keeps unload protection enabled until that Story is durably saved or explicitly discarded/reset;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
 - attempting to leave a schema-invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older active Story;
 - attempting to leave a browser-policy-rejected visual candidate for YAML requires explicit transfer to YAML, Discard, or Stay;
@@ -282,15 +304,16 @@ Cover:
 - invalid YAML never reaches preview/render/persistence;
 - dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
 - any dirty/unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
-- Apply is enabled only when YAML is both schema-valid and browser-authoring-eligible;
+- Apply is enabled only when YAML is both schema-valid and browser-authoring-eligible, including the centralized 65,536-code-unit title bound;
 - a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
 - a schema-invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
 - a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
 - every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow;
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
-- when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
-- localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
+- when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including title ≤65,536 and canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
+- localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
+- reload/navigation/tab close raises a native confirmation whenever dirty/pending/unpersisted session state would otherwise be lost;
 - persistence requires no backend, account, or database;
 - CLI YAML files remain compatible with the web app.
 
