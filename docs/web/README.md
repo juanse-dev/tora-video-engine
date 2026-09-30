@@ -33,7 +33,7 @@ The first web version is intentionally single-user, local-first, and backend-fre
 1. **Validated Story remains the rendering boundary.** The web UI must not create a second rendering model.
 2. **One renderer, multiple entry points.** Preview, browser export, Remotion Studio, and the local CLI reuse the same Story, timeline logic, scene components, assets, and video configuration.
 3. **The CLI must keep working.** Web work must not regress \`npm run video -- stories/friday-deploy.yaml\`.
-4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid, but only a validated `Story` can reach preview/persistence/rendering. MP4 rendering must be disabled whenever the active editor has invalid or unapplied changes so a stale validated Story cannot be exported by mistake. Editor mode switches are symmetric: dirty YAML requires Apply/Discard/Stay before entering visual mode, and an invalid visual draft requires Discard/Stay before entering YAML. The UI must never keep two divergent editable drafts.
+4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid or browser-policy-ineligible, but only an active validated `Story` that passed both schema and browser authoring policy can reach preview/persistence/rendering. Any visual candidate that differs from the active Story because it failed schema or browser policy is a pending visual draft and disables MP4 export. Editor mode switches must never silently discard or fork pending drafts.
 5. **Assets remain deterministic.** v0.2 uses the repository's bundled Tora poses and backgrounds; no network-generated media is required.
 6. **Static hosting only.** The MVP must not require application servers, serverless functions, databases, authentication, or cloud rendering.
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
@@ -99,11 +99,11 @@ sequenceDiagram
             Policy->>Story: Commit active validated Story
             Story->>Preview: Compile timeline and refresh preview
         else exceeds browser budget
-            Policy-->>UI: Keep current Story; suppress new live preview
-            UI-->>User: Explain browser limit / CLI alternative
+            Policy-->>UI: Keep current Story; retain candidate as pending visual draft
+            UI-->>User: Explain browser limit / CLI alternative; disable render
         end
     else schema invalid
-        Zod-->>UI: Show field/YAML errors
+        Zod-->>UI: Retain pending visual/YAML draft + show errors
         UI-->>User: Disable Render MP4 until fixed/discarded
     end
 
@@ -173,10 +173,10 @@ v0.2 is complete only when all of the following are true:
 - the canonical story opens in a 9:16 Remotion Player;
 - the user can add, edit, reorder, and remove scenes visually;
 - available poses, backgrounds, and animations are visible and selectable;
-- invalid or unapplied draft data produces actionable feedback, never reaches rendering, and disables MP4 export until fixed, applied, or discarded;
+- any pending editor candidate that has not become the active Story—because it is schema-invalid, browser-policy-ineligible, or unapplied YAML—produces actionable feedback and disables MP4 export until resolved or discarded;
 - YAML can be imported, validated, edited, and exported without changing the Story contract;
-- editor mode switches never discard or fork drafts silently: dirty YAML requires Apply/Discard/Stay before visual mode, and an invalid visual draft requires Discard/Stay before YAML mode;
-- when browser persistence succeeds, the last valid project is restored locally on reload; quota/unavailable-storage failures are handled without losing the in-memory valid Story and are clearly surfaced;
+- editor mode switches never discard or fork drafts silently: dirty YAML requires Apply/Discard/Stay before visual mode; invalid visual drafts require Discard/Stay before YAML; browser-policy-rejected visual candidates may be transferred explicitly into YAML, discarded, or kept in visual mode;
+- when browser persistence succeeds, startup restores a stored project only after it passes both StorySchema and the current browser authoring policy; schema-valid but over-budget stored payloads fall back safely with a browser-limit warning; quota/unavailable-storage failures are handled without losing the in-memory active Story and are clearly surfaced;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
 - authoring controls are locked for the lifetime of an in-flight browser render so the completed MP4 cannot become stale relative to the visible Story;
 - the web render matches the Story timing/dimensions used by the CLI;
