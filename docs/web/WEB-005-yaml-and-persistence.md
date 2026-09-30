@@ -43,11 +43,16 @@ An explicit “Apply YAML” action is preferred for v0.2 because it avoids repl
 
 ### Enter YAML mode
 
-If a YAML draft buffer with unapplied changes already exists in the current editor session, restore that buffer exactly as the user left it.
+The visual editor may itself contain a temporary invalid draft that has not been committed to the validated Story. Do not generate YAML from the older validated Story while silently abandoning that draft.
 
-Only generate a fresh canonical YAML representation from the current validated Story when there is no retained unapplied YAML buffer.
+If the visual draft is invalid when the user attempts to enter YAML mode, require one explicit choice:
 
-This prevents switching visual → YAML → visual → YAML from silently overwriting work that has not been applied or explicitly discarded.
+- **Discard visual draft** — restore the visual editor from the current validated Story, then generate canonical YAML and enter YAML mode;
+- **Stay in visual editor** — cancel the transition and preserve the invalid visual draft.
+
+If the visual editor is clean/valid, entering YAML mode generates a canonical YAML representation from the current validated Story.
+
+Because dirty YAML cannot be left for visual mode without Apply or Discard, there should not be a retained dirty YAML buffer while the visual editor is active. The two modes must never own divergent drafts concurrently.
 
 Exact whitespace/comments from an originally imported file do not need to be preserved after the YAML has been successfully applied and later regenerated from the validated Story.
 
@@ -153,6 +158,7 @@ Cover:
 - reset restores the default Story;
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
+- attempting to leave an invalid visual draft for YAML requires Discard or Stay and never silently regenerates from the older validated Story;
 - storage quota/access failures do not reject an otherwise valid Apply/import and leave the newly validated Story active in memory;
 - a failed persistence write surfaces a warning and does not overwrite/claim success for the last persisted snapshot.
 
@@ -163,6 +169,7 @@ Cover:
 - invalid YAML never reaches preview/render/persistence;
 - any unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
 - a dirty YAML buffer cannot coexist with subsequent visual edits: entering visual mode requires Apply, Discard, or Stay in YAML;
+- an invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
 - valid YAML round-trips without semantic loss;
 - when persistence succeeds, page reload restores the last persisted valid Story;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, and surface that reload recovery is not guaranteed;
