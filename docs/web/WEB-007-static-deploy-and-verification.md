@@ -73,7 +73,9 @@ A useful automated smoke flow is:
 7. verify render capability/UI state is detectable;
 8. verify a Story above 300 seconds / 9,000 frames remains schema-valid but browser render is disabled with the documented limit message;
 9. create a dirty YAML buffer and verify switching to visual mode requires Apply, Discard, or Stay rather than enabling parallel visual edits;
-10. simulate a localStorage write failure/quota error and verify Apply remains successful in memory while a persistence warning is shown.
+10. simulate a localStorage write failure/quota error and verify Apply remains successful in memory while a persistence warning is shown;
+11. create an invalid visual draft and verify switching to YAML requires Discard or Stay rather than losing the draft;
+12. start a browser render and verify all Story/draft-mutating controls remain locked until completion/failure/cancel.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -89,11 +91,13 @@ For each tested browser record:
 - Player controls work;
 - YAML import/apply works;
 - invalid or unapplied YAML visibly blocks MP4 rendering until applied or discarded;
-- dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard decision;
+- dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision;
+- an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores valid local state when persistence succeeds;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
+- while rendering, authoring controls cannot mutate the Story or create a new draft;
 - an over-budget Story is refused by browser export without being reported as schema-invalid.
 
 At minimum, complete the golden end-to-end render in one supported browser.
@@ -149,8 +153,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling
-- [ ] YAML mode-switch conflict guard passes
+- [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] canonical browser MP4 render passes on a supported browser
+- [ ] in-flight render authoring lock prevents stale-result downloads
 - [ ] browser render budget guard passes at and above the 300-second / 9,000-frame boundary
 - [ ] existing CLI render still passes
 - [ ] README matches the implemented workflows
