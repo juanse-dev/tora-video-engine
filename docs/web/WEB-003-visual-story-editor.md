@@ -115,6 +115,51 @@ There is no Apply option for an invalid visual draft. As soon as visual fields f
 
 The application must never keep both an invalid visual draft and an independently editable YAML draft at the same time.
 
+## Live caption font updates
+
+WEB-003 changes Story props after the Player has already mounted, including scene caption text. The shared `useCaptionFont(story)` hook must therefore be safe across repeated and overlapping `captionText` changes.
+
+The current one-handle-for-component-lifetime behavior is not sufficient for live editing. Refactor the shared hook so that each caption-text load generation owns its own pending render synchronization and stale async work cannot unblock or cancel a newer generation.
+
+Required behavior:
+
+- a caption change after the initial font load must not reuse a `delayRender` handle that has already been continued;
+- each active caption-text generation must settle/retire its own pending handle exactly once;
+- cleanup of an obsolete generation must not leave a pending handle that can deadlock rendering;
+- a stale successful load must not mark a newer caption generation ready;
+- a stale failure must not cancel a newer successful generation;
+- rapid A → B → C caption changes before earlier font loads complete must end with C as the active ready generation;
+- repeated edits after the initial Player mount must continue to work in both Player preview and deterministic render paths.
+
+Caching already-loaded font coverage is allowed, but it must not weaken the generation/handle ownership rules.
+
+## Browser authoring / preview budget
+
+Schema validity does not by itself mean a Story is safe to mount into the browser editor and Player. `StoryRenderer` creates one Remotion `Sequence` per scene, so an unbounded schema-valid scene array can freeze the tab before WEB-006 render eligibility is even considered.
+
+For v0.2, define centralized browser-authoring limits:
+
+- maximum active scenes: **200**;
+- maximum derived total duration: **300 seconds / 9,000 frames at 30 FPS**.
+
+These are browser policy limits, not additions to `StorySchema`.
+
+Before a schema-valid candidate becomes the active validated Story used by the visual editor and Player:
+
+1. derive total frames with the existing timeline/render-plan logic;
+2. check scene count and total frames against the browser budget;
+3. only commit/mount the candidate when both checks pass.
+
+A schema-valid candidate above either limit:
+
+- remains valid for the engine/CLI;
+- must not replace the current live browser Story;
+- must not be mounted into `StoryRenderer` / Remotion Player;
+- must show an actionable explanation that the browser authoring limit was exceeded;
+- should direct the user to YAML/CLI workflows rather than labeling the document schema-invalid.
+
+Keep these limits named and centralized so WEB-005 import and WEB-006 rendering reuse the same browser-policy source of truth.
+
 ## Preview behavior
 
 When a draft is invalid:
@@ -135,7 +180,11 @@ Add automated coverage for state/domain transformations where practical:
 - invalid duration;
 - empty title/text;
 - optional/default animation handling;
-- invalid visual draft → YAML mode transition requires Discard/Stay.
+- invalid visual draft → YAML mode transition requires Discard/Stay;
+- multiple consecutive caption edits after Player mount, including overlapping rapid edits, preserve correct font readiness without stale `delayRender` handles;
+- a schema-valid Story at the browser budget boundary can become active;
+- a schema-valid Story with 201 scenes is rejected by browser authoring policy before Player mount;
+- a schema-valid Story above 9,000 derived frames is rejected by browser authoring policy before Player mount.
 
 Avoid large snapshot tests of CSS.
 
@@ -143,12 +192,14 @@ Avoid large snapshot tests of CSS.
 
 - every current Story field is editable visually;
 - scene order can be changed without React renderer changes;
-- valid edits update the Player;
+- valid edits within the browser authoring budget update the Player;
 - invalid drafts show actionable errors, do not update the validated Story, and disable MP4 rendering until fixed;
+- schema-valid candidates above 200 scenes or 9,000 frames do not replace/mount the live browser Story and are reported as browser-policy limits, not schema errors;
 - attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
 - UI option sets cannot drift silently from the Story schema;
+- the caption-font hook safely handles multiple sequential and overlapping caption changes after mount;
 - CLI and v0.1 tests remain green.
 
 ## Out of scope
