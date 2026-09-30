@@ -13,9 +13,10 @@ A user can:
 - switch between visual authoring and YAML;
 - import an existing Story YAML file;
 - validate YAML with useful errors;
-- apply valid YAML to the visual editor and preview;
-- export the current valid Story as YAML;
-- reload the page and recover the last valid project.
+- apply browser-eligible valid YAML to the visual editor and preview;
+- export the active Story as canonical YAML;
+- export a schema-valid current YAML candidate verbatim for CLI use even when browser-policy-ineligible;
+- reload the page and recover the last browser-eligible persisted project.
 
 ## YAML editing model
 
@@ -26,15 +27,23 @@ Use a draft buffer:
 ~~~text
 YAML text buffer
       ↓
+≤ 1 MiB UTF-8?
+  │          └── no → source-size warning; do not parse
+ yes
+  ↓
 parseStorySource()
       ↓
-valid? ── no → show errors, keep current validated Story
+schema-valid? ── no → show errors; keep active Story
   │
  yes
   ↓
+browser authoring policy
+  │          └── ineligible → keep YAML candidate; disable Apply/render
+ eligible
+  ↓
 Apply
   ↓
-Validated Story
+Active Validated Story
 ~~~
 
 An explicit “Apply YAML” action is preferred for v0.2 because it avoids replacing a user's text/cursor position while still preserving one authoritative Story for preview/render.
@@ -67,7 +76,8 @@ Exact whitespace/comments from an originally imported file do not need to be pre
 Track YAML dirty state relative to a **YAML baseline buffer**, not by comparing text to canonical serialization of the active Story.
 
 - when YAML mode opens from the active Story, generate canonical YAML and set that exact text as both buffer and clean baseline;
-- when a visual candidate is explicitly transferred to YAML, set the transferred serialization as the buffer; it remains dirty relative to the active Story because it has not been applied;
+- when YAML mode opens from the active Story, that generated text is the clean baseline representing the active Story;
+- when a browser-policy-rejected visual candidate is explicitly transferred to YAML, keep the active Story's clean baseline and replace only the buffer with the transferred serialization, so the candidate is immediately dirty/unapplied;
 - after a successful Apply, set the **current exact YAML buffer** as the new clean baseline without rewriting whitespace/comments/quotes/key order;
 - subsequent edits are dirty only when they differ from that baseline;
 - leaving and later re-entering YAML after a clean Apply may regenerate canonical YAML from the active Story, consistent with v0.2 not promising formatting/comment preservation across mode changes;
