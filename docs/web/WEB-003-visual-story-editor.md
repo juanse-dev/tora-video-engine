@@ -119,7 +119,7 @@ If the visual draft is invalid and the user attempts to switch to YAML mode, do 
 
 There is no Apply option for an invalid visual draft. As soon as visual fields form a schema-valid and browser-eligible Story, the normal visual-editor flow commits that Story automatically.
 
-For a schema-valid but browser-policy-rejected visual candidate, WEB-005 may offer an explicit **Open candidate in YAML** transition that serializes/transfers that exact candidate into the YAML buffer. Otherwise the user must Discard or Stay in the visual editor. Never generate YAML from the older active Story while silently dropping the rejected candidate.
+For a schema-valid but browser-policy-rejected visual candidate, WEB-005 may offer an explicit **Open candidate in YAML** transition that serializes/transfers that exact candidate into the YAML buffer. The transition must also carry provenance that this exact buffer came from the already schema-validated visual candidate so WEB-005 can offer CLI export without reparsing it when the serialization itself exceeds the browser's 1 MiB parse guard. Any subsequent YAML edit invalidates that provenance. Otherwise the user must Discard or Stay in the visual editor. Never generate YAML from the older active Story while silently dropping the rejected candidate.
 
 The application must never keep both a pending visual draft and an independently editable YAML draft at the same time.
 
@@ -201,7 +201,7 @@ Add automated coverage for state/domain transformations where practical:
 - a schema-valid Story at the browser budget boundary can become active;
 - a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
 - a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
-- a schema-valid visual candidate whose canonical YAML exceeds 1 MiB (for example via an extremely large title) remains pending, never becomes active, and disables MP4 rendering;
+- a schema-valid visual candidate whose canonical YAML exceeds 1 MiB (for example via an extremely large title) remains pending, never becomes active, disables MP4 rendering, and can be transferred/exported to YAML for CLI use without reparsing while its transferred buffer remains unchanged;
 - every browser-eligible active Story serializes to canonical YAML ≤1 MiB and can be parsed again after export/import.
 
 Avoid large snapshot tests of CSS.
