@@ -95,12 +95,12 @@ Keep this limit named/centralized so it can be revisited later based on real bro
 The primary render action must only be enabled when all of the following are true:
 
 - the current browser supports the requested H.264/MP4 render configuration;
-- the visual editor has no invalid draft values;
+- the visual editor has no pending candidate that differs from the active Story, whether schema-invalid or browser-policy-ineligible;
 - the YAML editor has no unapplied buffer changes;
 - an active validated Story that has already passed the browser authoring/preview budget is available;
 - the Story's derived total duration/frame count is within the v0.2 browser render budget.
 
-If the visible editor state is invalid or unapplied, do not offer to render the previous validated Story behind it. Disable the action and explain what must be fixed, applied, or discarded first.
+If either editor has pending content that is not the active Story—schema-invalid visual input, browser-policy-rejected visual input, or unapplied YAML—do not offer to render the older active Story behind it. Disable the action and explain what must be fixed, reduced into budget, transferred, applied, or discarded first.
 
 If the Story is valid but exceeds the browser render budget, disable only browser MP4 export and explain that this is a browser resource constraint rather than a Story validation error.
 
@@ -160,7 +160,7 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - supported browsers can render the canonical Story to an H.264 MP4;
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
-- MP4 rendering is disabled whenever visual draft state is invalid or YAML contains unapplied changes, preventing accidental export of a stale validated Story;
+- MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
 - a Story at or below 300 seconds / 9,000 frames remains eligible when all other requirements pass;
 - a valid Story above 300 seconds / 9,000 frames is rejected only by browser render eligibility, with a clear CLI alternative;
 - unsupported browsers receive a useful message and can still edit/preview;
