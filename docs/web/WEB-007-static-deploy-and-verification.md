@@ -87,7 +87,9 @@ A useful automated smoke flow is:
 21. transfer an over-budget visual candidate to YAML and verify **Export current YAML candidate** downloads that candidate rather than the older active Story;
 22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path;
 23. create a schema-valid visual candidate with a title large enough that canonical YAML exceeds 1 MiB, verify it remains pending and never reaches Player/persistence/render;
-24. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard.
+24. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard;
+25. create a schema-valid visual candidate whose canonical YAML is >1 MiB, transfer it with **Open candidate in YAML**, and verify **Export current YAML candidate** succeeds without invoking `parseStorySource()`;
+26. edit that oversized transferred YAML by one character and verify its validated-transfer provenance is cleared and candidate export is disabled until the source is reduced to ≤1 MiB and parsed successfully.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -112,7 +114,8 @@ For each tested browser record:
 - if supported, canonical Story renders and downloads successfully;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
 - an over-budget visual candidate—including one rejected solely because its canonical YAML exceeds 1 MiB—remains pending and blocks render rather than allowing export of the previous active Story;
-- YAML sources above 1 MiB are refused before synchronous parsing;
+- raw/edited YAML sources above 1 MiB are refused before synchronous parsing;
+- an unchanged >1 MiB YAML buffer transferred from an already schema-validated visual candidate remains exportable for CLI use without parsing, while editing it clears that privilege;
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
@@ -174,7 +177,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] persisted Stories are rechecked against browser policy before restore
 - [ ] YAML Apply requires both schema validity and browser eligibility
 - [ ] successful Apply resets YAML dirty baseline even for noncanonical source
-- [ ] >1 MiB YAML is rejected before parse
+- [ ] >1 MiB raw/edited YAML is rejected before parse
+- [ ] validated visual candidates rejected solely by >1 MiB canonical YAML can still transfer/export for CLI use without reparsing
+- [ ] editing an oversized transferred buffer clears validated-transfer provenance
 - [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
