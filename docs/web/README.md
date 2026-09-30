@@ -33,7 +33,7 @@ The first web version is intentionally single-user, local-first, and backend-fre
 1. **Validated Story remains the rendering boundary.** The web UI must not create a second rendering model.
 2. **One renderer, multiple entry points.** Preview, browser export, Remotion Studio, and the local CLI reuse the same Story, timeline logic, scene components, assets, and video configuration.
 3. **The CLI must keep working.** Web work must not regress \`npm run video -- stories/friday-deploy.yaml\`.
-4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid, but only a validated \`Story\` can reach preview/export/persistence.
+4. **Transient editor state is not render state.** UI controls and YAML text may be temporarily invalid, but only a validated \`Story\` can reach preview/persistence/rendering. MP4 rendering must be disabled whenever the visible editor has invalid or unapplied changes so a stale validated Story cannot be exported by mistake.
 5. **Assets remain deterministic.** v0.2 uses the repository's bundled Tora poses and backgrounds; no network-generated media is required.
 6. **Static hosting only.** The MVP must not require application servers, serverless functions, databases, authentication, or cloud rendering.
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
@@ -91,6 +91,7 @@ sequenceDiagram
         Story->>Preview: Compile timeline and refresh preview
     else invalid
         Zod-->>UI: Show field/YAML errors
+        UI-->>User: Disable Render MP4 until fixed/discarded
     end
 
     User->>UI: Click Render MP4
@@ -156,7 +157,7 @@ v0.2 is complete only when all of the following are true:
 - the canonical story opens in a 9:16 Remotion Player;
 - the user can add, edit, reorder, and remove scenes visually;
 - available poses, backgrounds, and animations are visible and selectable;
-- invalid draft data produces actionable validation errors and never reaches rendering;
+- invalid or unapplied draft data produces actionable feedback, never reaches rendering, and disables MP4 export until fixed, applied, or discarded;
 - YAML can be imported, validated, edited, and exported without changing the Story contract;
 - the last valid project is restored locally on reload;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
