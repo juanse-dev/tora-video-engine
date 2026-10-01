@@ -721,6 +721,12 @@ export const App = () => {
     const requestId = importRequestRef.current + 1;
     importRequestRef.current = requestId;
 
+    // A new selection supersedes any previously staged import immediately,
+    // even when the replacement fails before or during validation.
+    setTransition((current) =>
+      current?.kind === "import" ? null : current,
+    );
+
     if (file.size > MAX_BROWSER_YAML_SOURCE_BYTES) {
       setImportMessage(
         "Import rejected before reading: file exceeds the 1 MiB browser limit.",
@@ -763,7 +769,6 @@ export const App = () => {
     }
 
     if (validation.kind !== "eligible") {
-      setPolicyRejectedImport(null);
       setImportMessage(
         validation.kind === "pending"
           ? "Import validation did not complete."
@@ -772,7 +777,6 @@ export const App = () => {
       return;
     }
 
-    setPolicyRejectedImport(null);
     const liveState = liveImportStateRef.current;
 
     if (liveState.lossRisk || liveState.recovery !== null) {
