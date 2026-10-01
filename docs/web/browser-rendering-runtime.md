@@ -11,7 +11,7 @@ The supported WEB-006 path is deliberately narrower than Remotion's full client-
 - container: MP4;
 - video codec: H.264;
 - dimensions: 1080 × 1920;
-- frame rate: 30 FPS;
+- frame rate: 30 FPS, with each browser-encoded `VideoFrame` assigned an explicit `33,333 µs` duration through `onFrame` so the last frame contributes to container duration;
 - audio: disabled with `muted: true`;
 - output target: `web-fs`;
 - HTML-in-canvas capture: disabled.
