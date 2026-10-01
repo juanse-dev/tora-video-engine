@@ -212,7 +212,7 @@ Do not derive filenames by passing `Story.title` directly to the browser downloa
 For v0.2, the function must be deterministic and apply these rules in order:
 
 1. normalize the title to Unicode NFC;
-2. replace ASCII/C1 control characters and the cross-platform reserved filename characters `< > : " / \\ | ? *` with `-`;
+2. replace control characters `U+0000–U+001F` and `U+007F–U+009F`, plus the cross-platform reserved filename characters `< > : " / \\ | ? *`, with `-`;
 3. replace each run of Unicode whitespace with one `-`;
 4. collapse repeated `-` characters and trim leading/trailing spaces, dots, and hyphens;
 5. if the remaining basename is a Windows device name, case-insensitively matching `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, or `LPT1`–`LPT9` before an optional dot suffix, prefix it with `tora-`;
@@ -222,6 +222,7 @@ For v0.2, the function must be deterministic and apply these rules in order:
 Append the extension only after sanitizing: `.yaml` for WEB-005 and `.mp4` for WEB-006.
 
 The sanitizer must remain bounded even when the source title is at the 65,536-code-unit browser-policy boundary or comes from a schema-valid CLI/recovery candidate outside that browser title limit.
+
 ## Export
 
 Provide two unambiguous export paths so the user never downloads the older active Story when intending to take a pending candidate to the CLI.
