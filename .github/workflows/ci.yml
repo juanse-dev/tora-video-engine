@@ -50,14 +50,14 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
+      - name: Verify required browser render golden
+        run: npx playwright test --config=playwright.browser-render.config.mjs
+
       - name: Install Playwright Chromium
         run: npx playwright install chromium
 
       - name: Verify Player resource buffering
         run: npm run test:browser
-
-      - name: Verify required browser render golden
-        run: npx playwright test --config=playwright.browser-render.config.mjs
 
       - name: Render PR smoke story
         if: github.event_name == 'pull_request'
