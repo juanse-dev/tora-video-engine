@@ -518,11 +518,20 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
         throw new Error("Expected caption line element");
       }
 
+      const frame = line.closest("[data-caption-frame]");
+
+      if (!(frame instanceof HTMLElement)) {
+        throw new Error("Missing caption frame");
+      }
+
       const style = getComputedStyle(line);
       const lineHeight = Number.parseFloat(style.lineHeight);
+      const frameScale =
+        frame.getBoundingClientRect().width / frame.offsetWidth;
 
       return {
-        height: line.getBoundingClientRect().height,
+        compositionHeight:
+          line.getBoundingClientRect().height / frameScale,
         lineHeight,
       };
     }),
@@ -530,8 +539,8 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
 
   expect(
     naturalLineGeometry.every(
-      ({height, lineHeight}) =>
-        Math.abs(height - lineHeight) <= 1,
+      ({compositionHeight, lineHeight}) =>
+        Math.abs(compositionHeight - lineHeight) <= 1,
     ),
   ).toBe(true);
 
