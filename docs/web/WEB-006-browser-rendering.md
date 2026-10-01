@@ -98,13 +98,14 @@ WEB-003/WEB-005 already enforce the browser authoring/preview ceiling before a S
 - equivalent maximum at fixed 30 FPS: **9,000 frames**;
 - maximum canonical YAML size: **1 MiB UTF-8**.
 
-WEB-006 does **not** introduce a higher or independent export threshold in v0.2. Instead, render eligibility defensively rechecks the same centralized policy immediately before starting the web renderer.
+WEB-006 does **not** introduce a higher or independent export threshold in v0.2. Instead, render eligibility defensively calls the exact same ordered `evaluateBrowserStoryPolicy(story)` from WEB-003 immediately before starting the web renderer.
 
 Therefore:
 
-- raw visual title above 65,536 code units is rejected before construction, while YAML/import/restore candidates with the same oversized title are rejected by the centralized post-schema policy before timeline/serialization; a candidate above 200 scenes, 9,000 frames, or 1 MiB canonical YAML is likewise rejected before it becomes active;
-- it cannot reach browser render eligibility as an active Story;
-- the render-time check protects against state corruption, policy drift, or implementation bugs;
+- the defensive recheck preserves the same short-circuit order **title → scene count → derived frames → canonical serialization/bytes**;
+- a title or 201+ scene failure returns before timeline derivation; title/scene/frame failures return before canonical serialization;
+- candidates over any browser limit cannot reach normal browser render eligibility as active Stories;
+- the render-time check protects against state corruption, policy drift, or implementation bugs without duplicating/reordering policy logic;
 - CLI portability remains available through YAML export for schema-valid candidates.
 
 Do not describe an over-budget Story as being rejected *only* by render eligibility.
@@ -205,7 +206,7 @@ If organization policy forbids the required telemetry path, production deploymen
 - MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
 - an active Story whose title is within the visual bound and that is at or below 200 scenes, 300 seconds / 9,000 frames, and 1 MiB canonical YAML remains render-eligible when all other requirements pass;
 - schema-valid candidates above the browser budget are rejected by authoring policy before activation and cannot reach normal browser rendering;
-- render start defensively rechecks the same centralized authoring policy and aborts on any mismatch;
+- render start defensively calls the same ordered centralized authoring policy and aborts on any mismatch; a 201+ scene active Story assertion path must not derive timeline metadata or serialize canonical YAML;
 - unsupported browsers receive a useful message and can still edit/preview;
 - render uses an immutable validated Story snapshot;
 - all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
