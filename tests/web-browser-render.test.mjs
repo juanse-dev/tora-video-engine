@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {exampleStory} from "../src/story/exampleStory.ts";
 import {
   acquireBrowserRenderLock,
+  canDownloadBrowserRenderSnapshot,
   checkBrowserRenderCapability,
   cleanupRemotionOpfsUntilEmpty,
   evaluateBrowserRenderPolicy,
@@ -174,6 +175,26 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(result.reason, "scene-count");
     assert.equal(derived, false);
     assert.equal(serialized, false);
+  });
+
+  it("suppresses download when the frozen Story no longer matches live authoring", () => {
+    const snapshot = structuredClone(exampleStory);
+    const same = structuredClone(exampleStory);
+    const changed = structuredClone(exampleStory);
+    changed.scenes[0].text = "Changed after render started";
+
+    assert.equal(
+      canDownloadBrowserRenderSnapshot(snapshot, same, false),
+      true,
+    );
+    assert.equal(
+      canDownloadBrowserRenderSnapshot(snapshot, changed, false),
+      false,
+    );
+    assert.equal(
+      canDownloadBrowserRenderSnapshot(snapshot, same, true),
+      false,
+    );
   });
 
   it("passes the shared composition and exact video-only settings to Remotion", async () => {
