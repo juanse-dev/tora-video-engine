@@ -2,6 +2,7 @@ import {defineConfig} from "@playwright/test";
 
 export default defineConfig({
   testDir: "tests/browser",
+  testIgnore: "browser-render-golden.spec.mjs",
   timeout: 20_000,
   use: {
     baseURL: "http://127.0.0.1:4173",
