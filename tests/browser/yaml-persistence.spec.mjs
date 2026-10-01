@@ -436,6 +436,18 @@ test("retry ownership reconciles against edits made while lock acquisition is pe
     .toContain("Secondary B");
 
   await page.close();
+  await expect
+    .poll(() =>
+      secondary.evaluate(async () => {
+        const snapshot = await navigator.locks.query();
+        return snapshot.held.some(
+          (lock) =>
+            lock.name === "tora-video-engine:persistence-writer",
+        );
+      }),
+    )
+    .toBe(false);
+
   await secondary.evaluate(() => window.__releaseRetryLock());
 
   await expect(secondary.locator(".app-shell")).toHaveAttribute(
