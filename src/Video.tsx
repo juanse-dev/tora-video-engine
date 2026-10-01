@@ -24,7 +24,6 @@ export const ToraVideo = ({story}: ToraVideoProps) => {
           fontSize: 48,
           justifyContent: "center",
           padding: 72,
-          textAlign: "center",
         }}
       >
         Preview unavailable: {previewFontError.message}
