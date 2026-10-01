@@ -145,7 +145,8 @@ A useful automated smoke flow is:
 58. seed localStorage with a raw persisted envelope above 1,048,576 UTF-16 code units and verify startup does not call `JSON.parse()`, StorySchema, timeline, serializer, or font coverage; fallback stays in memory, the durable slot is protected, and **Export stored raw JSON** returns the original bytes/text;
 59. seed a bounded compact JSON envelope containing thousands/201+ terse scenes (and separately an oversized raw caption/title); verify JSON parsing may occur but the cheap storage preflight rejects it before `StorySchema.safeParse()` / font coverage and preserves the raw envelope as recovery data;
 60. serialize the maximum-boundary normal v0.2 persisted envelope with compact JSON and verify it stays within `MAX_PERSISTED_ENVELOPE_CODE_UNITS`; force an envelope-write overflow and verify it is handled as persistence failure without replacing the prior durable slot;
-61. seed bounded malformed JSON, an unsupported storage-version envelope, and a bounded envelope whose candidate fails StorySchema; for each case verify startup preserves the exact raw durable string as protected recovery, fallback edits cannot autosave over it, **Export stored raw JSON** returns it verbatim, and only explicit discard/reset/import acknowledgement releases the slot.
+61. seed bounded malformed JSON, an unsupported storage-version envelope, and a bounded envelope whose candidate fails StorySchema; for each case verify startup preserves the exact raw durable string as protected recovery, fallback edits cannot autosave over it, **Export stored raw JSON** returns it verbatim, and only explicit discard/reset/import acknowledgement releases the slot;
+62. simulate a previous tab/realm entering `cleanup-blocked`, beginning a delayed OPFS writer close, then unloading so its Web Lock is implicitly released; open a new tab, acquire the same unversioned render lock, and verify the **pre-render** `cleanupRemotionOpfsUntilEmpty()` retries/backoff until the stale writer releases the file. Assert `renderMediaOnWeb()` is never called while the prefix remains non-empty; if the bounded preflight exhausts, the new tab enters `cleanup-blocked` and requires Retry cleanup before a later render request can start.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -176,7 +177,7 @@ For each tested browser record:
 - downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles, including Win32 superscript device aliases;
 - while rendering or cancelling, authoring controls cannot mutate the Story or create a new draft;
 - Cancel Render is always available during an active render, aborts through the owned `AbortController`, and does not release the render lock before locked OPFS cleanup completes;
-- a delayed writer close exercises cleanup retry/backoff; exhausted cleanup enters `cleanup-blocked` and blocks all further browser renders until Retry cleanup succeeds;
+- a delayed writer close exercises cleanup retry/backoff both after a render and on the next tab/session's **pre-render** cleanup; no render starts against a non-empty/still-live `__remotion_render:` prefix, and exhausted cleanup enters `cleanup-blocked` until Retry cleanup succeeds;
 - oversized visual title input is rejected before Story construction; oversized YAML/import titles that reach StorySchema are rejected by the centralized post-schema policy, while oversized stored titles are intercepted earlier by storage preflight before StorySchema;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
 - pasted/edited YAML above 1,048,576 UTF-16 code units is refused before `TextEncoder`; remaining buffers above 1 MiB UTF-8 are refused before synchronous parsing;
@@ -284,8 +285,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
 - [ ] dedicated **unversioned** render Web Lock `tora-video-engine:web-fs-render` serializes `web-fs` rendering across same-origin tabs and concurrently open old/new Tora bundle versions through Blob/download handoff and positively-completed cleanup
 - [ ] Cancel Render is mandatory, uses `AbortController`, awaits render settlement, and shares the locked cleanup path
-- [ ] delayed writer-close test proves cleanup retries/backoff while retaining the render lock
-- [ ] exhausted cleanup enters `cleanup-blocked`; Retry cleanup is required before the lock/render capability is released
+- [ ] delayed writer-close tests prove the same cleanup helper retries/backoff both post-render and pre-render/new-session while retaining the render lock
+- [ ] exhausted pre-render cleanup enters `cleanup-blocked` and never calls `renderMediaOnWeb()`; exhausted post-render cleanup likewise blocks release; Retry cleanup is required before rendering/release can proceed
 - [ ] repeated success/failure/cancel render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
 - [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
 - [ ] canonical browser MP4 render passes on a supported browser
