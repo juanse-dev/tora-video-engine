@@ -1,4 +1,4 @@
-import {AbsoluteFill, useCurrentFrame} from "remotion";
+import {AbsoluteFill} from "remotion";
 import {StoryRenderer} from "./StoryRenderer";
 import {useCaptionFont} from "./fonts.ts";
 import type {Story} from "./story/types";
@@ -8,11 +8,10 @@ export type ToraVideoProps = {
 };
 
 export const ToraVideo = ({story}: ToraVideoProps) => {
-  const frame = useCurrentFrame();
   useCaptionFont(story);
 
   return (
-    <AbsoluteFill data-tora-frame={frame}>
+    <AbsoluteFill>
       <StoryRenderer story={story} />
     </AbsoluteFill>
   );
