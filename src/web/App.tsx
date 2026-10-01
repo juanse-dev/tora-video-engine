@@ -349,6 +349,11 @@ export const App = () => {
     };
   }, []);
 
+  const refreshRenderLockStatus = useCallback(async () => {
+    const status = await getBrowserRenderLockStatus();
+    setRenderLockStatus(status);
+  }, []);
+
   useEffect(() => {
     if (
       renderCapability?.kind !== "ready" ||
@@ -1544,6 +1549,19 @@ export const App = () => {
             value={renderUi.progress}
             aria-label="Browser render progress"
           />
+        ) : null}
+        {renderCapability?.kind === "ready" &&
+        (renderLockStatus === "busy" ||
+          renderLockStatus === "unavailable") &&
+        renderUi.phase !== "rendering" &&
+        renderUi.phase !== "cancelling" &&
+        renderUi.phase !== "cleanup-blocked" ? (
+          <button
+            type="button"
+            onClick={() => void refreshRenderLockStatus()}
+          >
+            Retry render availability
+          </button>
         ) : null}
         {renderUi.phase === "rendering" ? (
           <button type="button" onClick={cancelBrowserRender}>
