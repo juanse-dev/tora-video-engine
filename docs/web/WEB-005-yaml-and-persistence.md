@@ -131,7 +131,7 @@ After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 3. if the candidate is eligible, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
 4. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
 
-Apply/import/restore must not independently reorder or reimplement these checks. In particular, a 201+ scene candidate must be rejected before timeline derivation or `serializeStorySource()`.
+YAML Apply/import must not independently reorder or reimplement these checks. Stored candidates use WEB-005's source-specific startup pipeline first—raw envelope bound → parse/version → cheap storage preflight → StorySchema—and **only survivors** call the same ordered `evaluateBrowserStoryPolicy()`. Once any candidate reaches that centralized policy, a 201+ scene candidate must be rejected before timeline derivation or `serializeStorySource()`.
 
 For an over-budget but schema-valid candidate:
 
