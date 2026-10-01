@@ -133,8 +133,12 @@ A useful automated smoke flow is:
 46. mock/force capability detection to return `canRender: true` with `resolvedOutputTarget: "arraybuffer"`; verify Render MP4 remains disabled, `renderMediaOnWeb()` is not called, and editing/preview/YAML export/CLI guidance remain available;
 47. open two same-origin tabs with `web-fs` capability and start Render MP4 in tab A; verify tab B cannot enter `renderMediaOnWeb()` until A has completed `getBlob()`, download handoff, and OPFS cleanup/released the dedicated render lock;
 48. seed stale `__remotion_render:` OPFS files, then perform 20 sequential successful renders in one long-lived tab plus one cancelled and one failed render; after each lifecycle verify no render-prefixed file accumulation remains and origin storage usage does not monotonically grow from leaked Remotion outputs;
-49. paste a multi-megabyte caption into a visual scene and verify the 360-UTF-16-unit raw guard rejects it before `StorySchema.safeParse()`, code-point counting, or font-coverage validation;
-50. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again.
+49. inject a delayed OPFS writer close on failure/cancel so the first `removeEntry()` attempt cannot succeed; verify the render lock remains held, cleanup follows the documented retry/backoff schedule, and another tab cannot render until the prefix is observed empty;
+50. force cleanup retries to exhaust; verify the UI enters `cleanup-blocked`, authoring may resume but browser render stays disabled, the render Web Lock remains owned, and **Retry cleanup** releases it only after deletion succeeds;
+51. start a render, invoke **Cancel Render**, verify state becomes `cancelling`, the owned `AbortController` is aborted exactly once, the render promise is awaited, and cleanup completes (or enters `cleanup-blocked`) before the render lifecycle is considered finished;
+52. paste/edit a multi-megabyte YAML string and verify the `nextBuffer.length > 1_048_576` guard rejects it before editor-state commit, `TextEncoder`, YAML parsing, or Zod;
+53. paste a multi-megabyte caption into a visual scene and verify the 360-UTF-16-unit raw guard rejects it before `StorySchema.safeParse()`, code-point counting, or font-coverage validation;
+54. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -163,10 +167,12 @@ For each tested browser record:
 - if supported, canonical Story renders and downloads successfully with `muted: true`, contains no audio track, and measures exactly 360 video frames / 12.0 seconds;
 - centered/left/long/unbroken caption fixtures match the documented shared-layout semantics under the normal web renderer without relying on experimental HTML-in-canvas;
 - downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles, including Win32 superscript device aliases;
-- while rendering, authoring controls cannot mutate the Story or create a new draft;
+- while rendering or cancelling, authoring controls cannot mutate the Story or create a new draft;
+- Cancel Render is always available during an active render, aborts through the owned `AbortController`, and does not release the render lock before locked OPFS cleanup completes;
+- a delayed writer close exercises cleanup retry/backoff; exhausted cleanup enters `cleanup-blocked` and blocks all further browser renders until Retry cleanup succeeds;
 - oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
-- raw/edited YAML sources above 1 MiB are refused before synchronous parsing;
+- pasted/edited YAML above 1,048,576 UTF-16 code units is refused before `TextEncoder`; remaining buffers above 1 MiB UTF-8 are refused before synchronous parsing;
 - a schema-valid browser-policy-rejected visual candidate can transfer to YAML within the normal 1 MiB source ceiling; unchanged transfer provenance may skip redundant parsing, while editing clears that provenance and returns to normal validation;
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
@@ -239,7 +245,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] policy-rejected stored Stories remain exportable and protected from fallback overwrite until explicit discard
 - [ ] YAML Apply requires both schema validity and browser eligibility
 - [ ] successful Apply resets YAML dirty baseline even for noncanonical source
-- [ ] >1 MiB raw/edited YAML is rejected before parse
+- [ ] pasted/edited YAML >1,048,576 UTF-16 code units is rejected before `TextEncoder`, then exact >1 MiB UTF-8 is rejected before parse
 - [ ] transferred visual candidates remain within the 1 MiB source ceiling under current v0.2 structural bounds
 - [ ] editing a transferred buffer clears validated-transfer provenance and requires normal validation again
 - [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
@@ -263,7 +269,10 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
 - [ ] capability and render calls both use `muted: true`
 - [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
-- [ ] dedicated render Web Lock serializes `web-fs` rendering across same-origin tabs through Blob/download handoff and cleanup
+- [ ] dedicated render Web Lock serializes `web-fs` rendering across same-origin tabs through Blob/download handoff and positively-completed cleanup
+- [ ] Cancel Render is mandatory, uses `AbortController`, awaits render settlement, and shares the locked cleanup path
+- [ ] delayed writer-close test proves cleanup retries/backoff while retaining the render lock
+- [ ] exhausted cleanup enters `cleanup-blocked`; Retry cleanup is required before the lock/render capability is released
 - [ ] repeated success/failure/cancel render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
 - [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
 - [ ] canonical browser MP4 render passes on a supported browser
