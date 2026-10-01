@@ -258,17 +258,21 @@ export const acquirePersistenceOwnership = async (
     resolveAcquired = resolve;
   });
 
-  void locks.request(
-    PERSISTENCE_WRITER_LOCK,
-    {mode: "exclusive", ifAvailable: true},
-    async (lock) => {
-      resolveAcquired?.(lock !== null);
+  void locks
+    .request(
+      PERSISTENCE_WRITER_LOCK,
+      {mode: "exclusive", ifAvailable: true},
+      async (lock) => {
+        resolveAcquired?.(lock !== null);
 
-      if (lock !== null) {
-        await hold;
-      }
-    },
-  );
+        if (lock !== null) {
+          await hold;
+        }
+      },
+    )
+    .catch(() => {
+      resolveAcquired?.(false);
+    });
 
   const owned = await acquired;
 
