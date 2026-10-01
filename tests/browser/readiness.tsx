@@ -1,35 +1,31 @@
-import {Player, type PlayerRef} from "@remotion/player";
-import {useEffect, useRef} from "react";
+import {Player} from "@remotion/player";
+import {useEffect} from "react";
 import {createRoot} from "react-dom/client";
-import {ToraVideo} from "../../src/Video.tsx";
+import {useCurrentFrame} from "remotion";
+import {ToraVideo, type ToraVideoProps} from "../../src/Video.tsx";
 import {exampleStory} from "../../src/story/exampleStory.ts";
 import {getWebPlayerConfig} from "../../src/web/previewConfig.ts";
 
-declare global {
-  interface Window {
-    __toraPlayer?: PlayerRef;
-  }
-}
-
 const config = getWebPlayerConfig(exampleStory);
 
-const Harness = () => {
-  const playerRef = useRef<PlayerRef>(null);
+const ProbeVideo = (props: ToraVideoProps) => {
+  const frame = useCurrentFrame();
 
   useEffect(() => {
-    if (playerRef.current) {
-      window.__toraPlayer = playerRef.current;
-    }
+    document.documentElement.dataset.toraFrame = String(frame);
 
     return () => {
-      delete window.__toraPlayer;
+      delete document.documentElement.dataset.toraFrame;
     };
-  }, []);
+  }, [frame]);
 
+  return <ToraVideo {...props} />;
+};
+
+const Harness = () => {
   return (
     <Player
-      ref={playerRef}
-      component={ToraVideo}
+      component={ProbeVideo}
       inputProps={{story: exampleStory}}
       durationInFrames={config.durationInFrames}
       fps={config.fps}
