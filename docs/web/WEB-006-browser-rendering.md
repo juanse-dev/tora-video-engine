@@ -173,9 +173,25 @@ While holding the render lock, Tora owns cleanup of this prefix for its origin:
 3. run the web render and call `getBlob()`;
 4. create the download object URL / hand the Blob to the download flow;
 5. in a `finally` path, enumerate the OPFS root again and remove all `__remotion_render:` entries created/left by the render, including partial files from failure/cancel;
-6. only then release the render lock.
+6. only release the render lock after the cleanup protocol has positively observed that no `__remotion_render:` entries remain.
 
-Cleanup errors must be surfaced as a storage warning and retried on the next render before any new render starts. A render whose MP4 Blob was successfully obtained may still be offered to the user even if post-handoff cleanup reports a warning, but the app must not silently allow leaked files to grow without retrying cleanup.
+### Awaitable cleanup after failure/cancel
+
+Do **not** assume that rejection of `renderMediaOnWeb()` means Remotion/Mediabunny has already released its OPFS writer. In the pinned stack, Remotion's disposal calls the async Mediabunny cancel path without awaiting it, so an immediate `removeEntry()` may race the writer close.
+
+Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and run it while the render Web Lock remains held:
+
+1. enumerate/remove every `__remotion_render:` entry;
+2. re-enumerate and succeed only when none remain;
+3. when removal fails or entries remain, wait with bounded exponential backoff and retry. Use a documented schedule such as **0, 25, 50, 100, 200, 400, 800, 1,600, 3,200 ms**;
+4. if cleanup succeeds during that bounded phase, complete the render/cancel/failure lifecycle and release the lock;
+5. if the bounded phase is exhausted, transition to `cleanup-blocked`, surface that browser render storage is still being released, and **keep the render Web Lock held**. Do not permit another browser render in this tab or another compliant tab;
+6. provide **Retry cleanup**. Each retry reruns the bounded cleanup helper under the already-held lock. Once it observes an empty render prefix, clear the warning and release the lock;
+7. page unload may implicitly release the Web Lock; the next session must perform the existing pre-render prefix cleanup before rendering.
+
+A successfully obtained MP4 Blob may still be handed to the download flow before post-render cleanup finishes, but cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
+
+Tests must inject/delay target closure so the first removal attempt fails and prove that cleanup waits/retries rather than passing only on fast local writer shutdown.
 
 This prefix cleanup is safe only because the dedicated same-origin render lock makes Tora's `web-fs` render lifecycle exclusive. Do not perform broad OPFS deletion outside that lock.
 
@@ -185,17 +201,31 @@ At minimum expose:
 
 - idle;
 - rendering;
+- **cancelling**;
 - success;
-- failure.
+- failure;
+- **cleanup-blocked**.
 
 While rendering:
 
+- create and own one `AbortController` for the render and pass its `signal` to `renderMediaOnWeb()`;
+- expose an explicit **Cancel Render** action;
 - prevent accidental duplicate concurrent renders from the primary button;
 - surface available progress information from the renderer;
 - keep an understandable status if progress is coarse;
 - lock every control that can change either the validated Story or an editor draft, including visual fields, asset selection, scene add/delete/reorder, YAML editing/apply/import, reset, and editor-mode transitions;
-- allow non-mutating interactions such as preview playback if they do not affect the render input;
-- unlock authoring only after the render has succeeded, failed, or been explicitly cancelled if cancellation is supported.
+- allow non-mutating interactions such as preview playback if they do not affect the render input.
+
+When the user selects Cancel Render:
+
+1. transition to `cancelling`;
+2. disable repeated Cancel requests;
+3. call `abortController.abort()`;
+4. await the `renderMediaOnWeb()` promise to settle/reject;
+5. run the failure/cancel OPFS cleanup protocol below while still holding the cross-tab render lock;
+6. only then transition out of the in-flight lifecycle.
+
+Cancellation is a **required v0.2 feature**, not conditional. Authoring remains locked while rendering/cancelling and through the initial cleanup attempt. If cleanup ultimately enters `cleanup-blocked`, authoring may unlock, but Render MP4 remains disabled and the cross-tab render lock remains held until cleanup succeeds or the page is unloaded.
 
 The render must capture one immutable Story snapshot at start. The UI lock ensures that the visible authoring state remains the same snapshot for the lifetime of the render, so a successful download cannot silently represent an older Story than the editor currently shows.
 
@@ -271,7 +301,9 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs from pre-render OPFS cleanup through Blob/download handoff and final cleanup;
+- same-origin browser renders are mutually exclusive across tabs from pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup;
+- Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
+- delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
