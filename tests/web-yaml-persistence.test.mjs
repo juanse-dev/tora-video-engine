@@ -262,6 +262,56 @@ describe("WEB-005 persisted restore pipeline", () => {
     assert.equal(result.recovery.raw, raw);
   });
 
+  it("preflights scene count before StorySchema", () => {
+    let storyParseCalls = 0;
+    const raw = JSON.stringify({
+      version: PERSISTENCE_VERSION,
+      story: {
+        ...exampleStory,
+        scenes: Array.from(
+          {length: 201},
+          () => structuredClone(exampleStory.scenes[0]),
+        ),
+      },
+    });
+    const result = restorePersistedProject(raw, exampleStory, {
+      storyParse: () => {
+        storyParseCalls += 1;
+        return {success: true, data: exampleStory};
+      },
+    });
+
+    assert.equal(storyParseCalls, 0);
+    assert.equal(result.recovery.reason, "preflight-rejected");
+    assert.equal(result.recovery.raw, raw);
+  });
+
+  it("preflights raw caption length before StorySchema/font coverage", () => {
+    let storyParseCalls = 0;
+    const raw = JSON.stringify({
+      version: PERSISTENCE_VERSION,
+      story: {
+        ...exampleStory,
+        scenes: [
+          {
+            ...exampleStory.scenes[0],
+            text: "a".repeat(361),
+          },
+        ],
+      },
+    });
+    const result = restorePersistedProject(raw, exampleStory, {
+      storyParse: () => {
+        storyParseCalls += 1;
+        return {success: true, data: exampleStory};
+      },
+    });
+
+    assert.equal(storyParseCalls, 0);
+    assert.equal(result.recovery.reason, "preflight-rejected");
+    assert.equal(result.recovery.raw, raw);
+  });
+
   it("protects schema-invalid raw storage", () => {
     const raw = JSON.stringify({
       version: PERSISTENCE_VERSION,
