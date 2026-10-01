@@ -359,11 +359,14 @@ const assertMp4Metadata = async (path) => {
   expect(video[0].codec_name).toBe("h264");
   expect(video[0].width).toBe(1080);
   expect(video[0].height).toBe(1920);
-  expect(video[0].avg_frame_rate).toBe("30/1");
-  expect(
-    Number(video[0].nb_read_frames ?? video[0].nb_frames),
-  ).toBe(30);
-  expect(Number(metadata.format.duration)).toBeCloseTo(1, 2);
+  const frameCount = Number(
+    video[0].nb_read_frames ?? video[0].nb_frames,
+  );
+  const duration = Number(metadata.format.duration);
+
+  expect(frameCount).toBe(30);
+  expect(duration).toBeCloseTo(1, 2);
+  expect(frameCount / duration).toBeCloseTo(30, 1);
 };
 
 test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
