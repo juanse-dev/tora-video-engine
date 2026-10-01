@@ -147,8 +147,9 @@ A useful automated smoke flow is:
 60. serialize the maximum-boundary normal v0.2 persisted envelope with compact JSON and verify it stays within `MAX_PERSISTED_ENVELOPE_CODE_UNITS`; force an envelope-write overflow and verify it is handled as persistence failure without replacing the prior durable slot;
 61. seed bounded malformed JSON, an unsupported storage-version envelope, and a bounded envelope whose candidate fails StorySchema; for each case verify startup preserves the exact raw durable string as protected recovery, fallback edits cannot autosave over it, **Export stored raw data** returns it verbatim, and only explicit discard/reset/import acknowledgement releases the slot;
 62. simulate a previous tab/realm entering `cleanup-blocked`, beginning a delayed OPFS writer close, then unloading so its Web Lock is implicitly released; open a new tab, acquire the same unversioned render lock, and verify the **pre-render** `cleanupRemotionOpfsUntilEmpty()` retries/backoff until the stale writer releases the file. Assert `renderMediaOnWeb()` is never called while the prefix remains non-empty. If bounded preflight exhausts, enter `cleanup-blocked`; when **Retry cleanup** later succeeds, assert this tab releases the render lock immediately and returns to idle without auto-starting or retaining the old render request. A second tab must then be able to acquire the global lock while the first tab merely waits for a fresh Render click;
-63. return an OPFS-backed File/Blob whose reads are deliberately delayed. Verify Tora checks `size <= 256 MiB`, fully awaits `arrayBuffer()`, constructs an independent Blob, then deletes OPFS. After deletion, delay and consume the downloadable Blob/object URL and assert every byte still matches the rendered MP4;
-64. return a finalized OPFS-backed output of **256 MiB + 1 byte**. Verify Tora does not call `arrayBuffer()`, does not create/download an object URL from the OPFS-backed result, cleans OPFS under the render lock, releases the lock, and shows the browser-output-too-large + CLI/YAML recovery path.
+63. return an OPFS-backed File/Blob whose reads are deliberately delayed. Verify Tora first checks `size <= 128 MiB`, fully awaits exactly one `arrayBuffer()` payload copy, constructs exactly one independent Blob payload copy, then deletes OPFS. After deletion, delay and consume the downloadable Blob/object URL and assert every byte still matches the rendered MP4;
+64. exercise a near-cap **128 MiB** finalized output with allocation instrumentation/spies around the materialization helper: assert the implementation model is one full-size ArrayBuffer plus one full-size independent Blob payload and that the derived peak payload duplication is ≤256 MiB; no third application-created full-payload copy is allowed;
+65. return a finalized OPFS-backed output of **128 MiB + 1 byte**. Verify Tora rejects it from browser materialization before `arrayBuffer()`, does not create/download an object URL from the OPFS-backed result, cleans OPFS under the render lock, releases the lock, and shows the browser-output-too-large + CLI/YAML recovery path.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -174,7 +175,7 @@ For each tested browser record:
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result including `resolvedOutputTarget`;
 - browser MP4 export is offered only for `web-fs`; an `arraybuffer`-only result is explained and does not start rendering;
-- if supported, canonical Story renders and downloads successfully with `muted: true`, contains no audio track, measures exactly 360 video frames / 12.0 seconds, and remains readable after the source OPFS file is deleted because download uses an independently materialized Blob;
+- if supported, canonical Story renders and downloads successfully with `muted: true`, contains no audio track, measures exactly 360 video frames / 12.0 seconds, remains readable after the source OPFS file is deleted because download uses an independently materialized Blob, and the finalized artifact fits the derived 128 MiB materialization ceiling;
 - centered/left/long/unbroken caption fixtures match the documented shared-layout semantics under the normal web renderer without relying on experimental HTML-in-canvas;
 - downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles, including Win32 superscript device aliases;
 - while rendering or cancelling, authoring controls cannot mutate the Story or create a new draft;
@@ -290,8 +291,10 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] delayed writer-close tests prove the same cleanup helper retries/backoff both post-render and pre-render/new-session while retaining the render lock
 - [ ] exhausted pre-render cleanup enters `cleanup-blocked` and never calls `renderMediaOnWeb()`; successful pre-render Retry cleanup releases the lock immediately and requires a fresh Render click/reacquire/preflight, while exhausted post-render cleanup keeps the lock until its Retry cleanup succeeds
 - [ ] repeated success/failure/cancel/materialization-failure render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
-- [ ] final web-fs output ≤256 MiB is fully materialized to independent bytes before OPFS deletion; delayed post-cleanup download reads remain intact
-- [ ] final web-fs output >256 MiB is rejected before `arrayBuffer()` allocation/object-URL download and routes to CLI/YAML guidance
+- [ ] browser download materialization has an explicit 256 MiB peak **additional payload-memory** budget and derives a 128 MiB maximum artifact for the required two-full-copy strategy
+- [ ] near-cap 128 MiB materialization test observes exactly one full-size ArrayBuffer + one independent full-size Blob payload and no third application-created full-payload copy
+- [ ] final web-fs output ≤128 MiB is fully materialized to independent bytes before OPFS deletion; delayed post-cleanup download reads remain intact
+- [ ] final web-fs output >128 MiB is rejected before `arrayBuffer()` allocation/object-URL download and routes to CLI/YAML guidance
 - [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
