@@ -503,15 +503,37 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
   await expect(caption).toBeVisible();
 
   const natural =
-    "A long natural language caption keeps wrapping explicit and deterministic across the shared renderer without CSS word breaking.";
+    "A long natural language caption keeps wrapping explicit and deterministic across the encoded browser renderer without relying on CSS word breaking.";
   await importSingleScene(page, {
-    type: "dialogue",
+    type: "intro",
     text: natural,
-    pose: "confused",
   });
-  caption = page.locator("[data-caption-align=left]").first();
+  caption = page.locator("[data-caption-align=center]").first();
   const naturalLines = caption.locator("[data-caption-line]");
   expect(await naturalLines.count()).toBeGreaterThan(1);
+
+  const naturalLineGeometry = await naturalLines.evaluateAll((lines) =>
+    lines.map((line) => {
+      if (!(line instanceof HTMLElement)) {
+        throw new Error("Expected caption line element");
+      }
+
+      const style = getComputedStyle(line);
+      const lineHeight = Number.parseFloat(style.lineHeight);
+
+      return {
+        height: line.getBoundingClientRect().height,
+        lineHeight,
+      };
+    }),
+  );
+
+  expect(
+    naturalLineGeometry.every(
+      ({height, lineHeight}) =>
+        Math.abs(height - lineHeight) <= 1,
+    ),
+  ).toBe(true);
 
   const token = "W".repeat(180);
   await importSingleScene(page, {
