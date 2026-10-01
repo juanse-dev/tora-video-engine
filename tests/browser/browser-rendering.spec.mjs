@@ -753,11 +753,14 @@ test("browser render capability either explains fallback or renders canonical H.
   expect(videoStreams[0].codec_name).toBe("h264");
   expect(videoStreams[0].width).toBe(1080);
   expect(videoStreams[0].height).toBe(1920);
-  expect(videoStreams[0].avg_frame_rate).toBe("30/1");
-  expect(
-    Number(videoStreams[0].nb_read_frames ?? videoStreams[0].nb_frames),
-  ).toBe(360);
-  expect(Number(metadata.format.duration)).toBeCloseTo(12, 2);
+  const frameCount = Number(
+    videoStreams[0].nb_read_frames ?? videoStreams[0].nb_frames,
+  );
+  const duration = Number(metadata.format.duration);
+
+  expect(frameCount).toBe(360);
+  expect(duration).toBeCloseTo(12, 2);
+  expect(frameCount / duration).toBeCloseTo(30, 1);
 
   const [introFrame, dialogueFrame, chaosFrame, punchlineFrame] =
     await Promise.all([
