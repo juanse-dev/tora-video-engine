@@ -8,16 +8,16 @@ const trimUnsafeEdges = (value: string): string =>
   value.replace(/^[ .-]+|[ .-]+$/gu, "");
 
 const RESERVED_FILENAME_CHARACTERS = new Set(
-  Array.from('<>:"/\\\\|?*'),
+  Array.from('<>:"/\\|?*'),
 );
 
 const replaceControlAndReservedCharacters = (value: string): string =>
   Array.from(value, (codePoint) => {
-    const value = codePoint.codePointAt(0) ?? 0;
-    const control =
-      value <= 0x1f || (value >= 0x7f && value <= 0x9f);
+    const scalar = codePoint.codePointAt(0) ?? 0;
+    const isControl =
+      scalar <= 0x1f || (scalar >= 0x7f && scalar <= 0x9f);
 
-    return control || RESERVED_FILENAME_CHARACTERS.has(codePoint)
+    return isControl || RESERVED_FILENAME_CHARACTERS.has(codePoint)
       ? "-"
       : codePoint;
   }).join("");
@@ -44,9 +44,9 @@ const truncateUtf8 = (value: string, maxBytes: number): string => {
 };
 
 export const getDownloadBasename = (title: string): string => {
-  let basename = title
-    .normalize("NFC")
-    .replace(/[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/gu, "-")
+  let basename = replaceControlAndReservedCharacters(
+    title.normalize("NFC"),
+  )
     .replace(/\s+/gu, "-")
     .replace(/-+/gu, "-");
 
