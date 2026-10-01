@@ -387,12 +387,15 @@ const assertEncodedCaption = async ({
     const expectedWidth =
       expected.widthRatio * captionWidth;
 
+    const expectedLineHeight =
+      expected.heightRatio * expectation.frameHeight;
+
     expect(encoded.brightPixels).toBeGreaterThan(20);
     expect(encodedHeight).toBeGreaterThan(
-      Math.max(8, expectation.fontSize * 0.16),
+      Math.max(8, expectedLineHeight * 0.45),
     );
     expect(encodedHeight).toBeLessThan(
-      expectation.fontSize * 0.65,
+      expectedLineHeight + 2,
     );
     expect(encoded.minX).toBeGreaterThan(captionX + 4);
     expect(encoded.maxX).toBeLessThan(
