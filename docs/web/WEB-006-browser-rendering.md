@@ -132,6 +132,7 @@ The primary render action must only be enabled when all of the following are tru
 
 - `canRenderMediaOnWeb({... muted: true, ...})` reports the requested H.264/MP4 configuration as renderable;
 - that same capability result has `resolvedOutputTarget === "web-fs"`;
+- the dedicated same-origin render Web Lock API is available and no other tab currently owns the render lock;
 - the visual editor has no pending candidate that differs from the active Story, whether schema-invalid or browser-policy-ineligible;
 - the YAML editor has no unapplied buffer changes;
 - an active validated Story that has already passed the browser authoring/preview budget is available;
@@ -140,6 +141,43 @@ The primary render action must only be enabled when all of the following are tru
 If either editor has pending content that is not the active Story—schema-invalid visual input, browser-policy-rejected visual input, or unapplied YAML—do not offer to render the older active Story behind it. Disable the action and explain what must be fixed, reduced into budget, transferred, applied, or discarded first.
 
 If the defensive render-time policy check somehow finds that the active Story exceeds the browser budget, abort before rendering, report an internal/policy mismatch, and keep the CLI/YAML alternative available. Under the required authoring gate, this state should not arise during normal use.
+
+## Cross-tab render exclusivity and OPFS lifecycle
+
+The pinned Remotion renderer serializes media renders only inside one JavaScript realm. That module-local queue does not protect two same-origin tabs, while the required `web-fs` path uses shared origin-private file-system storage and performs stale-file cleanup at render start.
+
+v0.2 must therefore acquire a second, dedicated exclusive Web Lock before invoking `renderMediaOnWeb()`:
+
+~~~ts
+tora-video-engine:web-fs-render:v0.2
+~~~
+
+This lock is independent from the WEB-005 persistence-writer lock.
+
+Required behavior:
+
+- acquire the render lock **immediately before any OPFS cleanup / `renderMediaOnWeb()` call**;
+- if the lock is unavailable, do not start a second render. Show that another Tora tab is rendering and offer Retry/Cancel rather than relying on Remotion's module-local queue;
+- if `navigator.locks` is unavailable, disable v0.2 browser MP4 rendering because cross-tab safety for the required `web-fs` lifecycle cannot be guaranteed; preview/edit/YAML/CLI remain usable;
+- hold the lock across `renderMediaOnWeb()`, `getBlob()`, object-URL/download handoff, and Tora's OPFS cleanup;
+- release it only after the render's temporary OPFS state is cleaned, including failure/cancel paths.
+
+### Tora-owned Remotion OPFS cleanup
+
+The pinned `web-fs` implementation creates files named `__remotion_render:<session>:<uuid>` and does not delete completed files from the current session. Tora must not rely solely on Remotion's stale-session cleanup.
+
+While holding the render lock, Tora owns cleanup of this prefix for its origin:
+
+1. obtain the OPFS root via `navigator.storage.getDirectory()`;
+2. before starting a render, remove any pre-existing entries whose names start with `__remotion_render:` (there can be no compliant concurrent Tora render while the lock is held);
+3. run the web render and call `getBlob()`;
+4. create the download object URL / hand the Blob to the download flow;
+5. in a `finally` path, enumerate the OPFS root again and remove all `__remotion_render:` entries created/left by the render, including partial files from failure/cancel;
+6. only then release the render lock.
+
+Cleanup errors must be surfaced as a storage warning and retried on the next render before any new render starts. A render whose MP4 Blob was successfully obtained may still be offered to the user even if post-handoff cleanup reports a warning, but the app must not silently allow leaked files to grow without retrying cleanup.
+
+This prefix cleanup is safe only because the dedicated same-origin render lock makes Tora's `web-fs` render lifecycle exclusive. Do not perform broad OPFS deletion outside that lock.
 
 ## Render UI state
 
@@ -227,12 +265,14 @@ If organization policy forbids the required telemetry path, production deploymen
 - an active Story whose title is within the visual bound and that is at or below 200 scenes, 300 seconds / 9,000 frames, and 1 MiB canonical YAML remains render-eligible when all other requirements pass;
 - schema-valid candidates above the browser budget are rejected by authoring policy before activation and cannot reach normal browser rendering;
 - render start defensively calls the same ordered centralized authoring policy and aborts on any mismatch; a 201+ scene active Story assertion path must not derive timeline metadata or serialize canonical YAML;
-- browsers that cannot render H.264/MP4 **or** resolve only to `arraybuffer` receive a useful message and can still edit/preview/export YAML;
+- browsers that cannot render H.264/MP4, resolve only to `arraybuffer`, lack Web Locks, or encounter another-tab render ownership receive a useful message and can still edit/preview/export YAML;
 - render uses an immutable validated Story snapshot;
 - all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
+- same-origin browser renders are mutually exclusive across tabs from pre-render OPFS cleanup through Blob/download handoff and final cleanup;
+- repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
 - client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.
