@@ -20,6 +20,8 @@ const letterSpacing: Record<CaptionVariant, number> = {
 };
 
 const COMBINING_MARK = /^\p{Mark}$/u;
+const ZERO_WIDTH_SPACE = "\u200B";
+const WORD_JOINER = "\u2060";
 // Preserve every supported Unicode no-break whitespace character. JavaScript's
 // \s includes all four, so each must be excluded explicitly from the
 // collapsible set to avoid creating new line-break opportunities.
@@ -61,8 +63,13 @@ const glyphAdvanceEm = (grapheme: string): number => {
     return CONSERVATIVE_WIDE_ADVANCE_EM;
   }
 
-  if (baseCharacter === "\uFEFF") {
-    // ZERO WIDTH NO-BREAK SPACE is retained semantically but has no advance.
+  if (
+    baseCharacter === "\uFEFF" ||
+    baseCharacter === WORD_JOINER ||
+    baseCharacter === ZERO_WIDTH_SPACE
+  ) {
+    // ZWNBSP and WORD JOINER prohibit a break; ZERO WIDTH SPACE permits one.
+    // All three are format controls with no glyph advance.
     return 0;
   }
 
@@ -123,6 +130,34 @@ export const estimateCaptionLineWidth = (
   );
 };
 
+const segmentHardWrapUnits = (token: string): string[] => {
+  const graphemes = segmentSupportedGraphemes(token);
+  const units: string[] = [];
+  let current = "";
+
+  for (let index = 0; index < graphemes.length; index += 1) {
+    const grapheme = graphemes[index];
+    const next = graphemes[index + 1];
+
+    current += grapheme;
+
+    // WORD JOINER forbids a break on either side, so keep the adjacent
+    // graphemes in the same hard-wrap unit.
+    if (grapheme === WORD_JOINER || next === WORD_JOINER) {
+      continue;
+    }
+
+    units.push(current);
+    current = "";
+  }
+
+  if (current.length > 0) {
+    units.push(current);
+  }
+
+  return units;
+};
+
 const splitOversizedToken = (
   token: string,
   variant: CaptionVariant,
@@ -131,8 +166,8 @@ const splitOversizedToken = (
   const parts: string[] = [];
   let current = "";
 
-  for (const grapheme of segmentSupportedGraphemes(token)) {
-    const candidate = current + grapheme;
+  for (const unit of segmentHardWrapUnits(token)) {
+    const candidate = current + unit;
 
     if (
       current.length > 0 &&
@@ -140,7 +175,7 @@ const splitOversizedToken = (
         CAPTION_CONTENT_WIDTH
     ) {
       parts.push(current);
-      current = grapheme;
+      current = unit;
       continue;
     }
 
@@ -154,12 +189,51 @@ const splitOversizedToken = (
   return parts;
 };
 
-const tokenizeCaption = (text: string): string[] => {
+type CaptionToken = {
+  text: string;
+  separatorBefore: "" | " ";
+};
+
+const tokenizeCaption = (text: string): CaptionToken[] => {
   const trimmed = text
     .replace(LEADING_COLLAPSIBLE_WHITESPACE, "")
     .replace(TRAILING_COLLAPSIBLE_WHITESPACE, "");
+  const tokens: CaptionToken[] = [];
+  let current = "";
+  let separatorBefore: "" | " " = "";
 
-  return trimmed.split(COLLAPSIBLE_WHITESPACE).filter(Boolean);
+  const pushCurrent = () => {
+    if (current.length === 0) {
+      return;
+    }
+
+    tokens.push({
+      text: current,
+      separatorBefore,
+    });
+    current = "";
+    separatorBefore = "";
+  };
+
+  for (const grapheme of segmentSupportedGraphemes(trimmed)) {
+    if (COLLAPSIBLE_WHITESPACE.test(grapheme)) {
+      pushCurrent();
+      separatorBefore = " ";
+      continue;
+    }
+
+    current += grapheme;
+
+    if (grapheme === ZERO_WIDTH_SPACE) {
+      // Preserve U+200B in the text while exposing its Unicode break
+      // opportunity to the deterministic layout.
+      pushCurrent();
+    }
+  }
+
+  pushCurrent();
+
+  return tokens;
 };
 
 export const layoutCaptionLines = (
@@ -176,23 +250,24 @@ export const layoutCaptionLines = (
   const lines: string[] = [];
   let current = "";
 
-  const pushToken = (token: string) => {
+  const pushToken = (token: CaptionToken) => {
     if (current.length === 0) {
       if (
-        estimateCaptionLineWidth(token, variant, fontSize) <=
+        estimateCaptionLineWidth(token.text, variant, fontSize) <=
         CAPTION_CONTENT_WIDTH
       ) {
-        current = token;
+        current = token.text;
         return;
       }
 
-      const chunks = splitOversizedToken(token, variant, fontSize);
+      const chunks = splitOversizedToken(token.text, variant, fontSize);
       lines.push(...chunks.slice(0, -1));
       current = chunks.at(-1) ?? "";
       return;
     }
 
-    const candidate = `${current} ${token}`;
+    const candidate =
+      current + token.separatorBefore + token.text;
 
     if (
       estimateCaptionLineWidth(candidate, variant, fontSize) <=
@@ -206,14 +281,14 @@ export const layoutCaptionLines = (
     current = "";
 
     if (
-      estimateCaptionLineWidth(token, variant, fontSize) <=
+      estimateCaptionLineWidth(token.text, variant, fontSize) <=
       CAPTION_CONTENT_WIDTH
     ) {
-      current = token;
+      current = token.text;
       return;
     }
 
-    const chunks = splitOversizedToken(token, variant, fontSize);
+    const chunks = splitOversizedToken(token.text, variant, fontSize);
     lines.push(...chunks.slice(0, -1));
     current = chunks.at(-1) ?? "";
   };
