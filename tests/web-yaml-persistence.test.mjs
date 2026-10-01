@@ -23,6 +23,7 @@ import {
   evaluateYamlSource,
   isYamlDirty,
   tryEditYamlBuffer,
+  validateYamlBuffer,
 } from "../src/web/yamlState.ts";
 
 describe("WEB-005 YAML state", () => {
@@ -39,16 +40,6 @@ describe("WEB-005 YAML state", () => {
     const result = tryEditYamlBuffer(
       state,
       "a".repeat(MAX_BROWSER_YAML_SOURCE_CODE_UNITS + 1),
-      {
-        utf8ByteLength: () => {
-          encoded += 1;
-          return 1;
-        },
-        parse: () => {
-          parsed += 1;
-          return exampleStory;
-        },
-      },
     );
 
     assert.equal(result.accepted, false);
@@ -57,20 +48,32 @@ describe("WEB-005 YAML state", () => {
     assert.equal(parsed, 0);
   });
 
-  it("rejects exact UTF-8 overflow before parser", () => {
+  it("checks exact UTF-8 overflow only in validation and before parser", () => {
     const state = createYamlStateFromActiveStory(exampleStory);
+    let encoded = 0;
     let parsed = 0;
 
-    const result = tryEditYamlBuffer(state, "é", {
-      utf8ByteLength: () => 1_048_577,
+    const edited = tryEditYamlBuffer(state, "é");
+
+    assert.equal(edited.accepted, true);
+    assert.equal(edited.state.validation.kind, "pending");
+    assert.equal(encoded, 0);
+    assert.equal(parsed, 0);
+
+    const validated = validateYamlBuffer(edited.state, "editor.yaml", {
+      utf8ByteLength: () => {
+        encoded += 1;
+        return 1_048_577;
+      },
       parse: () => {
         parsed += 1;
         return exampleStory;
       },
     });
 
-    assert.equal(result.accepted, false);
+    assert.equal(encoded, 1);
     assert.equal(parsed, 0);
+    assert.equal(validated.validation.kind, "source-oversized");
   });
 
   it("makes noncanonical applied YAML clean at the exact buffer", () => {
@@ -82,7 +85,8 @@ describe("WEB-005 YAML state", () => {
     assert.equal(edited.accepted, true);
     assert.equal(isYamlDirty(edited.state), true);
 
-    const applied = applyYamlState(edited.state);
+    const validated = validateYamlBuffer(edited.state);
+    const applied = applyYamlState(validated);
     assert.equal(applied.applied, true);
     assert.equal(applied.state.baseline, noncanonical);
     assert.equal(applied.state.buffer, noncanonical);
@@ -101,8 +105,11 @@ describe("WEB-005 YAML state", () => {
     const edited = tryEditYamlBuffer(state, "title: [broken");
 
     assert.equal(edited.accepted, true);
-    assert.equal(edited.state.validation.kind, "parse-invalid");
-    assert.equal(applyYamlState(edited.state).applied, false);
+    assert.equal(edited.state.validation.kind, "pending");
+
+    const validated = validateYamlBuffer(edited.state);
+    assert.equal(validated.validation.kind, "parse-invalid");
+    assert.equal(applyYamlState(validated).applied, false);
   });
 
   it("keeps policy-rejected YAML distinct and exportable", () => {
@@ -117,8 +124,13 @@ describe("WEB-005 YAML state", () => {
     const edited = tryEditYamlBuffer(initial, source);
 
     assert.equal(edited.accepted, true);
-    assert.equal(canExportYamlCandidate(edited.state), true);
-    assert.equal(applyYamlState(edited.state).applied, false);
+    assert.equal(edited.state.validation.kind, "pending");
+    assert.equal(canExportYamlCandidate(edited.state), false);
+
+    const validated = validateYamlBuffer(edited.state);
+    assert.equal(validated.validation.kind, "policy-rejected");
+    assert.equal(canExportYamlCandidate(validated), true);
+    assert.equal(applyYamlState(validated).applied, false);
   });
 
   it("transfers exact validated visual candidate with a fresh active baseline", () => {
@@ -172,6 +184,14 @@ describe("WEB-005 download basename", () => {
     assert.ok(bytes.byteLength <= 96);
     assert.equal(Array.from(basename).length, 24);
     assert.equal(basename, "😀".repeat(24));
+  });
+
+  it("rechecks reserved Windows names after truncation and edge trimming", () => {
+    const title = "CON" + "-.".repeat(47) + "x";
+    const basename = getDownloadBasename(title);
+
+    assert.equal(basename, "tora-CON");
+    assert.ok(new TextEncoder().encode(basename).byteLength <= 96);
   });
 
   it("stays bounded for a 65,536-code-unit title", () => {
