@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {exampleStory} from "../src/story/exampleStory.ts";
 import {
   acquireBrowserRenderLock,
+  BROWSER_FRAME_DURATION_MICROSECONDS,
   canDownloadBrowserRenderSnapshot,
   checkBrowserRenderCapability,
   cleanupRemotionOpfsUntilEmpty,
@@ -232,6 +233,8 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(seen.muted, true);
     assert.equal(seen.outputTarget, "web-fs");
     assert.equal(seen.allowHtmlInCanvas, false);
+    assert.equal(typeof seen.onFrame, "function");
+    assert.equal(BROWSER_FRAME_DURATION_MICROSECONDS, 33_333);
     assert.equal(seen.licenseKey, "public-test-key");
     assert.equal(seen.inputProps.story, exampleStory);
     assert.equal(seen.composition.id, "ToraVideo");
