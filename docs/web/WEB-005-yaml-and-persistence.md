@@ -113,12 +113,12 @@ Source-size, schema validation, and browser authoring eligibility are separate c
 
 After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 
-1. run the same centralized policy used by WEB-003 for every candidate source;
-2. first require `candidate.title.length <= 65_536`; if it fails, stop **before** timeline derivation or canonical serialization and report a browser-policy title error, not a schema error;
-3. derive/check scene count and total frames;
-4. canonicalize the parsed candidate with WEB-001 `serializeStorySource()` and require its UTF-8 size to be ≤ **1 MiB**;
-5. if the candidate satisfies the title bound, **200 scenes**, **9,000 derived frames**, and **1 MiB canonical YAML**, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
-6. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
+1. call the exact centralized `evaluateBrowserStoryPolicy(candidate)` contract from WEB-003;
+2. that policy must short-circuit in the order **title length → scene count → derived frames → canonical serialization/bytes**;
+3. if the candidate is eligible, replace the active validated Story, update the visual editor/preview, set the current YAML buffer as the new clean baseline, and attempt persistence;
+4. if the candidate exceeds any browser limit, do **not** replace the active validated Story, do **not** mount it into the visual editor/Player, and do **not** persist it as the active browser project.
+
+Apply/import/restore must not independently reorder or reimplement these checks. In particular, a 201+ scene candidate must be rejected before timeline derivation or `serializeStorySource()`.
 
 For an over-budget but schema-valid candidate:
 
@@ -215,7 +215,7 @@ For v0.2, the function must be deterministic and apply these rules in order:
 2. replace control characters `U+0000–U+001F` and `U+007F–U+009F`, plus the cross-platform reserved filename characters `< > : " / \\ | ? *`, with `-`;
 3. replace each run of Unicode whitespace with one `-`;
 4. collapse repeated `-` characters and trim leading/trailing spaces, dots, and hyphens;
-5. if the remaining basename is a Windows device name, case-insensitively matching `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, or `LPT1`–`LPT9` before an optional dot suffix, prefix it with `tora-`;
+5. if the remaining basename is a Windows device name, case-insensitively match the Win32 reserved set before an optional dot suffix: `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, plus the Unicode aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`; prefix any match with `tora-`. Keep NFC normalization rather than relying on compatibility normalization to catch these aliases implicitly;
 6. preserve otherwise valid Unicode, including emoji, but truncate to at most **96 UTF-8 bytes** without splitting a Unicode code point; trim trailing dots/hyphens again after truncation;
 7. if the result is empty, dot-only, or otherwise collapses away, use the fallback basename `tora-video`.
 
@@ -255,6 +255,30 @@ Serialization/export must not change Story semantics.
 
 ## Persistence
 
+Use browser-local persistence for the MVP, but allow **exactly one persistence writer per origin**.
+
+### Cross-tab single-writer lock
+
+Before any tab may write the project/recovery keys in `localStorage`, it must acquire and hold an exclusive Web Locks API lock for the lifetime of that tab/session, using a stable name such as:
+
+~~~ts
+tora-video-engine:persistence-writer:v0.2
+~~~
+
+Required behavior:
+
+- acquire with `navigator.locks.request(..., {mode: "exclusive", ifAvailable: true}, ...)` before the first storage write and keep the callback pending while the tab owns persistence;
+- the tab that acquires the lock is the **persistence owner** and is the only tab allowed to write, replace, or release the active-project or protected-recovery storage slots;
+- a tab that does not acquire the lock is a **secondary tab**: it may restore/read, edit in memory, preview, render, and export, but it must suppress every `localStorage` write;
+- any secondary-tab edit that diverges from its restored Story is immediately unpersisted loss-risk state, shows a visible “another tab owns persistence” warning, offers YAML export, and participates in the existing `beforeunload` / Reset / Import destructive guards;
+- a secondary tab must never claim its active Story is durably stored merely because it originally restored the same value—the persistence owner may have changed storage since then;
+- provide a **Retry persistence ownership** action. When the other tab has closed/crashed and the lock becomes available, reacquire it, re-read durable storage **before writing**, and compare it with the secondary tab's in-memory state;
+- if durable storage changed while the tab was secondary, enter an explicit conflict state with **Reload durable project**, **Keep current in memory and overwrite** (destructive confirmation), and **Export current YAML**. Do not autosave until the conflict is resolved;
+- acquiring ownership while a rejected stored recovery snapshot exists must preserve that protected recovery state; it may only be released by the existing explicit discard/reset/import acknowledgement rules;
+- if `navigator.locks` is unavailable, do not fall back to unsafe multi-writer `localStorage`. Run persistence in session-only mode, surface the limitation, and treat committed in-memory changes as unpersisted loss-risk state.
+
+The exclusive lock prevents a second compliant Tora tab from overwriting either the normal durable baseline or a protected recovery slot. It is a storage-safety mechanism, not multi-user collaboration.
+
 Use browser-local persistence for the MVP.
 
 Prefer \`localStorage\` because the current Story payload is small and contains no binary assets.
@@ -287,7 +311,7 @@ On startup:
 2. handle storage access errors without crashing;
 3. validate any retrieved data with the current Story schema;
 4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player; this starts with `storedStory.title.length <= 65_536` before timeline derivation/canonical serialization;
-5. if both checks pass, restore it as the active Story;
+5. if both checks pass, restore it as the active Story. The browser-policy check is the same ordered `evaluateBrowserStoryPolicy()` from WEB-003;
 6. if the stored payload is schema-valid but browser-policy-ineligible, do not mount it. Retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the canonical/example Story only as an in-memory fallback, and show a persistent recovery banner;
 7. while a rejected stored recovery snapshot exists, do **not** automatically persist the fallback Story or later fallback-based edits into the same storage slot, because that would destroy the only stored copy;
 8. any valid fallback edit committed while that slot is protected immediately makes the active Story **unpersisted loss-risk state**: show the persistence/recovery warning, enable `beforeunload`, and offer **Export active Story YAML** as backup even though no storage write was attempted;
@@ -325,7 +349,7 @@ Cover:
 
 - Story → YAML → Story semantic round-trip;
 - `getDownloadBasename()` is deterministic for the same title and produces ≤96 UTF-8 bytes before extension;
-- filename cases cover `/`, `\\`, `< > : " | ? *`, controls, leading/trailing dots/spaces, Windows device names, Unicode letters, emoji, whitespace-only titles after sanitization, and a 65,536-code-unit title without splitting Unicode;
+- filename cases cover `/`, `\\`, `< > : " | ? *`, controls, leading/trailing dots/spaces, Windows device names including `COM¹/²/³` and `LPT¹/²/³` with/without extensions, Unicode letters, emoji, whitespace-only titles after sanitization, and a 65,536-code-unit title without splitting Unicode;
 - applying schema-valid noncanonical YAML establishes the exact applied buffer as clean baseline and does not immediately re-dirty it;
 - editing after Apply dirties relative to the applied baseline;
 - invalid YAML does not replace validated Story;
@@ -344,7 +368,7 @@ Cover:
 - corrupt localStorage falls back safely;
 - schema-valid but browser-policy-rejected storage is retained as a recovery snapshot, is exportable for CLI use, and is not overwritten by fallback autosave;
 - exporting a rejected stored recovery snapshot does not clear it; explicit discard/reset acknowledgement is required before its storage slot can be replaced;
-- schema-valid, browser-eligible localStorage restores, including a recheck that canonical YAML is ≤1 MiB;
+- schema-valid, browser-eligible localStorage restores using the same ordered browser policy, including a recheck that canonical YAML is ≤1 MiB;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
 - reset restores the default Story directly only when no loss-risk or protected recovery state exists;
@@ -353,6 +377,7 @@ Cover:
 - dirty/unapplied YAML blocks rendering, and apply/discard clears that block;
 - dirty YAML installs unload protection; applying/discarding it removes the guard once no other loss-risk state remains;
 - a persistence write failure on a newly active Story keeps unload protection enabled until that Story is durably saved or explicitly discarded/reset;
+- a secondary tab without the persistence-writer lock suppresses autosave and treats divergent in-memory work as unpersisted loss-risk state;
 - editing the fallback while a rejected recovery snapshot protects the storage slot also enables unload protection even though no write is attempted;
 - releasing the recovery slot triggers persistence of the current active Story when it differs from durable storage, and unload protection remains until that succeeds;
 - attempting to leave dirty YAML for visual mode requires Apply, Discard, or Stay and never permits parallel visual edits;
@@ -381,6 +406,7 @@ Cover:
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including title ≤65,536 and canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
+- only the exclusive persistence-owner tab may write project/recovery localStorage keys; secondary tabs cannot overwrite the durable baseline or protected recovery slot;
 - intentionally suppressed persistence while protecting a rejected recovery snapshot is treated identically as loss-risk for unload purposes;
 - reload/navigation/tab close raises a native confirmation whenever dirty/pending/unpersisted session state would otherwise be lost;
 - Reset uses the same loss-risk predicate and cannot directly discard an active Story that differs from durable storage;
