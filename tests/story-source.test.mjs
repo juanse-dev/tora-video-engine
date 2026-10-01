@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
-import {builtinModules} from "node:module";
+import {isBuiltin} from "node:module";
 import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
@@ -28,18 +28,7 @@ const compilerOptions = {
   jsx: ts.JsxEmit.ReactJSX,
 };
 
-const normalizedBuiltins = new Set(
-  builtinModules.map((specifier) => specifier.replace(/^node:/, "")),
-);
-
-const isNodeBuiltin = (specifier) => {
-  const normalized = specifier.replace(/^node:/, "");
-
-  return [...normalizedBuiltins].some(
-    (builtin) =>
-      normalized === builtin || normalized.startsWith(`${builtin}/`),
-  );
-};
+const isNodeBuiltin = (specifier) => isBuiltin(specifier);
 
 const scriptKindForPath = (path) => {
   if (path.endsWith(".tsx")) {
@@ -282,6 +271,11 @@ scenes:
         );
       },
     );
+  });
+
+  it("uses Node's exact builtin classification semantics", () => {
+    assert.equal(isNodeBuiltin("node:test"), true);
+    assert.equal(isNodeBuiltin("test"), false);
   });
 
   it("follows local JavaScript intermediaries before checking builtins", async () => {
