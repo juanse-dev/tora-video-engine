@@ -1,10 +1,15 @@
-import {useState} from "react";
+import {useCallback, useState} from "react";
 import {exampleStory} from "../story/exampleStory.ts";
 import type {Story} from "../story/types.ts";
+import {
+  applyVisualDraftEvaluation,
+  createAuthoringState,
+} from "./authoringState.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
 import {getWebPlayerConfig} from "./previewConfig.ts";
+import type {VisualDraftEvaluation} from "./visualDraft.ts";
 
 const getInitialActiveStory = (): Story => {
   const policy = evaluateBrowserStoryPolicy(exampleStory);
@@ -19,13 +24,27 @@ const getInitialActiveStory = (): Story => {
 };
 
 export const App = () => {
-  const [activeStory, setActiveStory] = useState<Story>(
-    getInitialActiveStory,
+  const [authoringState, setAuthoringState] = useState(() =>
+    createAuthoringState(getInitialActiveStory()),
   );
+  const {activeStory, visual} = authoringState;
   const previewConfig = getWebPlayerConfig(activeStory);
 
+  const onVisualEvaluationChange = useCallback(
+    (evaluation: VisualDraftEvaluation) => {
+      setAuthoringState((current) =>
+        applyVisualDraftEvaluation(current, evaluation),
+      );
+    },
+    [],
+  );
+
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-visual-state={visual.kind}
+      data-visual-pending={String(visual.pending)}
+    >
       <header className="app-header">
         <div>
           <p className="eyebrow">Local-first video authoring</p>
@@ -40,7 +59,7 @@ export const App = () => {
       <main className="app-main editor-workspace">
         <VisualEditor
           activeStory={activeStory}
-          onActiveStoryChange={setActiveStory}
+          onEvaluationChange={onVisualEvaluationChange}
         />
 
         <section
