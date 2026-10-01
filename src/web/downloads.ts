@@ -1,5 +1,14 @@
 const MAX_DOWNLOAD_BASENAME_BYTES = 96;
 const FALLBACK_BASENAME = "tora-video";
+const OBJECT_URL_REVOKE_GRACE_MS = 60_000;
+
+type ScheduleObjectUrlRevocation = (callback: () => void) => void;
+
+const scheduleObjectUrlRevocation: ScheduleObjectUrlRevocation = (
+  callback,
+) => {
+  globalThis.setTimeout(callback, OBJECT_URL_REVOKE_GRACE_MS);
+};
 
 const WINDOWS_RESERVED =
   /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/iu;
@@ -81,6 +90,8 @@ export const downloadBlob = (
   filename: string,
   documentRef: Document = document,
   urlRef: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+  scheduleRevoke: ScheduleObjectUrlRevocation =
+    scheduleObjectUrlRevocation,
 ): void => {
   const url = urlRef.createObjectURL(blob);
   const anchor = documentRef.createElement("a");
@@ -88,7 +99,9 @@ export const downloadBlob = (
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  urlRef.revokeObjectURL(url);
+  scheduleRevoke(() => {
+    urlRef.revokeObjectURL(url);
+  });
 };
 
 export const downloadText = (
