@@ -101,7 +101,7 @@ A useful automated smoke flow is:
 14. import a schema-valid Story above 9,000 frames and verify the same preview-suppression behavior;
 15. perform several consecutive caption edits after Player mount, including rapid overlapping edits, and verify font readiness follows the newest caption without deadlock or stale completion;
 16. create a 201st visual scene and verify the candidate remains visible as pending, the previous active Story stays in Player, and MP4 render is disabled until the candidate is reduced/discarded/transferred;
-17. load schema-valid but >200-scene or >9,000-frame data from localStorage and verify startup rejects it before Player mount, falls back safely, and shows a browser-policy warning;
+17. load two stored cases: (a) >200 scenes and verify the cheap storage preflight quarantines the raw envelope before StorySchema; (b) ≤200 schema-valid scenes but >9,000 frames and verify it passes preflight/schema, is rejected by centralized browser policy before Player mount, falls back safely, and remains a validated YAML-exportable recovery snapshot;
 18. verify schema-valid but browser-over-budget YAML cannot enable Apply or enter visual mode;
 19. Apply YAML with comments/noncanonical spacing/key order and verify it becomes clean immediately; edit one character afterward and verify it becomes dirty;
 20. reject an imported YAML file above 1 MiB before reading/parsing it, and reject a >1 MiB pasted buffer before `parseStorySource()`;
@@ -115,7 +115,7 @@ A useful automated smoke flow is:
 28. invoke Reset with dirty YAML and with a pending visual candidate; verify each requires explicit destructive confirmation and Stay preserves the draft;
 29. start from schema-valid persisted data that now fails browser policy; verify it is retained as an exportable recovery snapshot, fallback autosave cannot overwrite it, and only explicit discard/reset acknowledgement releases the protected slot;
 30. import/apply YAML under 1 MiB containing a 65,537-code-unit title and verify it passes schema but is rejected by centralized browser policy before timeline derivation/canonical serialization;
-31. place the same 65,537-code-unit Story in localStorage and verify restore rejects it through the same title policy before Player mount;
+31. place the same 65,537-code-unit Story in localStorage and verify the cheap storage preflight quarantines it before StorySchema/Player mount and preserves raw-JSON recovery;
 32. make YAML dirty and verify reload/navigation/tab close activates the native `beforeunload` confirmation; Apply/Discard removes it once no other loss-risk state remains;
 33. simulate persistence failure after a valid Story becomes active and verify unload protection remains enabled until durable persistence succeeds or the in-memory change is explicitly discarded/reset;
 34. restore a policy-rejected stored recovery snapshot, edit the in-memory fallback Story, and verify autosave remains suppressed **but** the edit is marked unpersisted, activates `beforeunload`, and offers active-Story YAML export; release the recovery slot and verify persistence is attempted before the unload guard clears;
@@ -125,7 +125,7 @@ A useful automated smoke flow is:
 38. render fixed frames for canonical centered captions, left-aligned captions, long natural text, and a long unbroken token; verify documented Player/CLI ↔ web-render semantic parity for alignment, line breaks, clipping, and font usage;
 39. verify YAML and MP4 filename generation share the same sanitizer across reserved separators/control characters, Windows device names, Unicode/emoji, whitespace-only-after-sanitization, and a 65,536-code-unit title; assert basename ≤96 UTF-8 bytes;
 40. verify the deployed render path is documented as emitting Remotion client telemetry, uses only a client-safe/free license-key configuration, and does not depend on telemetry success for render completion;
-41. feed a schema-valid 201-scene candidate through visual policy, YAML Apply/import, localStorage restore, and WEB-006's defensive recheck; in every path assert the centralized policy rejects on scene count **without calling timeline derivation or `serializeStorySource()`**;
+41. feed a schema-valid 201-scene candidate through visual policy, YAML Apply/import, and WEB-006's defensive recheck and assert centralized policy rejects on scene count without timeline derivation/`serializeStorySource()`; for localStorage restore, assert the earlier storage preflight quarantines the payload before StorySchema instead;
 42. open two same-origin tabs simultaneously and verify exactly one acquires the persistence-writer lock; edits in the secondary tab remain session-only/unpersisted and cannot overwrite the primary tab's durable Story;
 43. with the primary tab protecting a rejected stored recovery snapshot, edit/import/reset from the secondary tab and verify no project/recovery `localStorage` key is mutated; after the primary closes, use **Retry persistence ownership**, re-read durable state, and require explicit conflict resolution before any overwrite;
 44. verify the shared filename sanitizer rejects/prefixes Win32 Unicode device aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`, including aliases followed by extensions;
