@@ -70,6 +70,7 @@ export type BrowserRenderPendingOutcome =
   | {
       kind: "success";
       blob: Blob;
+      consumed: boolean;
     }
   | {
       kind: "failure";
@@ -426,6 +427,7 @@ export const startBrowserRenderTransaction = async (
     acquireLock?: () => Promise<BrowserRenderLockLease>;
     cleanup?: () => Promise<OpfsCleanupResult>;
     renderStory?: typeof renderStoryMediaOnWeb;
+    consumeBlob?: (blob: Blob) => void | Promise<void>;
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
   const checkCapability =
@@ -484,12 +486,21 @@ export const startBrowserRenderTransaction = async (
     });
     const blob = await result.getBlob();
 
-    pending = options.signal.aborted
-      ? {kind: "cancelled"}
-      : {
-          kind: "success",
-          blob,
-        };
+    if (options.signal.aborted) {
+      pending = {kind: "cancelled"};
+    } else {
+      const consumed = options.consumeBlob !== undefined;
+
+      if (options.consumeBlob !== undefined) {
+        await options.consumeBlob(blob);
+      }
+
+      pending = {
+        kind: "success",
+        blob,
+        consumed,
+      };
+    }
   } catch (error) {
     pending = options.signal.aborted
       ? {kind: "cancelled"}
@@ -501,7 +512,11 @@ export const startBrowserRenderTransaction = async (
 
   const postCleanup = await cleanupSafely(cleanup);
 
-  if (options.signal.aborted && pending.kind === "success") {
+  if (
+    options.signal.aborted &&
+    pending.kind === "success" &&
+    !pending.consumed
+  ) {
     pending = {kind: "cancelled"};
   }
 
