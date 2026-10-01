@@ -7,6 +7,7 @@ import {
   sceneTypes,
 } from "../src/story/schema.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
+import {parseStorySource} from "../src/story/parseStory.ts";
 import {
   MAX_BROWSER_CANONICAL_YAML_BYTES,
   MAX_BROWSER_TITLE_CODE_UNITS,
@@ -124,6 +125,13 @@ describe("WEB-003 browser Story policy", () => {
     assert.ok(result.canonicalBytes <= MAX_BROWSER_CANONICAL_YAML_BYTES);
   });
 
+  it("round-trips every accepted canonical source through the shared parser", () => {
+    const result = evaluateBrowserStoryPolicy(exampleStory);
+
+    assert.equal(result.eligible, true);
+    assert.deepEqual(parseStorySource(result.canonicalSource), exampleStory);
+  });
+
   it("checks canonical UTF-8 bytes only after earlier gates pass", () => {
     const result = evaluateBrowserStoryPolicy(exampleStory, {
       deriveTotalFrames: () => MAX_BROWSER_TOTAL_FRAMES,
@@ -156,6 +164,28 @@ describe("WEB-003 visual draft transformations", () => {
     assert.equal(result.story.title, "Edited");
     assert.equal(result.story.scenes[0].text, "Edited caption");
     assert.equal(result.story.scenes[0].animation, undefined);
+  });
+
+  it("accepts every shared enum field and optional animation semantics", () => {
+    const draft = storyToVisualDraft(exampleStory);
+    draft.scenes[0].type = sceneTypes[1];
+    draft.scenes[0].pose = poses[1];
+    draft.scenes[0].background = backgrounds[1];
+    draft.scenes[0].animation = animations[1];
+
+    const explicit = evaluateVisualDraft(draft);
+
+    assert.equal(explicit.kind, "eligible");
+    assert.equal(explicit.story.scenes[0].type, sceneTypes[1]);
+    assert.equal(explicit.story.scenes[0].pose, poses[1]);
+    assert.equal(explicit.story.scenes[0].background, backgrounds[1]);
+    assert.equal(explicit.story.scenes[0].animation, animations[1]);
+
+    draft.scenes[0].animation = "";
+    const automatic = evaluateVisualDraft(draft);
+
+    assert.equal(automatic.kind, "eligible");
+    assert.equal(automatic.story.scenes[0].animation, undefined);
   });
 
   it("keeps invalid duration as a pending schema-invalid draft", () => {
