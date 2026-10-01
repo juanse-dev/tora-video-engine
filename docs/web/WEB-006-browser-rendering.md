@@ -171,29 +171,29 @@ The pinned `web-fs` implementation creates files named `__remotion_render:<sessi
 While holding the render lock, Tora owns cleanup of this prefix for its origin:
 
 1. obtain the OPFS root via `navigator.storage.getDirectory()`;
-2. before starting a render, remove any pre-existing entries whose names start with `__remotion_render:` (there can be no compliant concurrent Tora render while the lock is held);
+2. **before every render starts, call the same awaitable `cleanupRemotionOpfsUntilEmpty()` helper defined below and do not call `renderMediaOnWeb()` until it has positively observed an empty `__remotion_render:` prefix**;
 3. run the web render and call `getBlob()`;
 4. create the download object URL / hand the Blob to the download flow;
-5. in a `finally` path, enumerate the OPFS root again and remove all `__remotion_render:` entries created/left by the render, including partial files from failure/cancel;
-6. only release the render lock after the cleanup protocol has positively observed that no `__remotion_render:` entries remain.
+5. in a `finally` path, call `cleanupRemotionOpfsUntilEmpty()` again to remove all entries created/left by the render, including partial files from failure/cancel;
+6. only release the render lock after the relevant cleanup phase has positively observed that no `__remotion_render:` entries remain.
 
-### Awaitable cleanup after failure/cancel
+### Awaitable cleanup before and after render
 
-Do **not** assume that rejection of `renderMediaOnWeb()` means Remotion/Mediabunny has already released its OPFS writer. In the pinned stack, Remotion's disposal calls the async Mediabunny cancel path without awaiting it, so an immediate `removeEntry()` may race the writer close.
+Do **not** assume that acquiring the render Web Lock means all writers from a previous browser realm are already closed. A previous `cleanup-blocked` page can unload, implicitly releasing the Web Lock while Remotion/Mediabunny's asynchronous writer shutdown is still finishing. Likewise, rejection of the current `renderMediaOnWeb()` does not guarantee its writer is already closed.
 
-Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and run it while the render Web Lock remains held:
+Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and use it for **both pre-render preflight and post-render cleanup** while the render Web Lock remains held:
 
 1. enumerate/remove every `__remotion_render:` entry;
 2. re-enumerate and succeed only when none remain;
 3. when removal fails or entries remain, wait with bounded exponential backoff and retry. Use a documented schedule such as **0, 25, 50, 100, 200, 400, 800, 1,600, 3,200 ms**;
-4. if cleanup succeeds during that bounded phase, complete the render/cancel/failure lifecycle and release the lock;
-5. if the bounded phase is exhausted, transition to `cleanup-blocked`, surface that browser render storage is still being released, and **keep the render Web Lock held**. Do not permit another browser render in this tab or another compliant tab;
-6. provide **Retry cleanup**. Each retry reruns the bounded cleanup helper under the already-held lock. Once it observes an empty render prefix, clear the warning and release the lock;
-7. page unload may implicitly release the Web Lock; the next session must perform the existing pre-render prefix cleanup before rendering.
+4. if **pre-render** cleanup succeeds during that bounded phase, proceed to `renderMediaOnWeb()` while still holding the lock; if **post-render** cleanup succeeds, complete the render/cancel/failure lifecycle and release the lock;
+5. if either bounded phase is exhausted, transition to `cleanup-blocked`, surface that browser render storage is still being released, and **keep the render Web Lock held**. A pre-render exhaustion means `renderMediaOnWeb()` must not be called at all;
+6. provide **Retry cleanup**. Each retry reruns the bounded helper under the already-held lock. If a pre-render retry succeeds, return to render-ready state and only then start a newly requested render; if a post-render retry succeeds, clear the warning and release the lock;
+7. page unload may implicitly release the Web Lock, but the next session/new tab must reacquire the same unversioned lock and run this **same retry/backoff preflight helper** before rendering. It must never use a one-shot stale-file deletion.
 
 A successfully obtained MP4 Blob may still be handed to the download flow before post-render cleanup finishes, but cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
 
-Tests must inject/delay target closure so the first removal attempt fails and prove that cleanup waits/retries rather than passing only on fast local writer shutdown.
+Tests must inject/delay target closure so the first removal attempt fails and prove that both post-render and **new-session pre-render** cleanup wait/retry rather than passing only on fast local writer shutdown.
 
 This prefix cleanup is safe only because the dedicated same-origin render lock makes Tora's `web-fs` render lifecycle exclusive. Do not perform broad OPFS deletion outside that lock.
 
@@ -303,7 +303,7 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup;
+- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup; no call to `renderMediaOnWeb()` occurs until the prefix is positively empty;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
