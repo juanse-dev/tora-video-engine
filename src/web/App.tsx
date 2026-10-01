@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {exampleStory} from "../story/exampleStory.ts";
@@ -39,6 +40,7 @@ import {
   getYamlCandidateStory,
   isYamlDirty,
   tryEditYamlBuffer,
+  validateYamlBuffer,
   type YamlEditorState,
 } from "./yamlState.ts";
 
@@ -146,10 +148,7 @@ export const App = () => {
       conflict === null &&
       storiesSemanticallyEqual(durableStory, activeStory)) ||
     (!activeStoryChangedFromInitial &&
-      (recovery !== null ||
-        ownership.mode === "secondary" ||
-        ownership.mode === "session-only" ||
-        ownership.mode === "checking"));
+      (recovery !== null || ownership.mode === "session-only"));
 
   const lossRisk = hasLossRisk({
     visual,
@@ -163,6 +162,19 @@ export const App = () => {
     (yamlState !== null &&
       (isYamlDirty(yamlState) ||
         yamlState.transferSnapshot !== null));
+
+  const importRequestRef = useRef(0);
+  const liveImportStateRef = useRef({
+    mode,
+    lossRisk,
+    recovery,
+  });
+
+  liveImportStateRef.current = {
+    mode,
+    lossRisk,
+    recovery,
+  };
 
   const onVisualEvaluationChange = useCallback(
     (evaluation: VisualDraftEvaluation) => {
@@ -264,6 +276,8 @@ export const App = () => {
 
         setPersistenceReady(true);
         setOwnership(lease);
+        setRecovery(current.recovery);
+        setConflict(null);
 
         if (current.recovery !== null) {
           setRecovery(current.recovery);
@@ -335,6 +349,8 @@ export const App = () => {
 
         setPersistenceReady(true);
         setOwnership(next);
+        setRecovery(current.recovery);
+        setConflict(null);
 
         if (current.recovery !== null) {
           setRecovery(current.recovery);
@@ -576,16 +592,21 @@ export const App = () => {
   const commitImportedStory = (
     source: string,
     story: Story,
+    targetMode: EditorMode,
   ) => {
     setAuthoringState(cleanAuthoringState(story));
     setVisualRevision((value) => value + 1);
 
-    if (mode === "yaml") {
+    if (targetMode === "yaml") {
       const initial = createYamlStateFromActiveStory(story);
       const edited = tryEditYamlBuffer(initial, source);
 
       if (edited.accepted) {
-        const applied = applyYamlState(edited.state);
+        const validated = validateYamlBuffer(
+          edited.state,
+          "imported.yaml",
+        );
+        const applied = applyYamlState(validated);
         setYamlState(applied.applied ? applied.state : initial);
       } else {
         setYamlState(initial);
@@ -597,6 +618,9 @@ export const App = () => {
   };
 
   const importFile = async (file: File) => {
+    const requestId = importRequestRef.current + 1;
+    importRequestRef.current = requestId;
+
     if (file.size > MAX_BROWSER_YAML_SOURCE_BYTES) {
       setImportMessage(
         "Import rejected before reading: file exceeds the 1 MiB browser limit.",
@@ -609,11 +633,19 @@ export const App = () => {
     try {
       source = await file.text();
     } catch (error) {
+      if (importRequestRef.current !== requestId) {
+        return;
+      }
+
       setImportMessage(
         error instanceof Error
           ? `Could not read import: ${error.message}`
           : "Could not read import.",
       );
+      return;
+    }
+
+    if (importRequestRef.current !== requestId) {
       return;
     }
 
@@ -623,12 +655,16 @@ export const App = () => {
       setImportMessage(
         validation.kind === "policy-rejected"
           ? `Import is valid for CLI but browser-ineligible: ${validation.policy.message}`
-          : validation.message,
+          : validation.kind === "pending"
+            ? "Import validation did not complete."
+            : validation.message,
       );
       return;
     }
 
-    if (lossRisk || recovery !== null) {
+    const liveState = liveImportStateRef.current;
+
+    if (liveState.lossRisk || liveState.recovery !== null) {
       setTransition({
         kind: "import",
         source,
@@ -638,7 +674,11 @@ export const App = () => {
       return;
     }
 
-    commitImportedStory(source, validation.story);
+    commitImportedStory(
+      source,
+      validation.story,
+      liveState.mode,
+    );
   };
 
   const confirmImport = () => {
@@ -650,7 +690,11 @@ export const App = () => {
       return;
     }
 
-    commitImportedStory(transition.source, transition.story);
+    commitImportedStory(
+      transition.source,
+      transition.story,
+      liveImportStateRef.current.mode,
+    );
   };
 
   const performReset = () => {
