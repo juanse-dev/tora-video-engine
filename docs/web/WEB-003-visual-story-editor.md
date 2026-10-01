@@ -92,6 +92,18 @@ For \`animation\`, the UI must preserve the existing optional semantics. An “A
 
 A newly added scene must start from a valid, documented default so the Story can remain usable immediately.
 
+The browser policy allows **200 active scenes**, but the visual editor intentionally permits creation of the **201st** scene so the user can see and resolve the first over-budget pending state. That does not permit unbounded draft growth.
+
+Required behavior:
+
+- when the current visual candidate has fewer than 201 scenes, Add may create the next scene normally;
+- once the candidate has **201 scenes**, disable Add and refuse any further scene-growth operation;
+- keep edit, delete, reorder, and explicit YAML-transfer/discard actions available so the user can recover from the pending over-budget state;
+- deleting back to 200 scenes re-enables Add;
+- do not allocate/render placeholder editor rows for scenes beyond this 201-scene draft ceiling.
+
+This **201-scene visual-draft ceiling** is a UI resource guard, not a change to `StorySchema` or the 200-scene Active Story policy.
+
 ### Delete
 
 The Story schema requires at least one scene. The UI must either:
@@ -146,20 +158,32 @@ Required behavior:
 
 Caching already-loaded font coverage is allowed, but it must not weaken the generation/handle ownership rules.
 
-## Cheap pre-serialization visual input guard
+## Cheap pre-schema visual input guards
 
-The shared schema intentionally leaves `Story.title` unbounded, so the visual editor must not wait until canonical YAML serialization to discover an extreme pasted title.
+The visual editor must reject obviously impossible oversized text **before** constructing a Story candidate or invoking Zod/font-coverage work.
 
-Define a browser-only visual title limit of **65,536 UTF-16 code units**, checked using the raw JavaScript string length before constructing/validating/serializing the next Story candidate.
+### Title
 
-Required behavior:
+The shared schema intentionally leaves `Story.title` unbounded. Define a browser-only visual title limit of **65,536 UTF-16 code units**, checked using the raw JavaScript string length.
 
-- inspect the proposed title value before calling `StorySchema.safeParse()`, timeline derivation, or `serializeStorySource()`;
+- inspect the proposed title before calling `StorySchema.safeParse()`, timeline derivation, or `serializeStorySource()`;
 - if `nextTitle.length > 65_536`, reject that visual update as a browser-policy input error and keep the last accepted candidate/active Story unchanged;
 - do not truncate or otherwise silently coerce the title;
-- show an actionable field-level message that the browser editor limit was exceeded and that CLI/YAML remains the path for larger schema-valid titles;
-- scene caption text already has a shared schema bound, so this extra guard specifically covers the currently unbounded visual text field;
-- any future unbounded visual string field must receive an equivalent cheap pre-serialization guard before joining the active Story policy.
+- show an actionable field-level message that the browser editor limit was exceeded and that CLI/YAML remains the path for larger schema-valid titles.
+
+### Scene caption
+
+`StoryScene.text` is schema-limited to **180 Unicode code points**, but the schema counts code points/font coverage only after receiving the raw string. A very large paste must not reach those full-string passes.
+
+Define a cheap raw visual caption ceiling of **360 UTF-16 code units**:
+
+- inspect the proposed caption's JavaScript `.length` before constructing the Story candidate or calling `StorySchema.safeParse()` / font-coverage validation;
+- reject `rawCaption.length > 360` immediately with a field-level validation message;
+- 360 is a safe precheck because any schema-valid 180-code-point caption can occupy at most 360 UTF-16 code units when all code points are surrogate pairs;
+- captions at or below 360 code units still pass through normal schema validation, which remains authoritative for the exact 180-code-point constraint;
+- never truncate the pasted caption silently.
+
+Any future visual string field whose validity is expensive to establish must receive an equivalent cheap raw guard.
 
 This guard is browser UI policy only and must not change `StorySchema` or the CLI contract. It is an early optimization for the visual source, not the authoritative title-policy check.
 
@@ -231,9 +255,11 @@ Add automated coverage for state/domain transformations where practical:
 - a schema-valid 65,537-code-unit Story arriving from YAML/import/restore is rejected by the centralized post-schema title check before timeline derivation or canonical serialization;
 - a schema-valid Story at the remaining browser budget boundary can become active;
 - a 201-scene schema-valid candidate is rejected by the centralized policy without invoking timeline derivation or `serializeStorySource()`;
+- once the visual draft reaches 201 scenes, repeated Add attempts cannot increase its length; delete back to 200 re-enables Add;
+- a multi-megabyte caption paste is rejected by the 360-code-unit raw guard without invoking `StorySchema.safeParse()`, caption code-point counting, or font-coverage validation;
 - a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
 - a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
-- raw visual title input above 65,536 code units is rejected before candidate serialization;
+- raw visual title input above 65,536 code units and raw visual caption input above 360 code units are rejected before Story candidate construction/schema validation;
 - a boundary fixture using the maximum v0.2 title/scene/caption shapes still serializes to canonical YAML ≤1 MiB, proving the final size check is defensive under the current constraints;
 - every browser-eligible active Story serializes to canonical YAML ≤1 MiB and can be parsed again after export/import.
 
@@ -245,7 +271,7 @@ Avoid large snapshot tests of CSS.
 - scene order can be changed without React renderer changes;
 - valid edits within the browser authoring budget update the Player;
 - schema-invalid pending visual drafts show actionable errors, do not update the active Story, and disable MP4 rendering until fixed/discarded;
-- oversized raw visual title input is stopped before Story construction; every non-visual schema-valid candidate is also checked for the same title bound before timeline/serialization; candidates above reachable scene/frame limits remain pending/rejected and never replace/mount the active Story, while the final canonical-size check remains a defensive invariant;
+- oversized raw visual title/caption input is stopped before expensive Story validation work; visual drafts cannot grow beyond 201 scenes; every non-visual schema-valid candidate is checked by the centralized policy before timeline/serialization; candidates above reachable scene/frame limits remain pending/rejected and never replace/mount the active Story, while the final canonical-size check remains a defensive invariant;
 - attempting to leave an invalid visual draft for YAML requires explicit Discard or Stay, with no silent loss and no parallel YAML draft;
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
