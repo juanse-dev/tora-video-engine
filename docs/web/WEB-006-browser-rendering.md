@@ -184,27 +184,42 @@ On render failure, cancellation, or materialization failure, there is no downloa
 
 In Remotion 4.0.529, the `web-fs` target obtains its result from `FileSystemFileHandle.getFile()`. A File System API `File` can become unreadable if its backing entry is changed or removed after `getFile()`. Therefore an object URL plus `<a download>.click()` is **not** an awaitable consumption boundary and must never be used as permission to delete the OPFS entry.
 
-Define:
+Define the memory policy explicitly:
 
 ~~~ts
-MAX_BROWSER_DOWNLOAD_MATERIALIZATION_BYTES = 256 * 1024 * 1024
+MAX_BROWSER_DOWNLOAD_EXTRA_MEMORY_BYTES = 256 * 1024 * 1024
+MATERIALIZATION_FULL_COPY_COUNT = 2
+MAX_BROWSER_DOWNLOAD_ARTIFACT_BYTES =
+  Math.floor(
+    MAX_BROWSER_DOWNLOAD_EXTRA_MEMORY_BYTES /
+      MATERIALIZATION_FULL_COPY_COUNT,
+  )
+// 134_217_728 bytes = 128 MiB
 ~~~
 
-The value is a browser-output/RAM safety policy, not a StorySchema or authoring limit.
+This is a **peak additional payload-memory budget**, not an encoded-file-size budget and not a StorySchema/authoring limit.
+
+With the required `arrayBuffer() → new Blob([bytes])` strategy, budget two simultaneous full-size payload copies:
+
+1. `renderedBlob.arrayBuffer()` materializes one full encoded-output `ArrayBuffer`;
+2. constructing `new Blob([bytes])` from that `BufferSource` processes a copy of those bytes into the independent Blob.
+
+Therefore v0.2 accepts at most a **128 MiB finalized encoded MP4** for browser download materialization, keeping the two full payload copies within the explicit **256 MiB extra-memory budget**. This budget is in addition to the browser/renderer baseline and small bookkeeping overhead; it must not be described as a guarantee about total browser-process memory.
 
 Success path while the render Web Lock is still held:
 
 1. call the renderer's `getBlob()`;
 2. inspect `renderedBlob.size` **before** requesting an ArrayBuffer;
-3. if size exceeds 256 MiB, do not materialize or trigger a download. Surface **“Browser output too large for safe download”**, offer YAML/CLI rendering, clean the OPFS render files under the lock, and finish as a browser-export failure;
-4. if within the cap, execute `const bytes = await renderedBlob.arrayBuffer()`;
-5. construct a fresh independent `Blob` from those bytes using the expected MP4 MIME type;
-6. only after that copy succeeds may Tora delete `__remotion_render:` OPFS entries;
-7. after cleanup/release, create the object URL and download from the independent Blob.
+3. require `renderedBlob.size <= MAX_BROWSER_DOWNLOAD_ARTIFACT_BYTES` (**128 MiB**). If it exceeds that derived artifact limit, do not call `arrayBuffer()` and do not trigger a download. Surface **“Browser output too large for safe download”**, offer YAML/CLI rendering, clean the OPFS render files under the lock, and finish as a browser-export failure;
+4. if within the cap, execute `const bytes = await renderedBlob.arrayBuffer()`; this is full payload copy #1;
+5. construct a fresh independent `Blob` from those bytes using the expected MP4 MIME type; this is full payload copy #2;
+6. after Blob construction, drop Tora's application reference to the `ArrayBuffer` as soon as practical, but **do not** use expected garbage-collection timing to justify a larger artifact limit—the safety bound is based on the two-copy peak;
+7. only after the independent Blob exists may Tora delete `__remotion_render:` OPFS entries;
+8. after cleanup/release, create the object URL and download from the independent Blob.
 
 Do not replace the ArrayBuffer copy with `new Blob([renderedBlob])`, `URL.createObjectURL(renderedBlob)`, a timeout after `click()`, or any other operation that does not establish independent backing.
 
-The 256 MiB cap intentionally bounds the one-time finalized-output copy on supported desktop browsers. It does **not** enable the Remotion `arraybuffer` output target, because that target holds the encoded media in memory throughout rendering rather than only after a finalized OPFS-backed result exists.
+The **256 MiB extra-memory budget / 128 MiB artifact cap** intentionally bounds the peak payload duplication of the finalized-output copy strategy on supported desktop browsers. It does **not** enable the Remotion `arraybuffer` output target, because that target holds the encoded media in memory throughout rendering rather than only after a finalized OPFS-backed result exists.
 
 ### Awaitable cleanup before and after render
 
@@ -340,7 +355,8 @@ If organization policy forbids the required telemetry path, production deploymen
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - repeated success/failure/cancel/materialization-failure cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
 - successful downloads remain byte-readable after OPFS cleanup because they use the independently materialized Blob;
-- finalized outputs above 256 MiB fail browser download safely before ArrayBuffer allocation and direct the user to the CLI path;
+- finalized outputs above 128 MiB fail browser download safely before ArrayBuffer allocation and direct the user to the CLI path;
+- materialization tests/implementation preserve the explicit allocation model: at most one full-size ArrayBuffer plus one independent full-size Blob payload are live at the copy peak, for ≤256 MiB of additional payload memory at the 128 MiB artifact boundary;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
 - client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.
