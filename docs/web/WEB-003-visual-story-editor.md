@@ -222,9 +222,17 @@ Before **any** schema-valid candidate becomes the active validated Story used by
 5. measure the canonical YAML as UTF-8 bytes and require it to be ≤ 1 MiB;
 6. only commit/mount the candidate when every check passes.
 
-The order is part of the contract, not an implementation detail. A title or scene-count failure must return before timeline derivation; a title/scene/frame failure must return before canonical serialization. WEB-005 Apply/import/restore and WEB-006's defensive render-time recheck must call this same ordered policy rather than duplicating the checks independently.
+The order is part of the contract, not an implementation detail. A title or scene-count failure must return before timeline derivation; a title/scene/frame failure must return before canonical serialization.
 
-For the visual source, the title check is normally redundant because the cheap raw-input guard already blocked the oversized value. It remains required so all candidate sources share one authoritative policy.
+Source-specific entry rules:
+
+- **Visual / YAML Apply / YAML import:** after StorySchema succeeds, call this centralized ordered policy;
+- **Storage restore:** WEB-005 first applies the raw-envelope bound, JSON/storage-version checks, and cheap storage preflight **before StorySchema**. Only a stored candidate that survives those gates and StorySchema reaches `evaluateBrowserStoryPolicy()`;
+- **WEB-006 render-time recheck:** call this same ordered policy defensively on the already-active Story.
+
+Do not duplicate or reorder the centralized policy after a source reaches it, but do not require storage restore to bypass its earlier startup-safety gates merely to exercise the post-schema policy.
+
+For the visual source, the title check is normally redundant because the cheap raw-input guard already blocked the oversized value. For YAML/import it remains authoritative post-schema. For restore, cheap title/scene/caption failures are intentionally intercepted earlier by WEB-005.
 
 The canonical-size condition is a defensive round-trip invariant: every Story the web app accepts as active must produce a canonical YAML export that the same app can later accept through its 1 MiB pre-parse source guard. Do not create acceptance tests that require a current v0.2 Story to fail **only** this condition; the earlier title/scene/text bounds make that branch effectively unreachable today.
 
@@ -238,7 +246,7 @@ A schema-valid candidate above any browser-authoring limit:
 - must show which reachable browser authoring limit was exceeded (title, scene count, or duration/frames); if the defensive canonical-byte invariant ever trips because the schema/serializer evolves, report it as an internal policy/round-trip guard that requires the browser limits to be revisited;
 - should direct the user to YAML/CLI workflows rather than labeling the document schema-invalid.
 
-Keep these limits named and centralized so WEB-005 import and WEB-006 rendering reuse the same browser-policy source of truth.
+Keep these limits named and centralized so WEB-005 Apply/import, storage candidates that survive startup preflight/schema, and WEB-006 rendering reuse the same browser-policy source of truth.
 
 ## Preview behavior
 
@@ -266,7 +274,7 @@ Add automated coverage for state/domain transformations where practical:
 - a near-maximum 200-scene Story with many distinct supported caption characters triggers at most one font load per required weight (currently 3 total) for a generation, not one per character;
 - a title exactly at 65,536 code units can proceed to the remaining policy checks;
 - a 65,537-code-unit visual update is rejected by the cheap pre-construction guard;
-- a schema-valid 65,537-code-unit Story arriving from YAML/import/restore is rejected by the centralized post-schema title check before timeline derivation or canonical serialization;
+- a schema-valid 65,537-code-unit Story arriving from YAML/import is rejected by the centralized post-schema title check before timeline derivation/canonical serialization; the same raw shape in persisted storage is quarantined by WEB-005's cheap storage preflight **before StorySchema**;
 - a schema-valid Story at the remaining browser budget boundary can become active;
 - a 201-scene schema-valid candidate is rejected by the centralized policy without invoking timeline derivation or `serializeStorySource()`;
 - once the visual draft reaches 201 scenes, repeated Add attempts cannot increase its length; delete back to 200 re-enables Add;
