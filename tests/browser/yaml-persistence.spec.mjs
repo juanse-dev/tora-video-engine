@@ -682,7 +682,7 @@ test("confirmed eligible import clears an existing persistence conflict", async 
       buffer: Buffer.from(source),
     });
 
-  const dialog = secondary.getByRole("dialog");
+  const dialog = secondary.locator(".transition-panel");
   await expect(dialog).toContainText(
     "Import will discard current pending or recovery work",
   );
