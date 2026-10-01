@@ -91,7 +91,14 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
   });
   let caption = page.locator("[data-caption-align=center]").first();
   await expect(caption).toBeVisible();
-  await expect(caption.locator("[data-caption-line]")).toHaveCount(1);
+  await expect
+    .poll(async () =>
+      caption
+        .locator("[data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe("Centered caption fixture");
 
   await importSingleScene(page, {
     type: "dialogue",
