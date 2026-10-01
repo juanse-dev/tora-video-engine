@@ -178,3 +178,60 @@ test("policy-rejected visual candidate is observable while Active Story stays mo
   );
   await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
 });
+
+
+test("asset catalog discovers and applies bundled visual assets", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const catalog = page.getByRole("region", {name: "Available assets"});
+  await expect(catalog).toBeVisible();
+
+  for (const name of ["Formal", "Confused", "Panic", "Coffee"]) {
+    await expect(
+      catalog.getByRole("button", {name: new RegExp(name)}),
+    ).toBeVisible();
+  }
+
+  for (const name of ["Office", "Server room"]) {
+    await expect(
+      catalog.getByRole("button", {name: new RegExp(name)}),
+    ).toBeVisible();
+  }
+
+  for (const name of [
+    "Auto / scene default",
+    "Fade",
+    "Float",
+    "Slow zoom",
+  ]) {
+    await expect(
+      catalog.getByRole("button", {name: new RegExp(name)}),
+    ).toBeVisible();
+  }
+
+  const coffee = catalog.getByRole("button", {name: /Coffee/});
+  await coffee.click();
+  await expect(coffee).toHaveAttribute("aria-pressed", "true");
+
+  const serverRoom = catalog.getByRole("button", {name: /Server room/});
+  await serverRoom.click();
+  await expect(serverRoom).toHaveAttribute("aria-pressed", "true");
+
+  const slowZoom = catalog.getByRole("button", {name: /Slow zoom/});
+  await slowZoom.click();
+  await expect(slowZoom).toHaveAttribute("aria-pressed", "true");
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "clean",
+  );
+
+  await expect(
+    page.locator('.preview-frame img[src*="characters/tora/coffee.png"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('.preview-frame img[src*="backgrounds/server-room.png"]'),
+  ).toBeVisible();
+});

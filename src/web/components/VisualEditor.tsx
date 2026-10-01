@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useState} from "react";
 import type {Story} from "../../story/types.ts";
+import {AssetCatalog} from "./AssetCatalog.tsx";
 import {
   addVisualScene,
   canAddVisualScene,
@@ -7,6 +8,7 @@ import {
   evaluateVisualDraft,
   moveVisualScene,
   storyToVisualDraft,
+  updateVisualScene,
   validateRawVisualCaption,
   validateRawVisualTitle,
   visualEditorOptions,
@@ -56,12 +58,7 @@ export const VisualEditor = ({
     index: number,
     patch: Partial<VisualSceneDraft>,
   ) => {
-    setDraft((current) => ({
-      ...current,
-      scenes: current.scenes.map((scene, sceneIndex) =>
-        sceneIndex === index ? {...scene, ...patch} : scene,
-      ),
-    }));
+    setDraft((current) => updateVisualScene(current, index, patch));
   };
 
   const updateTitle = (title: string) => {
@@ -272,64 +269,14 @@ export const VisualEditor = ({
                   ))}
                 </select>
               </label>
-
-              <label className="field">
-                <span>Pose</span>
-                <select
-                  value={selected.pose}
-                  onChange={(event) =>
-                    updateScene(selectedScene, {
-                      pose: event.target.value as VisualSceneDraft["pose"],
-                    })
-                  }
-                >
-                  {visualEditorOptions.poses.map((pose) => (
-                    <option value={pose} key={pose}>
-                      {pose}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Background</span>
-                <select
-                  value={selected.background}
-                  onChange={(event) =>
-                    updateScene(selectedScene, {
-                      background:
-                        event.target.value as VisualSceneDraft["background"],
-                    })
-                  }
-                >
-                  {visualEditorOptions.backgrounds.map((background) => (
-                    <option value={background} key={background}>
-                      {background}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Animation</span>
-                <select
-                  value={selected.animation}
-                  onChange={(event) =>
-                    updateScene(selectedScene, {
-                      animation:
-                        event.target.value as VisualSceneDraft["animation"],
-                    })
-                  }
-                >
-                  <option value="">Auto / scene default</option>
-                  {visualEditorOptions.animations.map((animation) => (
-                    <option value={animation} key={animation}>
-                      {animation}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
+
+            <AssetCatalog
+              scene={selected}
+              onChange={(patch) =>
+                updateScene(selectedScene, patch)
+              }
+            />
 
             <label className="field">
               <span>Caption</span>
