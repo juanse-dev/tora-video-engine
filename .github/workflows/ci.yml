@@ -48,9 +48,10 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
       - name: Verify Player resource buffering
-        env:
-          TORA_PLAYWRIGHT_CHANNEL: chrome
         run: npm run test:browser
 
       - name: Render reference story
