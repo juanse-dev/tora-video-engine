@@ -3,6 +3,7 @@ import {CAPTION_FONT_FAMILY} from "../fontCoverage.ts";
 import {
   CAPTION_BOX_MAX_HEIGHT,
   getCaptionFontSize,
+  layoutCaptionLines,
 } from "../captionLayout.ts";
 import type {
   CaptionPlacement,
@@ -44,6 +45,7 @@ export const Caption = ({
   align,
 }: CaptionProps) => {
   const fontSize = getCaptionFontSize(variant, text);
+  const lines = layoutCaptionLines(text, variant, fontSize);
 
   return (
     <div
@@ -60,26 +62,32 @@ export const Caption = ({
       }}
     >
       <div
+        data-caption-align={align}
+        data-caption-lines={lines.length}
         style={{
           ...variantStyles[variant],
-          background: "rgba(8, 12, 18, 0.72)",
+          alignItems: align === "center" ? "center" : "flex-start",
+          backgroundColor: "rgba(8, 12, 18, 0.72)",
           border: "2px solid rgba(255, 255, 255, 0.10)",
           borderRadius: 30,
           boxShadow: "0 18px 54px rgba(0, 0, 0, 0.28)",
           boxSizing: "border-box",
           color: "#f8fafc",
+          display: "flex",
+          flexDirection: "column",
           fontFamily: CAPTION_FONT_FAMILY,
           fontSize,
           maxHeight: CAPTION_BOX_MAX_HEIGHT,
           overflow: "hidden",
-          overflowWrap: "anywhere",
-          textAlign: align,
           textShadow: "0 4px 18px rgba(0, 0, 0, 0.45)",
           width: "100%",
-          wordBreak: "break-all",
         }}
       >
-        {text}
+        {lines.map((line, index) => (
+          <div data-caption-line={index} key={index}>
+            {line}
+          </div>
+        ))}
       </div>
     </div>
   );
