@@ -37,7 +37,14 @@ test("valid visual edits commit while invalid drafts keep the last active previe
     "data-visual-pending",
     "false",
   );
-  await expect(preview.getByText("WEB-003 live caption")).toBeVisible();
+  await expect
+    .poll(async () =>
+      preview
+        .locator("[data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe("WEB-003 live caption");
 });
 
 test("scene add/delete/reorder operations stay inside the visual draft", async ({
