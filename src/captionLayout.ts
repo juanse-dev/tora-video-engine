@@ -5,6 +5,7 @@ export const CAPTION_TEXT_MAX_HEIGHT = 520;
 export const CAPTION_MIN_FONT_SIZE = 32;
 export const CAPTION_CONTENT_WIDTH = 864;
 export const CAPTION_LINE_HEIGHT = 1.12;
+export const CAPTION_FRAME_WIDTH = 936;
 
 const baseFontSizes: Record<CaptionVariant, number> = {
   hero: 86,
@@ -18,39 +19,63 @@ const letterSpacing: Record<CaptionVariant, number> = {
   impact: 1,
 };
 
-const glyphAdvanceEm = (character: string): number => {
-  if (/\s/u.test(character)) {
+const COMBINING_MARK = /^\p{Mark}$/u;
+const COLLAPSIBLE_WHITESPACE = /[^\S\u00A0\u202F]+/u;
+const LEADING_COLLAPSIBLE_WHITESPACE = /^[^\S\u00A0\u202F]+/u;
+const TRAILING_COLLAPSIBLE_WHITESPACE = /[^\S\u00A0\u202F]+$/u;
+
+// Inter Variable's accepted uppercase/non-ASCII glyphs at weights 700/800/900
+// are conservatively bounded below 1.1em. Overestimating here is intentional:
+// explicit wrapping must never depend on CSS overflow recovery.
+const CONSERVATIVE_WIDE_ADVANCE_EM = 1.1;
+
+const segmentSupportedGraphemes = (text: string): string[] => {
+  const clusters: string[] = [];
+
+  for (const character of Array.from(text)) {
+    if (COMBINING_MARK.test(character) && clusters.length > 0) {
+      clusters[clusters.length - 1] += character;
+      continue;
+    }
+
+    clusters.push(character);
+  }
+
+  return clusters;
+};
+
+const glyphAdvanceEm = (grapheme: string): number => {
+  const baseCharacter =
+    Array.from(grapheme).find(
+      (character) => !COMBINING_MARK.test(character),
+    ) ?? grapheme;
+
+  if (/\s/u.test(baseCharacter)) {
     return 0.33;
   }
 
-  if (/[MW@%&]/u.test(character)) {
-    return 0.95;
+  if (/[A-Z@%&]/u.test(baseCharacter)) {
+    return CONSERVATIVE_WIDE_ADVANCE_EM;
   }
 
-  if (/[A-Z]/u.test(character)) {
-    return 0.72;
-  }
-
-  if (/[mw]/u.test(character)) {
+  if (/[mw]/u.test(baseCharacter)) {
     return 0.82;
   }
 
-  if (/[ilIjtfr1|]/u.test(character)) {
+  if (/[ilIjtfr1|]/u.test(baseCharacter)) {
     return 0.36;
   }
 
-  if (/[a-z0-9]/u.test(character)) {
+  if (/[a-z0-9]/u.test(baseCharacter)) {
     return 0.58;
   }
 
-  if (`.,:;!'"-()[]{}`.includes(character)) {
+  if (`.,:;!'"-()[]{}`.includes(baseCharacter)) {
     return 0.38;
   }
 
-  // Inter's supported non-ASCII ranges are conservatively treated as
-  // full-em glyphs. This keeps explicit wrapping deterministic without
-  // relying on browser CSS word-breaking behavior.
-  return 1;
+  // Accepted non-ASCII glyphs are intentionally treated as wide.
+  return CONSERVATIVE_WIDE_ADVANCE_EM;
 };
 
 export const estimateCaptionLineWidth = (
@@ -58,20 +83,20 @@ export const estimateCaptionLineWidth = (
   variant: CaptionVariant,
   fontSize: number,
 ): number => {
-  const characters = Array.from(text);
+  const graphemes = segmentSupportedGraphemes(text);
 
-  if (characters.length === 0) {
+  if (graphemes.length === 0) {
     return 0;
   }
 
-  const glyphWidth = characters.reduce(
-    (sum, character) => sum + glyphAdvanceEm(character) * fontSize,
+  const glyphWidth = graphemes.reduce(
+    (sum, grapheme) => sum + glyphAdvanceEm(grapheme) * fontSize,
     0,
   );
 
   return (
     glyphWidth +
-    Math.max(0, characters.length - 1) * letterSpacing[variant]
+    Math.max(0, graphemes.length - 1) * letterSpacing[variant]
   );
 };
 
@@ -83,8 +108,8 @@ const splitOversizedToken = (
   const parts: string[] = [];
   let current = "";
 
-  for (const character of Array.from(token)) {
-    const candidate = current + character;
+  for (const grapheme of segmentSupportedGraphemes(token)) {
+    const candidate = current + grapheme;
 
     if (
       current.length > 0 &&
@@ -92,7 +117,7 @@ const splitOversizedToken = (
         CAPTION_CONTENT_WIDTH
     ) {
       parts.push(current);
-      current = character;
+      current = grapheme;
       continue;
     }
 
@@ -106,14 +131,22 @@ const splitOversizedToken = (
   return parts;
 };
 
+const tokenizeCaption = (text: string): string[] => {
+  const trimmed = text
+    .replace(LEADING_COLLAPSIBLE_WHITESPACE, "")
+    .replace(TRAILING_COLLAPSIBLE_WHITESPACE, "");
+
+  return trimmed.split(COLLAPSIBLE_WHITESPACE).filter(Boolean);
+};
+
 export const layoutCaptionLines = (
   text: string,
   variant: CaptionVariant,
   fontSize: number,
 ): string[] => {
-  const words = text.trim().split(/\s+/u).filter(Boolean);
+  const tokens = tokenizeCaption(text);
 
-  if (words.length === 0) {
+  if (tokens.length === 0) {
     return [""];
   }
 
@@ -162,8 +195,8 @@ export const layoutCaptionLines = (
     current = chunks.at(-1) ?? "";
   };
 
-  for (const word of words) {
-    pushToken(word);
+  for (const token of tokens) {
+    pushToken(token);
   }
 
   if (current.length > 0) {
