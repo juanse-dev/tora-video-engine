@@ -685,3 +685,46 @@ h1 {
     flex-direction: column;
   }
 }
+
+
+.authoring-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.authoring-fieldset:disabled {
+  opacity: 0.78;
+}
+
+.project-toolbar button:disabled,
+.app-banner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.render-banner {
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  background: rgba(20, 83, 45, 0.16);
+  color: #bbf7d0;
+}
+
+.render-banner[data-render-state="failure"],
+.render-banner[data-render-state="cleanup-blocked"] {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.18);
+  color: #fecaca;
+}
+
+.render-banner[data-render-state="rendering"],
+.render-banner[data-render-state="cancelling"] {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(30, 64, 175, 0.18);
+  color: #dbeafe;
+}
+
+.render-banner progress {
+  width: min(220px, 100%);
+  height: 10px;
+}
