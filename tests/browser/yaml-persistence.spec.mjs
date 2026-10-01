@@ -379,6 +379,84 @@ test("import rechecks live editor state after asynchronous File.text", async ({
   );
 });
 
+test("retry ownership reconciles against edits made while lock acquisition is pending", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .not.toBeNull();
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await secondary.getByLabel("Caption").fill("Secondary B");
+
+  await secondary.evaluate(() => {
+    const locks = navigator.locks;
+    const originalRequest = locks.request.bind(locks);
+
+    Object.defineProperty(locks, "request", {
+      configurable: true,
+      value(name, options, callback) {
+        return new Promise((resolve, reject) => {
+          window.__releaseRetryLock = () => {
+            originalRequest(name, options, callback).then(resolve, reject);
+          };
+        });
+      },
+    });
+  });
+
+  await secondary
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+
+  await secondary.getByLabel("Caption").fill("Secondary C");
+
+  await page.getByLabel("Caption").fill("Secondary B");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .toContain("Secondary B");
+
+  await page.close();
+  await secondary.evaluate(() => window.__releaseRetryLock());
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+  await expect(secondary.getByText("Persistence conflict")).toBeVisible();
+
+  expect(
+    await secondary.evaluate(() =>
+      localStorage.getItem("tora-video-engine:project"),
+    ),
+  ).toContain("Secondary B");
+  expect(
+    await secondary.evaluate(() =>
+      localStorage.getItem("tora-video-engine:project"),
+    ),
+  ).not.toContain("Secondary C");
+});
+
 test("retry ownership clears stale local recovery after another owner replaces it", async ({
   context,
   page,
