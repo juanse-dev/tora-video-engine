@@ -399,12 +399,13 @@ export const App = () => {
         setDurableStory(current.durableStory);
         setStorageWarning(null);
       } catch (error) {
+        lease.release();
         setPersistenceReady(false);
-        setOwnership(lease);
+        setOwnership({mode: "session-only"});
         setStorageWarning(
           error instanceof Error
-            ? `Persistence ownership acquired, but storage could not be reread: ${error.message}`
-            : "Persistence ownership acquired, but storage could not be reread.",
+            ? `Persistence ownership was released because storage could not be reread: ${error.message}. Changes are session-only; export YAML for recovery.`
+            : "Persistence ownership was released because storage could not be reread. Changes are session-only; export YAML for recovery.",
         );
       }
     },
@@ -477,12 +478,14 @@ export const App = () => {
         setDurableStory(current.durableStory);
         setStorageWarning(null);
       } catch (error) {
+        next.release();
+        lease = {mode: "session-only"};
         setPersistenceReady(false);
-        setOwnership(next);
+        setOwnership({mode: "session-only"});
         setStorageWarning(
           error instanceof Error
-            ? `Persistence ownership acquired, but storage could not be reread: ${error.message}`
-            : "Persistence ownership acquired, but storage could not be reread.",
+            ? `Persistence ownership was released because storage could not be reread: ${error.message}. Changes are session-only; export YAML for recovery.`
+            : "Persistence ownership was released because storage could not be reread. Changes are session-only; export YAML for recovery.",
         );
       }
     });
