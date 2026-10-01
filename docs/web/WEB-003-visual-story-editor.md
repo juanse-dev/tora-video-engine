@@ -156,7 +156,20 @@ Required behavior:
 - rapid A → B → C caption changes before earlier font loads complete must end with C as the active ready generation;
 - repeated edits after the initial Player mount must continue to work in both Player preview and deterministic render paths.
 
-Caching already-loaded font coverage is allowed, but it must not weaken the generation/handle ownership rules.
+### Bounded batched font loading
+
+The current `loadCaptionFontForText()` validates coverage and then calls the loader once per unique renderable character for each required weight. That scales with unique caption characters and is not acceptable for a browser Story that can contain up to 200 scenes.
+
+Keep the existing schema/code-point coverage validation, but change the actual Font Loading API work to be bounded by required font weights, not by unique characters:
+
+- after coverage validation succeeds, call `document.fonts.load(fontDescriptor, captionText)` **once with the full combined caption text for each required weight**;
+- for the current `REQUIRED_FONT_WEIGHTS = [700, 800, 900]`, one caption generation therefore performs at most **3 FontFaceSet.load() calls**, independent of Story scene count and unique character count;
+- the three per-weight loads may run concurrently with `Promise.all` so there is no sequential per-character waterfall;
+- remove the per-character load loop from the browser font-readiness path; per-character iteration remains acceptable only for the bounded coverage/error check required by the schema;
+- an obsolete A/B generation must never enqueue additional font loads after it has been marked stale, and any already-started loads must be ignored for readiness/error ownership once a newer generation exists;
+- optional caching/deduplication may reduce calls further, but correctness and the **≤3 calls per generation** bound must not depend on cache warmth.
+
+Tests must include a near-maximum browser Story with many distinct supported code points and assert the font loader call count is bounded by the number of required weights, plus rapid A → B → C edits that prove stale generations cannot settle the newest render handle.
 
 ## Cheap pre-schema visual input guards
 
@@ -250,6 +263,7 @@ Add automated coverage for state/domain transformations where practical:
 - optional/default animation handling;
 - invalid visual draft → YAML mode transition requires Discard/Stay;
 - multiple consecutive caption edits after Player mount, including overlapping rapid edits, preserve correct font readiness without stale `delayRender` handles;
+- a near-maximum 200-scene Story with many distinct supported caption characters triggers at most one font load per required weight (currently 3 total) for a generation, not one per character;
 - a title exactly at 65,536 code units can proceed to the remaining policy checks;
 - a 65,537-code-unit visual update is rejected by the cheap pre-construction guard;
 - a schema-valid 65,537-code-unit Story arriving from YAML/import/restore is rejected by the centralized post-schema title check before timeline derivation or canonical serialization;
@@ -276,7 +290,7 @@ Avoid large snapshot tests of CSS.
 - at least one scene always remains;
 - scene duration continues to drive derived frame timing;
 - UI option sets cannot drift silently from the Story schema;
-- the caption-font hook safely handles multiple sequential and overlapping caption changes after mount;
+- the caption-font hook safely handles multiple sequential and overlapping caption changes after mount, and font loading is bounded to one full-text load per required weight per generation;
 - CLI and v0.1 tests remain green.
 
 ## Out of scope
