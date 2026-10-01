@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 import {exampleStory} from "../story/exampleStory.ts";
@@ -286,7 +285,7 @@ export const App = () => {
     let cancelled = false;
     let lease: PersistenceOwnership | null = null;
 
-    void acquirePersistenceOwnership(navigator.locks).then((next) => {
+    void acquirePersistenceOwnership(navigator.locks).then(async (next) => {
       lease = next;
 
       if (cancelled) {
@@ -296,7 +295,59 @@ export const App = () => {
         return;
       }
 
-      void adoptOwnership(next);
+      if (next.mode !== "owner") {
+        setOwnership(next);
+        setStorageWarning(
+          next.mode === "secondary"
+            ? "Another tab owns persistence. Changes in this tab are session-only until ownership is retried."
+            : "Web Locks are unavailable. Persistence is session-only; export YAML for recovery.",
+        );
+        return;
+      }
+
+      try {
+        const raw = window.localStorage.getItem(PERSISTENCE_STORAGE_KEY);
+        const current = restorePersistedProject(
+          raw,
+          getFallbackStory(),
+        );
+
+        setOwnership(next);
+
+        if (current.recovery !== null) {
+          setRecovery(current.recovery);
+          setDurableStory(null);
+          setStorageWarning(
+            "Stored recovery is protected. Autosave is suspended until it is explicitly discarded.",
+          );
+          return;
+        }
+
+        if (
+          current.durableStory !== null &&
+          !storiesSemanticallyEqual(
+            current.durableStory,
+            initialProject.activeStory,
+          )
+        ) {
+          setDurableStory(current.durableStory);
+          setConflict({durableStory: current.durableStory});
+          setStorageWarning(
+            "Durable storage changed before persistence ownership was acquired.",
+          );
+          return;
+        }
+
+        setDurableStory(current.durableStory);
+        setStorageWarning(null);
+      } catch (error) {
+        setOwnership(next);
+        setStorageWarning(
+          error instanceof Error
+            ? `Persistence ownership acquired, but storage could not be reread: ${error.message}`
+            : "Persistence ownership acquired, but storage could not be reread.",
+        );
+      }
     });
 
     return () => {
@@ -306,7 +357,7 @@ export const App = () => {
         lease.release();
       }
     };
-  }, []);
+  }, [initialProject.activeStory]);
 
   const retryPersistenceOwnership = async () => {
     if (ownership.mode === "owner") {
@@ -604,7 +655,7 @@ export const App = () => {
     setStorageWarning(null);
   };
 
-  const transitionPanel = useMemo(() => {
+  const renderTransitionPanel = () => {
     if (transition === null) {
       return null;
     }
@@ -710,7 +761,7 @@ export const App = () => {
     }
 
     return null;
-  }, [transition, visual, yamlState, recovery]);
+  };
 
   return (
     <div
@@ -742,6 +793,22 @@ export const App = () => {
           <button type="button" onClick={exportActiveStory}>
             Export active Story YAML
           </button>
+          <label className="file-button">
+            Import YAML
+            <input
+              type="file"
+              accept=".yaml,.yml,application/x-yaml,text/yaml,text/plain"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+
+                if (file !== undefined) {
+                  void importFile(file);
+                }
+
+                event.target.value = "";
+              }}
+            />
+          </label>
           <button type="button" onClick={requestReset}>
             Reset project
           </button>
@@ -800,7 +867,7 @@ export const App = () => {
         </div>
       ) : null}
 
-      {transitionPanel}
+      {renderTransitionPanel()}
 
       <main className="app-main editor-workspace">
         {mode === "visual" ? (
