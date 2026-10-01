@@ -178,6 +178,44 @@ describe("caption layout", () => {
     );
   });
 
+  it("keeps WORD JOINER zero-width and forbids hard-wraps on either side", () => {
+    const joined = "A\u2060B";
+    const text = `${"A".repeat(7)}${joined}${"C".repeat(8)}`;
+    const lines = layoutCaptionLines(text, "impact", 92);
+
+    assert.equal(
+      estimateCaptionLineWidth("\u2060", "impact", 100),
+      0,
+    );
+    assert.equal(lines.join(""), text);
+    assert.ok(lines.length > 1);
+    assert.ok(
+      lines.some((line) => line.includes(joined)),
+      "WORD JOINER must keep both adjacent glyphs in one hard-wrap unit",
+    );
+    assert.ok(
+      lines.every(
+        (line) =>
+          !line.startsWith("\u2060") &&
+          !line.endsWith("\u2060"),
+      ),
+    );
+  });
+
+  it("treats ZERO WIDTH SPACE as a zero-width break opportunity", () => {
+    const text =
+      `${"A".repeat(8)}\u200B${"B".repeat(8)}`;
+    const lines = layoutCaptionLines(text, "impact", 92);
+
+    assert.equal(
+      estimateCaptionLineWidth("\u200B", "impact", 100),
+      0,
+    );
+    assert.equal(lines.join(""), text);
+    assert.equal(lines.length, 2);
+    assert.ok(lines[0].endsWith("\u200B"));
+  });
+
   it("never splits a supported combining sequence across explicit lines", () => {
     const grapheme = "e\u0301";
     const text = grapheme.repeat(MAX_CAPTION_LENGTH / 2);
