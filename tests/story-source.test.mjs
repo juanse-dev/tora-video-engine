@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {describe, it} from "node:test";
+import ts from "typescript";
 import {parseStorySource} from "../src/story/parseStory.ts";
 import {serializeStorySource} from "../src/story/serializeStory.ts";
 
@@ -107,6 +108,62 @@ scenes:
   });
 
   it("keeps the browser-safe local dependency graph free of node:* imports", async () => {
+    const compilerOptions = {
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      allowImportingTsExtensions: true,
+      jsx: ts.JsxEmit.ReactJSX,
+    };
+
+    const staticModuleSpecifiers = (path, source) => {
+      const scriptKind = path.endsWith(".tsx")
+        ? ts.ScriptKind.TSX
+        : ts.ScriptKind.TS;
+      const sourceFile = ts.createSourceFile(
+        path,
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKind,
+      );
+      const specifiers = [];
+
+      const visit = (node) => {
+        if (
+          (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+          node.moduleSpecifier &&
+          ts.isStringLiteralLike(node.moduleSpecifier)
+        ) {
+          specifiers.push(node.moduleSpecifier.text);
+        }
+
+        if (
+          ts.isImportEqualsDeclaration(node) &&
+          ts.isExternalModuleReference(node.moduleReference) &&
+          node.moduleReference.expression &&
+          ts.isStringLiteralLike(node.moduleReference.expression)
+        ) {
+          specifiers.push(node.moduleReference.expression.text);
+        }
+
+        if (
+          ts.isCallExpression(node) &&
+          node.arguments.length === 1 &&
+          ts.isStringLiteralLike(node.arguments[0]) &&
+          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+            (ts.isIdentifier(node.expression) &&
+              node.expression.text === "require"))
+        ) {
+          specifiers.push(node.arguments[0].text);
+        }
+
+        ts.forEachChild(node, visit);
+      };
+
+      visit(sourceFile);
+      return specifiers;
+    };
+
     const pending = [
       resolve("src/story/parseStory.ts"),
       resolve("src/story/serializeStory.ts"),
@@ -123,17 +180,36 @@ scenes:
       visited.add(path);
       const source = await readFile(path, "utf8");
 
-      assert.doesNotMatch(
-        source,
-        /from\s+["']node:/,
-        `${path} must remain browser-safe`,
-      );
+      for (const specifier of staticModuleSpecifiers(path, source)) {
+        assert.equal(
+          specifier.startsWith("node:"),
+          false,
+          `${path} must not import Node builtin ${specifier}`,
+        );
 
-      for (const match of source.matchAll(/from\s+["'](\.[^"']+)["']/g)) {
-        const specifier = match[1];
+        if (!specifier.startsWith(".")) {
+          continue;
+        }
 
-        if (specifier.endsWith(".ts")) {
-          pending.push(resolve(dirname(path), specifier));
+        const resolvedModule = ts.resolveModuleName(
+          specifier,
+          path,
+          compilerOptions,
+          ts.sys,
+        ).resolvedModule;
+
+        assert.ok(
+          resolvedModule,
+          `Unable to resolve local dependency ${specifier} from ${path}`,
+        );
+
+        const dependencyPath = resolvedModule.resolvedFileName;
+
+        if (
+          dependencyPath.endsWith(".ts") ||
+          dependencyPath.endsWith(".tsx")
+        ) {
+          pending.push(dependencyPath);
         }
       }
     }
