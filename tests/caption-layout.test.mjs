@@ -95,4 +95,43 @@ describe("caption layout", () => {
       ),
     );
   });
+
+  it("uses a conservative bound for wide uppercase glyphs", () => {
+    const text = "OQ".repeat(MAX_CAPTION_LENGTH / 2);
+    const fontSize = getCaptionFontSize("impact", text);
+    const lines = layoutCaptionLines(text, "impact", fontSize);
+
+    assert.ok(
+      estimateCaptionLineWidth("O", "impact", 100) >= 100,
+    );
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "impact", fontSize) <=
+          CAPTION_CONTENT_WIDTH,
+      ),
+    );
+  });
+
+  it("never splits a supported combining sequence across explicit lines", () => {
+    const grapheme = "e\u0301";
+    const text = grapheme.repeat(MAX_CAPTION_LENGTH / 2);
+    const lines = layoutCaptionLines(text, "impact", 92);
+
+    assert.ok(lines.length > 1);
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every((line) => !/^\p{Mark}/u.test(line)),
+    );
+  });
+
+  it("preserves no-break spaces inside caption tokens", () => {
+    const text = "Value 10\u00A0kg and 20\u202Fms";
+    const lines = layoutCaptionLines(text, "dialogue", 60);
+
+    assert.equal(lines.join(" "), text);
+    assert.ok(lines.some((line) => line.includes("10\u00A0kg")));
+    assert.ok(lines.some((line) => line.includes("20\u202Fms")));
+  });
 });
