@@ -398,6 +398,17 @@ export const App = () => {
     );
   };
 
+  const exportPendingVisualCandidate = () => {
+    if (visual.kind !== "policy-rejected") {
+      return;
+    }
+
+    downloadText(
+      serializeStorySource(visual.candidate),
+      getYamlDownloadFilename(visual.candidate.title),
+    );
+  };
+
   const exportRecovery = () => {
     if (recovery === null) {
       return;
@@ -816,6 +827,11 @@ export const App = () => {
           <button type="button" onClick={exportActiveStory}>
             Export active Story YAML
           </button>
+          {visual.kind === "policy-rejected" ? (
+            <button type="button" onClick={exportPendingVisualCandidate}>
+              Export pending visual candidate YAML
+            </button>
+          ) : null}
           <label className="file-button">
             Import YAML
             <input
