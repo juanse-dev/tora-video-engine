@@ -11,6 +11,7 @@ type ToraProps = {
 export const Tora = ({pose, style}: ToraProps) => {
   return (
     <Img
+      pauseWhenLoading
       src={staticFile(toraPoseAssets[pose])}
       style={{
         display: "block",

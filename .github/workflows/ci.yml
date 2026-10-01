@@ -10,7 +10,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -29,6 +29,26 @@ jobs:
 
       - name: Lint and typecheck
         run: npm run lint
+
+      - name: Build static web player
+        run: npm run web:build
+
+      - name: Verify static web artifact
+        shell: bash
+        run: |
+          test -s dist/web/index.html
+          test -s dist/web/characters/tora/formal.png
+          test -s dist/web/characters/tora/confused.png
+          test -s dist/web/characters/tora/panic.png
+          test -s dist/web/characters/tora/coffee.png
+          test -s dist/web/backgrounds/office.png
+          test -s dist/web/backgrounds/server-room.png
+
+      - name: Install browser test runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify Player resource buffering
+        run: npm run test:browser
 
       - name: Render reference story
         run: npm run video -- stories/friday-deploy.yaml
