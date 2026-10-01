@@ -1,4 +1,4 @@
-import type {CSSProperties} from "react";
+import {useMemo, type CSSProperties} from "react";
 import {CAPTION_FONT_FAMILY} from "../fontCoverage.ts";
 import {
   CAPTION_BOX_MAX_HEIGHT,
@@ -48,8 +48,14 @@ export const Caption = ({
   placement,
   align,
 }: CaptionProps) => {
-  const fontSize = getCaptionFontSize(variant, text);
-  const lines = layoutCaptionLines(text, variant, fontSize);
+  const {fontSize, lines} = useMemo(() => {
+    const resolvedFontSize = getCaptionFontSize(variant, text);
+
+    return {
+      fontSize: resolvedFontSize,
+      lines: layoutCaptionLines(text, variant, resolvedFontSize),
+    };
+  }, [text, variant]);
 
   return (
     <div
