@@ -283,7 +283,10 @@ const analyzeEncodedCaptionFrame = async (
 
           for (let py = startY; py < endY; py += 1) {
             for (let px = startX; px < endX; px += 1) {
-              if (luminanceAt(px, py) > 150) {
+              // Caption text is #f8fafc over a dark translucent panel. A high
+              // threshold isolates encoded glyph pixels from the underlying
+              // scene, which may still be moderately bright through the panel.
+              if (luminanceAt(px, py) > 210) {
                 minX = Math.min(minX, px);
                 maxX = Math.max(maxX, px);
                 minY = Math.min(minY, py);
