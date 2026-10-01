@@ -96,12 +96,25 @@ Do not synchronously parse arbitrarily large YAML on the UI thread.
 
 For v0.2, define a browser-only maximum YAML source size of **1 MiB (1,048,576 UTF-8 bytes)**.
 
-Apply the guard **before** calling `parseStorySource()` on raw/untrusted YAML:
+Apply the guard **before** calling `parseStorySource()` on raw/untrusted YAML.
 
-- for file import, inspect `File.size` before reading/parsing the file;
-- for pasted/edited YAML, measure the current buffer as UTF-8 bytes (for example with `TextEncoder`) before parsing;
-- if the source exceeds 1 MiB, do not invoke YAML parsing or Zod validation;
-- keep the existing active Story untouched;
+### Cheap code-unit precheck for pasted/edited YAML
+
+Before committing a textarea/input candidate into YAML editor state or invoking `TextEncoder`:
+
+- inspect the proposed JavaScript string length;
+- if `nextBuffer.length > 1_048_576`, reject the edit/paste immediately and keep the previous YAML buffer unchanged;
+- when handling a paste event, inspect the incoming/next text at the input boundary where practical so the oversized value is not first copied into long-lived editor state;
+- do **not** invoke `TextEncoder`, YAML parsing, or Zod for a candidate rejected by this cheap guard.
+
+This precheck is safe because UTF-8 encoding cannot require fewer bytes than the number of UTF-16 code units in the JavaScript string. It is only a fast rejection path; it does not replace the exact byte limit.
+
+### Exact source-size guard
+
+- for file import, inspect `File.size` before `File.text()` / parsing;
+- for pasted/edited YAML that passed the cheap code-unit precheck, measure the buffer as UTF-8 bytes with `TextEncoder`;
+- if the exact UTF-8 source exceeds 1 MiB, do not invoke YAML parsing or Zod validation;
+- keep the existing active Story/YAML baseline untouched;
 - show a browser source-size warning and offer the CLI path;
 - this limit is a browser safety policy, not a change to the shared Story/YAML contract or local CLI.
 
@@ -348,6 +361,7 @@ A confirmed reset that fails to persist still changes the active in-memory Story
 Cover:
 
 - Story → YAML → Story semantic round-trip;
+- a multi-megabyte pasted YAML string is rejected by the cheap code-unit guard without invoking `TextEncoder`, `parseStorySource()`, or Zod;
 - `getDownloadBasename()` is deterministic for the same title and produces ≤96 UTF-8 bytes before extension;
 - filename cases cover `/`, `\\`, `< > : " | ? *`, controls, leading/trailing dots/spaces, Windows device names including `COM¹/²/³` and `LPT¹/²/³` with/without extensions, Unicode letters, emoji, whitespace-only titles after sanitization, and a 65,536-code-unit title without splitting Unicode;
 - applying schema-valid noncanonical YAML establishes the exact applied buffer as clean baseline and does not immediately re-dirty it;
@@ -393,6 +407,7 @@ Cover:
 - YAML can be imported and exported entirely in-browser;
 - every YAML download uses the shared bounded deterministic basename sanitizer rather than raw `Story.title`;
 - an eligible import cannot replace dirty/pending/unpersisted/recovery state without explicit destructive confirmation, while invalid imports leave existing work untouched;
+- pasted/edited YAML above 1,048,576 UTF-16 code units is rejected before `TextEncoder`; buffers below that cheap ceiling still undergo the exact 1 MiB UTF-8 check before parsing;
 - browser YAML parsing is never attempted for source text above 1 MiB UTF-8, and no validated-transfer exception bypasses that ceiling;
 - invalid YAML never reaches preview/render/persistence;
 - dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
