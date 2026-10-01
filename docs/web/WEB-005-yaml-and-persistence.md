@@ -199,13 +199,36 @@ An invalid or browser-policy-ineligible import candidate must never trigger the 
 
 The temporary import candidate is non-editable transaction state, not a second authoring draft. The app must never expose it concurrently as an independently editable project.
 
+## Shared deterministic download basename
+
+YAML and MP4 export must reuse one browser-safe function equivalent to:
+
+~~~ts
+getDownloadBasename(title: string): string
+~~~
+
+Do not derive filenames by passing `Story.title` directly to the browser download attribute.
+
+For v0.2, the function must be deterministic and apply these rules in order:
+
+1. normalize the title to Unicode NFC;
+2. replace ASCII/C1 control characters and the cross-platform reserved filename characters `< > : " / \\ | ? *` with `-`;
+3. replace each run of Unicode whitespace with one `-`;
+4. collapse repeated `-` characters and trim leading/trailing spaces, dots, and hyphens;
+5. if the remaining basename is a Windows device name, case-insensitively matching `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, or `LPT1`–`LPT9` before an optional dot suffix, prefix it with `tora-`;
+6. preserve otherwise valid Unicode, including emoji, but truncate to at most **96 UTF-8 bytes** without splitting a Unicode code point; trim trailing dots/hyphens again after truncation;
+7. if the result is empty, dot-only, or otherwise collapses away, use the fallback basename `tora-video`.
+
+Append the extension only after sanitizing: `.yaml` for WEB-005 and `.mp4` for WEB-006.
+
+The sanitizer must remain bounded even when the source title is at the 65,536-code-unit browser-policy boundary or comes from a schema-valid CLI/recovery candidate outside that browser title limit.
 ## Export
 
 Provide two unambiguous export paths so the user never downloads the older active Story when intending to take a pending candidate to the CLI.
 
 ### Export active Story
 
-Serialize the active validated Story with WEB-001 `serializeStorySource()` and download it with a stable filename derived from the active Story title or a documented fallback.
+Serialize the active validated Story with WEB-001 `serializeStorySource()` and download it as `${getDownloadBasename(activeStory.title)}.yaml`.
 
 Because canonical YAML size ≤1 MiB is part of browser authoring eligibility, this export is guaranteed to remain within the browser import source-size guard and must be re-importable by the same web app.
 
@@ -223,7 +246,7 @@ This action:
 - does not make the candidate active, mount it in Player, persist it, or enable MP4 browser render;
 - clears the validated-transfer evidence immediately if the user edits the buffer; an edited >1 MiB buffer is therefore not exportable as a validated candidate until it is reduced below the source guard and successfully parsed;
 - remains disabled for parse-invalid/schema-invalid YAML, and for oversized raw/edited YAML that has no matching validated transfer snapshot;
-- uses the validated transferred Story title or parsed candidate title for the filename when available, with a documented fallback.
+- uses the validated transferred Story title or parsed candidate title through the same `getDownloadBasename()` function; if no title is available, the sanitizer fallback applies.
 
 Label the actions so it is clear whether the download represents the **active Story** or the **current YAML candidate**.
 
@@ -300,6 +323,8 @@ A confirmed reset that fails to persist still changes the active in-memory Story
 Cover:
 
 - Story → YAML → Story semantic round-trip;
+- `getDownloadBasename()` is deterministic for the same title and produces ≤96 UTF-8 bytes before extension;
+- filename cases cover `/`, `\\`, `< > : " | ? *`, controls, leading/trailing dots/spaces, Windows device names, Unicode letters, emoji, whitespace-only titles after sanitization, and a 65,536-code-unit title without splitting Unicode;
 - applying schema-valid noncanonical YAML establishes the exact applied buffer as clean baseline and does not immediately re-dirty it;
 - editing after Apply dirties relative to the applied baseline;
 - invalid YAML does not replace validated Story;
@@ -340,6 +365,7 @@ Cover:
 
 - visual and YAML modes operate on one validated Story;
 - YAML can be imported and exported entirely in-browser;
+- every YAML download uses the shared bounded deterministic basename sanitizer rather than raw `Story.title`;
 - an eligible import cannot replace dirty/pending/unpersisted/recovery state without explicit destructive confirmation, while invalid imports leave existing work untouched;
 - browser YAML parsing is never attempted for raw/edited source text above 1 MiB UTF-8; unchanged oversized text originating from a validated visual transfer may be exported without parsing;
 - invalid YAML never reaches preview/render/persistence;
