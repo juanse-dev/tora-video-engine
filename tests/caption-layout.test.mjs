@@ -142,6 +142,42 @@ describe("caption layout", () => {
     );
   });
 
+  it("uses a digit-width bound for figure spaces", () => {
+    const text = `A${"\u2007".repeat(20)}A`;
+    const lines = layoutCaptionLines(text, "impact", 92);
+
+    assert.ok(
+      estimateCaptionLineWidth("\u2007", "impact", 100) >= 100,
+    );
+    assert.ok(lines.length > 1);
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "impact", 92) <=
+          CAPTION_CONTENT_WIDTH,
+      ),
+    );
+  });
+
+  it("uses a conservative bound for wide lowercase glyphs", () => {
+    const text = "m".repeat(11);
+    const lines = layoutCaptionLines(text, "impact", 92);
+
+    assert.ok(
+      estimateCaptionLineWidth("m", "impact", 100) >= 100,
+    );
+    assert.ok(lines.length > 1);
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "impact", 92) <=
+          CAPTION_CONTENT_WIDTH,
+      ),
+    );
+  });
+
   it("never splits a supported combining sequence across explicit lines", () => {
     const grapheme = "e\u0301";
     const text = grapheme.repeat(MAX_CAPTION_LENGTH / 2);
