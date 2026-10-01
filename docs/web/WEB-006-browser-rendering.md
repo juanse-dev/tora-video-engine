@@ -57,14 +57,25 @@ Browser MP4 export is not implementation-complete until this compatibility pass 
 
 Client-side rendering depends on browser WebCodecs and codec/container support.
 
-Before enabling the render action, check whether the requested H.264/MP4 configuration can be rendered in the current browser using the capability API provided by the pinned Remotion version.
+Before enabling the render action, call the pinned version's `canRenderMediaOnWeb()` with the same video-only media settings that will be used for the real render, including **`muted: true`**, H.264/MP4, and the engine dimensions.
 
-If unsupported:
+Consume both `canRender` and `resolvedOutputTarget`.
+
+For v0.2, browser MP4 export is supported only when:
+
+- `canRender === true`; and
+- `resolvedOutputTarget === "web-fs"`.
+
+The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 before `getBlob()`. Do not apply the full 300-second/1080×1920 render ceiling to that fallback. v0.2 deliberately **does not render when the resolved output target is `arraybuffer`** rather than inventing a second unvalidated encoded-memory threshold.
+
+If capability fails or resolves only to `arraybuffer`:
 
 - do not start the render;
-- explain that browser rendering is unavailable;
+- explain whether codec/WebCodecs support or the safe `web-fs` output target is unavailable;
 - keep editing and preview usable;
-- mention the existing local CLI as the alternative.
+- mention YAML export and the existing local CLI as alternatives.
+
+Do not add a server fallback in this spec. A custom `outputWritable` streaming path may be evaluated in a future version but is out of scope for v0.2.
 
 Do not add a server fallback in this spec.
 
@@ -83,10 +94,15 @@ Target output:
 
 - MP4 container;
 - H.264 video;
+- **video-only / no audio track**;
 - 1080 × 1920;
 - 30 FPS.
 
-Any web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
+Both capability detection and the actual render must explicitly pass `muted: true`. Do not rely on the pinned renderer's default, which is `false`.
+
+When starting `renderMediaOnWeb()`, also pass `outputTarget: "web-fs"` after capability detection has confirmed that `resolvedOutputTarget` is `"web-fs"`. The capability result and render call must therefore agree on the media/output assumptions used for eligibility.
+
+Any other web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
 
 ## Browser render budget
 
@@ -98,7 +114,7 @@ WEB-003/WEB-005 already enforce the browser authoring/preview ceiling before a S
 - equivalent maximum at fixed 30 FPS: **9,000 frames**;
 - maximum canonical YAML size: **1 MiB UTF-8**.
 
-WEB-006 does **not** introduce a higher or independent export threshold in v0.2. Instead, render eligibility defensively calls the exact same ordered `evaluateBrowserStoryPolicy(story)` from WEB-003 immediately before starting the web renderer.
+WEB-006 does **not** introduce a higher or independent **Story** threshold in v0.2. Instead, render eligibility defensively calls the exact same ordered `evaluateBrowserStoryPolicy(story)` from WEB-003 immediately before starting the web renderer, then separately requires the safe `web-fs` output target.
 
 Therefore:
 
@@ -114,7 +130,8 @@ Do not describe an over-budget Story as being rejected *only* by render eligibil
 
 The primary render action must only be enabled when all of the following are true:
 
-- the current browser supports the requested H.264/MP4 render configuration;
+- `canRenderMediaOnWeb({... muted: true, ...})` reports the requested H.264/MP4 configuration as renderable;
+- that same capability result has `resolvedOutputTarget === "web-fs"`;
 - the visual editor has no pending candidate that differs from the active Story, whether schema-invalid or browser-policy-ineligible;
 - the YAML editor has no unapplied buffer changes;
 - an active validated Story that has already passed the browser authoring/preview budget is available;
@@ -165,10 +182,13 @@ The canonical Story is one golden web-render test, but it is not sufficient by i
 Verify that browser output has:
 
 - H.264 MP4;
+- **no audio track**;
 - 1080 × 1920 dimensions;
 - 30 FPS where metadata inspection makes this available;
-- 12-second duration / 360 frames for the canonical fixture;
+- exactly 360 video frames and 12.0-second duration for the canonical fixture;
 - expected scene order, assets, captions, and animations.
+
+The no-audio assertion is required for v0.2. The pinned renderer defaults `muted` to `false`; Remotion issue #7099 documents silent AAC output and encoder priming extending MP4 container duration even for compositions with no audio assets. Explicit `muted: true` avoids creating that silent audio track and keeps the golden duration aligned with the video timeline.
 
 Add dedicated caption golden fixtures for:
 
@@ -202,17 +222,17 @@ If organization policy forbids the required telemetry path, production deploymen
 - a web-renderer compatibility audit covers all render-critical shared components, and no unsupported CSS property is relied on for caption alignment/wrapping semantics;
 - centered, left-aligned, long wrapped, and long unbroken caption golden cases demonstrate semantic Player/CLI ↔ browser-render parity;
 - render happens in-browser without Tora server/serverless render infrastructure;
-- capability is checked before rendering;
+- capability is checked before rendering using `muted: true`, and browser MP4 export is enabled only for `resolvedOutputTarget === "web-fs"`;
 - MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
 - an active Story whose title is within the visual bound and that is at or below 200 scenes, 300 seconds / 9,000 frames, and 1 MiB canonical YAML remains render-eligible when all other requirements pass;
 - schema-valid candidates above the browser budget are rejected by authoring policy before activation and cannot reach normal browser rendering;
 - render start defensively calls the same ordered centralized authoring policy and aborts on any mismatch; a 201+ scene active Story assertion path must not derive timeline metadata or serialize canonical YAML;
-- unsupported browsers receive a useful message and can still edit/preview;
+- browsers that cannot render H.264/MP4 **or** resolve only to `arraybuffer` receive a useful message and can still edit/preview/export YAML;
 - render uses an immutable validated Story snapshot;
 - all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
-- output timing/dimensions match the engine configuration;
+- output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
 - client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.
@@ -226,6 +246,8 @@ If organization policy forbids the required telemetry path, production deploymen
 - codec selector;
 - resolution selector;
 - audio;
+- `arraybuffer` browser render fallback;
+- custom `outputWritable` streaming;
 - batch export.
 
 ## Done when
