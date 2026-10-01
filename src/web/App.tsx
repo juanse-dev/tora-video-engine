@@ -130,6 +130,7 @@ export const App = () => {
     PersistenceOwnership | {mode: "checking"}
   >({mode: "checking"});
   const [conflict, setConflict] = useState<PersistenceConflict | null>(null);
+  const [persistenceReady, setPersistenceReady] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const {activeStory, visual} = authoringState;
@@ -173,7 +174,12 @@ export const App = () => {
 
   const persistStory = useCallback(
     (story: Story) => {
-      if (ownership.mode !== "owner" || recovery !== null || conflict !== null) {
+      if (
+        ownership.mode !== "owner" ||
+        !persistenceReady ||
+        recovery !== null ||
+        conflict !== null
+      ) {
         return false;
       }
 
@@ -192,12 +198,13 @@ export const App = () => {
         return false;
       }
     },
-    [conflict, ownership.mode, recovery],
+    [conflict, ownership.mode, persistenceReady, recovery],
   );
 
   useEffect(() => {
     if (
       ownership.mode === "owner" &&
+      persistenceReady &&
       recovery === null &&
       conflict === null &&
       !storiesSemanticallyEqual(durableStory, activeStory)
@@ -209,6 +216,7 @@ export const App = () => {
     conflict,
     durableStory,
     ownership.mode,
+    persistenceReady,
     persistStory,
     recovery,
   ]);
@@ -233,6 +241,7 @@ export const App = () => {
   const adoptOwnership = useCallback(
     async (lease: PersistenceOwnership) => {
       if (lease.mode !== "owner") {
+        setPersistenceReady(false);
         setOwnership(lease);
 
         if (lease.mode === "secondary") {
@@ -252,6 +261,7 @@ export const App = () => {
         const raw = window.localStorage.getItem(PERSISTENCE_STORAGE_KEY);
         const current = restorePersistedProject(raw, getFallbackStory());
 
+        setPersistenceReady(true);
         setOwnership(lease);
 
         if (current.recovery !== null) {
@@ -278,6 +288,7 @@ export const App = () => {
         setDurableStory(current.durableStory);
         setStorageWarning(null);
       } catch (error) {
+        setPersistenceReady(false);
         setOwnership(lease);
         setStorageWarning(
           error instanceof Error
@@ -304,6 +315,7 @@ export const App = () => {
       }
 
       if (next.mode !== "owner") {
+        setPersistenceReady(false);
         setOwnership(next);
         setStorageWarning(
           next.mode === "secondary"
@@ -320,6 +332,7 @@ export const App = () => {
           getFallbackStory(),
         );
 
+        setPersistenceReady(true);
         setOwnership(next);
 
         if (current.recovery !== null) {
@@ -349,6 +362,7 @@ export const App = () => {
         setDurableStory(current.durableStory);
         setStorageWarning(null);
       } catch (error) {
+        setPersistenceReady(false);
         setOwnership(next);
         setStorageWarning(
           error instanceof Error
