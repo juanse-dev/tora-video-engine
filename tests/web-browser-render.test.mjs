@@ -7,6 +7,7 @@ import {
   checkBrowserRenderCapability,
   cleanupRemotionOpfsUntilEmpty,
   evaluateBrowserRenderPolicy,
+  materializeBrowserDownloadBlob,
   renderStoryMediaOnWeb,
   retryBrowserRenderCleanup,
   startBrowserRenderTransaction,
@@ -197,6 +198,15 @@ describe("WEB-006 browser rendering", () => {
     );
   });
 
+  it("materializes an independent download Blob with the same bytes and media type", async () => {
+    const source = new Blob(["browser-video"], {type: "video/mp4"});
+    const snapshot = await materializeBrowserDownloadBlob(source);
+
+    assert.notEqual(snapshot, source);
+    assert.equal(snapshot.type, "video/mp4");
+    assert.equal(await snapshot.text(), "browser-video");
+  });
+
   it("passes the shared composition and exact video-only settings to Remotion", async () => {
     let seen = null;
     const controller = new AbortController();
@@ -258,9 +268,18 @@ describe("WEB-006 browser rendering", () => {
           internalState: {},
         };
       },
+      materializeBlob: async (received) => {
+        events.push("materialize");
+        assert.equal(received, blob);
+
+        return new Blob([await received.arrayBuffer()], {
+          type: "video/mp4",
+        });
+      },
       consumeBlob: async (received) => {
         events.push("consume");
-        assert.equal(received, blob);
+        assert.notEqual(received, blob);
+        assert.equal(await received.text(), "immutable-public-snapshot");
       },
     });
 
@@ -268,12 +287,14 @@ describe("WEB-006 browser rendering", () => {
       "cleanup",
       "render",
       "getBlob",
+      "materialize",
       "consume",
       "cleanup",
       "release",
     ]);
     assert.equal(outcome.kind, "success");
-    assert.equal(outcome.blob, blob);
+    assert.notEqual(outcome.blob, blob);
+    assert.equal(await outcome.blob.text(), "immutable-public-snapshot");
     assert.equal(outcome.consumed, true);
   });
 
@@ -403,6 +424,9 @@ describe("WEB-006 browser rendering", () => {
 
   it("retains the public Blob while post-render cleanup is blocked", async () => {
     const blob = new Blob(["public-remotion-blob"]);
+    const snapshot = new Blob(["materialized-download-blob"], {
+      type: "video/mp4",
+    });
     let cleanupCall = 0;
     let released = false;
 
@@ -433,12 +457,16 @@ describe("WEB-006 browser rendering", () => {
         getBlob: async () => blob,
         internalState: {},
       }),
+      materializeBlob: async (received) => {
+        assert.equal(received, blob);
+        return snapshot;
+      },
     });
 
     assert.equal(blocked.kind, "cleanup-blocked");
     assert.equal(blocked.stage, "post");
     assert.equal(blocked.pending.kind, "success");
-    assert.equal(blocked.pending.blob, blob);
+    assert.equal(blocked.pending.blob, snapshot);
     assert.equal(blocked.pending.consumed, false);
     assert.equal(released, false);
 
@@ -448,7 +476,7 @@ describe("WEB-006 browser rendering", () => {
     );
 
     assert.equal(retried.kind, "success");
-    assert.equal(retried.blob, blob);
+    assert.equal(retried.blob, snapshot);
     assert.equal(retried.consumed, false);
     assert.equal(released, true);
   });
