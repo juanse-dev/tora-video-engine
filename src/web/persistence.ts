@@ -253,6 +253,7 @@ export const acquirePersistenceOwnership = async (
     releaseHold = resolve;
   });
 
+  let acquisitionFailed = false;
   let resolveAcquired: ((owned: boolean) => void) | null = null;
   const acquired = new Promise<boolean>((resolve) => {
     resolveAcquired = resolve;
@@ -271,13 +272,16 @@ export const acquirePersistenceOwnership = async (
       },
     )
     .catch(() => {
+      acquisitionFailed = true;
       resolveAcquired?.(false);
     });
 
   const owned = await acquired;
 
   if (!owned) {
-    return {mode: "secondary"};
+    return acquisitionFailed
+      ? {mode: "session-only"}
+      : {mode: "secondary"};
   }
 
   return {
