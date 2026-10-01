@@ -12,6 +12,7 @@ describe("WEB-006 web-renderer compatibility audit", () => {
       "textAlign",
       "overflowWrap",
       "wordBreak",
+      "boxSizing",
     ]) {
       assert.equal(
         source.includes(unsupported),
@@ -22,6 +23,13 @@ describe("WEB-006 web-renderer compatibility audit", () => {
 
     assert.match(source, /layoutCaptionLines/);
     assert.match(source, /data-caption-line/);
+  });
+
+  it("uses background-color rather than unsupported background shorthand in the video fallback", async () => {
+    const source = await read("src/Video.tsx");
+
+    assert.equal(source.includes("background:"), false);
+    assert.match(source, /backgroundColor/);
   });
 
   it("does not rely on unsupported image object-position", async () => {
