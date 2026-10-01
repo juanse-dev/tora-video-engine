@@ -144,7 +144,8 @@ A useful automated smoke flow is:
 57. simulate an old deployed tab and a newly deployed tab that still share the same project/recovery localStorage slots; verify both request the exact unversioned lock `tora-video-engine:persistence-writer` and cannot write concurrently across bundle versions;
 58. seed localStorage with a raw persisted envelope above 1,048,576 UTF-16 code units and verify startup does not call `JSON.parse()`, StorySchema, timeline, serializer, or font coverage; fallback stays in memory, the durable slot is protected, and **Export stored raw JSON** returns the original bytes/text;
 59. seed a bounded compact JSON envelope containing thousands/201+ terse scenes (and separately an oversized raw caption/title); verify JSON parsing may occur but the cheap storage preflight rejects it before `StorySchema.safeParse()` / font coverage and preserves the raw envelope as recovery data;
-60. serialize the maximum-boundary normal v0.2 persisted envelope with compact JSON and verify it stays within `MAX_PERSISTED_ENVELOPE_CODE_UNITS`; force an envelope-write overflow and verify it is handled as persistence failure without replacing the prior durable slot.
+60. serialize the maximum-boundary normal v0.2 persisted envelope with compact JSON and verify it stays within `MAX_PERSISTED_ENVELOPE_CODE_UNITS`; force an envelope-write overflow and verify it is handled as persistence failure without replacing the prior durable slot;
+61. seed bounded malformed JSON, an unsupported storage-version envelope, and a bounded envelope whose candidate fails StorySchema; for each case verify startup preserves the exact raw durable string as protected recovery, fallback edits cannot autosave over it, **Export stored raw JSON** returns it verbatim, and only explicit discard/reset/import acknowledgement releases the slot.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -163,7 +164,7 @@ For each tested browser record:
 - a successful Apply of noncanonical YAML clears dirty state without requiring canonical text equality;
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision, and Reset cannot silently discard dirty, pending, recovery, **or unpersisted active** state;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
-- reload bounds the raw stored envelope before JSON parsing, cheap-preflights current-browser-impossible title/scene/caption shapes before StorySchema, and only then validates/restores; raw/preflight-rejected storage remains protected/exportable as raw JSON while validated policy-rejected storage remains YAML-exportable;
+- reload bounds the raw stored envelope before JSON parsing, protects malformed/unsupported-version payloads as raw recovery, cheap-preflights current-browser-impossible title/scene/caption shapes before StorySchema, and protects StorySchema-invalid payloads as raw recovery; only surviving schema-valid candidates enter browser policy, where policy-rejected storage becomes YAML-exportable recovery;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
 - opening a second same-origin tab or leaving an old bundle tab open across deploy never creates a second storage writer: all versions sharing the physical project/recovery slots use the same unversioned persistence lock; secondary-tab edits are visibly session-only;
 - browser `web-fs` renders are separately serialized across tabs **and old/new bundle versions** using the same unversioned render lock; a second tab cannot start Remotion rendering while that lock is owned;
@@ -176,11 +177,11 @@ For each tested browser record:
 - while rendering or cancelling, authoring controls cannot mutate the Story or create a new draft;
 - Cancel Render is always available during an active render, aborts through the owned `AbortController`, and does not release the render lock before locked OPFS cleanup completes;
 - a delayed writer close exercises cleanup retry/backoff; exhausted cleanup enters `cleanup-blocked` and blocks all further browser renders until Retry cleanup succeeds;
-- oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
+- oversized visual title input is rejected before Story construction; oversized YAML/import titles that reach StorySchema are rejected by the centralized post-schema policy, while oversized stored titles are intercepted earlier by storage preflight before StorySchema;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
 - pasted/edited YAML above 1,048,576 UTF-16 code units is refused before `TextEncoder`; remaining buffers above 1 MiB UTF-8 are refused before synchronous parsing;
 - a schema-valid browser-policy-rejected visual candidate can transfer to YAML within the normal 1 MiB source ceiling; unchanged transfer provenance may skip redundant parsing, while editing clears that provenance and returns to normal validation;
-- an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
+- an over-budget Story from YAML/import is refused by centralized browser policy before Player mount without being reported as schema-invalid; stored candidates first traverse raw/version/preflight/schema gates, and only surviving schema-valid cases such as frame-budget overflow reach centralized browser policy;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
 - repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle; font readiness is batched to one full-text load per required weight rather than per-character loading;
@@ -239,9 +240,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
 - [ ] visual title >65,536 UTF-16 code units and visual caption >360 UTF-16 code units are rejected before Story validation
-- [ ] YAML/import/restore title >65,536 is rejected by centralized post-schema policy before timeline/serialization
+- [ ] YAML/import title >65,536 is rejected by centralized post-schema policy; stored title >65,536 is quarantined by cheap storage preflight before StorySchema
 - [ ] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
-- [ ] 201+ scene candidates never invoke timeline derivation or canonical serialization in visual/YAML/import/restore/render-recheck paths
+- [ ] 201+ scene visual/YAML/import/render-recheck candidates never invoke timeline derivation/canonical serialization; persisted 201+ scene data is quarantined even earlier by storage preflight before StorySchema
 - [ ] visual Add cannot grow an over-budget pending draft beyond 201 scenes
 - [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount, with a final defensive canonical-YAML ≤1 MiB invariant
 - [ ] maximum-boundary v0.2 fixture remains ≤1 MiB canonical YAML, so no unreachable canonical-only rejection test is required
@@ -262,7 +263,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
 - [ ] cross-tab/cross-version persistence has exactly one writer under unversioned lock `tora-video-engine:persistence-writer` while physical project/recovery slots are shared
 - [ ] raw stored envelope >1,048,576 code units is quarantined before `JSON.parse()`/Zod and exportable as raw JSON
+- [ ] malformed JSON and unsupported storage versions remain exact raw protected recovery and cannot be overwritten by fallback autosave
 - [ ] storage cheap preflight rejects title >65,536, scenes >200, or raw caption >360 before StorySchema/font coverage
+- [ ] bounded StorySchema-invalid storage remains exact raw protected recovery and cannot be overwritten by fallback autosave
 - [ ] maximum-boundary compact persisted envelope fits its code-unit bound; write overflow preserves prior durable data
 - [ ] persistence ownership retry re-reads durable state and requires explicit conflict resolution before overwrite
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
