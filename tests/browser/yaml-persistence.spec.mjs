@@ -1,4 +1,13 @@
+import {readFile} from "node:fs/promises";
 import {expect, test} from "@playwright/test";
+
+const assertDownloadPath = (path) => {
+  expect(path).not.toBeNull();
+
+  if (path === null) {
+    throw new Error("Expected browser download path");
+  }
+};
 
 const waitForOwner = async (page) => {
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -89,6 +98,10 @@ test("policy-rejected visual candidate transfers explicitly to YAML and exports 
     .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("Deploy-Friday.yaml");
+
+  const downloadedPath = await download.path();
+  assertDownloadPath(downloadedPath);
+  expect(await readFile(downloadedPath, "utf8")).toBe(transferred);
 });
 
 test("eligible visual edits autosave and restore after reload", async ({page}) => {
@@ -136,6 +149,16 @@ test("malformed stored project is protected and fallback edits cannot overwrite 
     "true",
   );
 
+  expect(
+    await page.evaluate(() => localStorage.getItem("tora-video-engine:project")),
+  ).toBe(raw);
+
+  const rawDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", {name: "Export stored raw data"}).click();
+  const rawDownload = await rawDownloadPromise;
+  const rawDownloadPath = await rawDownload.path();
+  assertDownloadPath(rawDownloadPath);
+  expect(await readFile(rawDownloadPath, "utf8")).toBe(raw);
   expect(
     await page.evaluate(() => localStorage.getItem("tora-video-engine:project")),
   ).toBe(raw);
@@ -230,4 +253,57 @@ test("secondary tab suppresses persistence and retries into conflict after owner
       ),
     )
     .toContain("Secondary edit");
+});
+
+
+test("persistence write failure keeps the new Story active and loss-risk protected", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("tora-video-engine:project")),
+    )
+    .not.toBeNull();
+
+  await page.evaluate(() => {
+    const storage = window.localStorage;
+    const original = storage.setItem.bind(storage);
+
+    Object.defineProperty(storage, "setItem", {
+      configurable: true,
+      value: (key, value) => {
+        if (key === "tora-video-engine:project") {
+          throw new DOMException("quota", "QuotaExceededError");
+        }
+
+        return original(key, value);
+      },
+    });
+  });
+
+  await page.getByLabel("Caption").fill("Memory-only edit");
+
+  await expect(
+    page.locator(".preview-frame").getByText("Memory-only edit"),
+  ).toBeVisible();
+  await expect(page.getByText(/Autosave failed:/)).toBeVisible();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "true",
+  );
+
+  expect(
+    await page.evaluate(() => localStorage.getItem("tora-video-engine:project")),
+  ).not.toContain("Memory-only edit");
+
+  await page.getByRole("button", {name: "Reset project"}).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Reset will discard pending, unpersisted, or recovery state",
+  );
+  await expect(
+    page.getByRole("button", {name: "Export active Story YAML"}).first(),
+  ).toBeVisible();
 });
