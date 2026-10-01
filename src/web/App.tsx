@@ -141,6 +141,7 @@ export const App = () => {
 
   const activeStoryDurable =
     (ownership.mode === "owner" &&
+      persistenceReady &&
       recovery === null &&
       conflict === null &&
       storiesSemanticallyEqual(durableStory, activeStory)) ||
