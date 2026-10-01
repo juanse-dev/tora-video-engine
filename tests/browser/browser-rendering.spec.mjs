@@ -40,13 +40,16 @@ const importSingleScene = async (page, {
     });
 
   await expect
-    .poll(async () =>
-      page
+    .poll(async () => {
+      const lines = await page
         .locator(".preview-frame [data-caption-line]")
-        .allTextContents()
-        .then((lines) => lines.join(" ")),
-    )
-    .toContain(text.includes(" ") ? text.split(/\s+/u)[0] : text.slice(0, 24));
+        .allTextContents();
+
+      return text.includes(" ")
+        ? lines.join(" ").replace(/\s+/gu, " ").trim()
+        : lines.join("");
+    })
+    .toBe(text.replace(/\s+/gu, " ").trim());
 };
 
 test("pending visual and YAML drafts block browser render", async ({page}) => {
