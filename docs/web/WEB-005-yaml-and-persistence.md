@@ -275,8 +275,10 @@ Use browser-local persistence for the MVP, but allow **exactly one persistence w
 Before any tab may write the project/recovery keys in `localStorage`, it must acquire and hold an exclusive Web Locks API lock for the lifetime of that tab/session, using a stable name such as:
 
 ~~~ts
-tora-video-engine:persistence-writer:v0.2
+tora-video-engine:persistence-writer
 ~~~
+
+The lock is intentionally **unversioned** because it protects the physical shared project/recovery storage slots, not a payload schema version. Every concurrently open Tora bundle that reads/writes those same slots must request this exact lock name. If a future release introduces versioned physical storage keys, any migration from the shared slots must still run under this stable lock before a different mutex can be considered.
 
 Required behavior:
 
@@ -296,10 +298,16 @@ Use browser-local persistence for the MVP.
 
 Prefer \`localStorage\` because the current Story payload is small and contains no binary assets.
 
-Persist:
+Persist as **compact JSON**:
 
 - a small storage/schema version;
 - the last validated Story.
+
+Define `MAX_PERSISTED_ENVELOPE_CODE_UNITS = 1_048_576`.
+
+Before replacing the durable slot, stringify the complete envelope once and require `serializedEnvelope.length <= MAX_PERSISTED_ENVELOPE_CODE_UNITS`. If it exceeds the bound, treat that as a persistence failure: keep the Story active in memory, preserve the previous durable value, surface the normal persistence warning, and offer YAML export. This is a storage-envelope safety bound, not a StorySchema rule.
+
+The maximum-boundary v0.2 fixture must prove that a normal browser-eligible Story serialized with the specified compact envelope fits this limit.
 
 Do not persist an invalid Story as the recoverable project.
 
@@ -320,18 +328,22 @@ Do not impose a new Story-schema size limit solely to satisfy localStorage.
 
 On startup:
 
-1. attempt to load stored data;
-2. handle storage access errors without crashing;
-3. validate any retrieved data with the current Story schema;
-4. if schema-valid, run the same centralized browser authoring/preview policy used by visual editing, YAML Apply, and import **before** making it active or mounting the Player; this starts with `storedStory.title.length <= 65_536` before timeline derivation/canonical serialization;
-5. if both checks pass, restore it as the active Story. The browser-policy check is the same ordered `evaluateBrowserStoryPolicy()` from WEB-003;
-6. if the stored payload is schema-valid but browser-policy-ineligible, do not mount it. Retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the canonical/example Story only as an in-memory fallback, and show a persistent recovery banner;
-7. while a rejected stored recovery snapshot exists, do **not** automatically persist the fallback Story or later fallback-based edits into the same storage slot, because that would destroy the only stored copy;
-8. any valid fallback edit committed while that slot is protected immediately makes the active Story **unpersisted loss-risk state**: show the persistence/recovery warning, enable `beforeunload`, and offer **Export active Story YAML** as backup even though no storage write was attempted;
-9. provide **Export stored project YAML** using the already validated recovery snapshot (serialization may exceed the browser import guard because this is a CLI recovery path) and **Discard stored project and continue** as an explicit destructive action;
-10. exporting the recovery snapshot alone must not delete/overwrite it; only explicit discard/reset/import acknowledgement may release the protected storage slot;
-11. after the user explicitly releases the recovery snapshot, if the current active Story differs from durable storage, immediately attempt to persist that active Story; unload protection remains until that persistence succeeds or the in-memory change is explicitly discarded/reset;
-12. if missing, schema-invalid, corrupt, or storage is unavailable, fall back safely to the canonical/example Story and surface the appropriate validation/storage warning.
+1. attempt to read the stored envelope as a raw string and handle storage access errors without crashing;
+2. if no stored value exists, use the canonical/example Story;
+3. **before `JSON.parse()`**, require `rawStoredEnvelope.length <= MAX_PERSISTED_ENVELOPE_CODE_UNITS`;
+4. if the raw envelope exceeds that bound, do **not** parse or run Zod. Keep the durable slot untouched as an **oversized raw stored recovery snapshot**, activate the canonical/example Story only in memory, show a persistent recovery banner, and protect the slot from autosave;
+5. for a raw recovery snapshot, offer **Export stored raw JSON** using the already-read string and a fixed safe filename such as `tora-stored-recovery.json`, plus **Discard stored project and continue**. Do not claim it is valid Story YAML because it has not been parsed/validated;
+6. if the raw envelope is within the bound, `JSON.parse()` it and perform a **cheap storage preflight before StorySchema** on the candidate Story: if `title` is a string require `title.length <= 65_536`; if `scenes` is an array require `scenes.length <= 200`; for each of those at most 200 entries, if `text` is a string require `text.length <= 360`. A failure means the payload could not have been written by the current browser policy;
+7. if that preflight fails, do **not** call `StorySchema.safeParse()` or caption font-coverage validation. Preserve the original raw envelope as a **preflight-rejected raw stored recovery snapshot**, activate the fallback only in memory, protect the slot, and offer the same raw-JSON export/discard actions;
+8. only after raw-size + cheap preflight pass, validate the retrieved Story with the current StorySchema;
+9. if schema-valid, run the same ordered `evaluateBrowserStoryPolicy()` used by visual editing, YAML Apply, and import before making it active or mounting the Player;
+10. if schema + policy pass, restore it as the active Story;
+11. if schema-valid but browser-policy-ineligible for a reason not already eliminated by cheap preflight (for example >9,000 derived frames), retain the validated payload in memory as a **rejected stored recovery snapshot**, activate the fallback only in memory, and offer **Export stored project YAML**;
+12. while either raw recovery form or a validated rejected stored recovery snapshot exists, do **not** persist the fallback Story or later fallback-based edits into the protected storage slot;
+13. any valid fallback edit while that slot is protected immediately becomes unpersisted loss-risk state: show the persistence/recovery warning, enable `beforeunload`, and offer **Export active Story YAML**;
+14. exporting any recovery snapshot alone does not delete/overwrite it; only explicit discard/reset/import acknowledgement may release the protected slot;
+15. after explicit release, if the current active Story differs from durable storage, immediately attempt to persist it; unload protection remains until persistence succeeds or the in-memory change is explicitly discarded/reset;
+16. if bounded/parsible data is schema-invalid/corrupt, or storage is unavailable, fall back safely and surface the appropriate warning.
 
 ## Reset
 
@@ -380,9 +392,11 @@ Cover:
 - a schema-valid visual candidate rejected for reachable browser-policy reasons (for example scene count or duration) can be transferred/exported while its resulting YAML remains ≤1 MiB;
 - editing a transferred buffer invalidates its transfer snapshot and returns the candidate to the normal source-size/parse/schema validation path;
 - corrupt localStorage falls back safely;
-- schema-valid but browser-policy-rejected storage is retained as a recovery snapshot, is exportable for CLI use, and is not overwritten by fallback autosave;
+- raw storage envelopes above 1,048,576 code units are quarantined before `JSON.parse()`/Zod, remain protected from fallback autosave, and can be exported verbatim as raw JSON;
+- bounded parsed storage with title >65,536, scenes >200, or any raw caption >360 code units is quarantined by cheap preflight before StorySchema/font coverage and remains raw-JSON recoverable;
+- schema-valid storage that passes cheap preflight but fails later browser policy (for example frame budget) is retained as a validated YAML-exportable recovery snapshot and is not overwritten by fallback autosave;
 - exporting a rejected stored recovery snapshot does not clear it; explicit discard/reset acknowledgement is required before its storage slot can be replaced;
-- schema-valid, browser-eligible localStorage restores using the same ordered browser policy, including the final defensive canonical-YAML ≤1 MiB invariant;
+- schema-valid, browser-eligible localStorage restores only after raw-envelope and cheap storage preflight guards, then uses the same ordered browser policy including the final defensive canonical-YAML ≤1 MiB invariant;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
 - reset restores the default Story directly only when no loss-risk or protected recovery state exists;
@@ -421,7 +435,7 @@ Cover:
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate when its buffer is within the source-size ceiling;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including title ≤65,536 and canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
-- only the exclusive persistence-owner tab may write project/recovery localStorage keys; secondary tabs cannot overwrite the durable baseline or protected recovery slot;
+- only the exclusive persistence-owner tab may write project/recovery localStorage keys; the lock name is unversioned while those physical slots are shared, so old/new bundle versions cannot become concurrent writers; secondary tabs cannot overwrite the durable baseline or protected recovery slot;
 - intentionally suppressed persistence while protecting a rejected recovery snapshot is treated identically as loss-risk for unload purposes;
 - reload/navigation/tab close raises a native confirmation whenever dirty/pending/unpersisted session state would otherwise be lost;
 - Reset uses the same loss-risk predicate and cannot directly discard an active Story that differs from durable storage;
