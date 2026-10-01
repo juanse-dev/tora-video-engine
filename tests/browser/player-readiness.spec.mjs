@@ -1,18 +1,12 @@
 import {expect, test} from "@playwright/test";
 
-test("Player waits for caption font and images before advancing", async ({
-  page,
-}) => {
+const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
   const delayedRequests = [];
 
   await page.route("**/*", async (route) => {
     const url = route.request().url();
-    const shouldDelay =
-      url.includes("/characters/tora/") ||
-      url.includes("/backgrounds/") ||
-      url.endsWith(".woff2");
 
-    if (!shouldDelay) {
+    if (!shouldDelay(url)) {
       await route.continue();
       return;
     }
@@ -27,7 +21,9 @@ test("Player waits for caption font and images before advancing", async ({
     await route.continue();
   });
 
-  await page.goto("/tests/browser/readiness.html");
+  await page.goto("/tests/browser/readiness.html", {
+    waitUntil: "domcontentloaded",
+  });
 
   await expect
     .poll(() => delayedRequests.length, {timeout: 10_000})
@@ -60,4 +56,20 @@ test("Player waits for caption font and images before advancing", async ({
       {timeout: 10_000},
     )
     .toBeGreaterThan(0);
+};
+
+test("Player waits for the caption font before advancing", async ({page}) => {
+  await runBlockedPlaybackCase({
+    page,
+    shouldDelay: (url) => url.endsWith(".woff2"),
+  });
+});
+
+test("Player waits for scene images before advancing", async ({page}) => {
+  await runBlockedPlaybackCase({
+    page,
+    shouldDelay: (url) =>
+      url.includes("/characters/tora/") ||
+      url.includes("/backgrounds/"),
+  });
 });
