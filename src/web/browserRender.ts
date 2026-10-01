@@ -117,6 +117,13 @@ type RenderFunction = typeof renderMediaOnWeb;
 const asError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
 
+export const materializeBrowserDownloadBlob = async (
+  blob: Blob,
+): Promise<Blob> =>
+  new Blob([await blob.arrayBuffer()], {
+    type: blob.type,
+  });
+
 const defaultWait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
@@ -427,6 +434,7 @@ export const startBrowserRenderTransaction = async (
     acquireLock?: () => Promise<BrowserRenderLockLease>;
     cleanup?: () => Promise<OpfsCleanupResult>;
     renderStory?: typeof renderStoryMediaOnWeb;
+    materializeBlob?: (blob: Blob) => Promise<Blob>;
     consumeBlob?: (blob: Blob) => void | Promise<void>;
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
@@ -484,22 +492,30 @@ export const startBrowserRenderTransaction = async (
       onProgress: options.onProgress,
       licenseKey: options.licenseKey,
     });
-    const blob = await result.getBlob();
+    const webFsBlob = await result.getBlob();
 
     if (options.signal.aborted) {
       pending = {kind: "cancelled"};
     } else {
-      const consumed = options.consumeBlob !== undefined;
+      const materializeBlob =
+        options.materializeBlob ?? materializeBrowserDownloadBlob;
+      const blob = await materializeBlob(webFsBlob);
 
-      if (options.consumeBlob !== undefined) {
-        await options.consumeBlob(blob);
+      if (options.signal.aborted) {
+        pending = {kind: "cancelled"};
+      } else {
+        const consumed = options.consumeBlob !== undefined;
+
+        if (options.consumeBlob !== undefined) {
+          await options.consumeBlob(blob);
+        }
+
+        pending = {
+          kind: "success",
+          blob,
+          consumed,
+        };
       }
-
-      pending = {
-        kind: "success",
-        blob,
-        consumed,
-      };
     }
   } catch (error) {
     pending = options.signal.aborted
