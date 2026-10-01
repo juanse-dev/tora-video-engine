@@ -16,11 +16,27 @@ test("valid visual edits commit while invalid drafts keep the last active previe
     "data-editor-status",
     "schema-invalid",
   );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-pending",
+    "true",
+  );
   await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
 
   await caption.fill("WEB-003 live caption");
 
   await expect(status).toHaveAttribute("data-editor-status", "eligible");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "clean",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-pending",
+    "false",
+  );
   await expect(preview.getByText("WEB-003 live caption")).toBeVisible();
 });
 
@@ -138,4 +154,27 @@ test("rapid caption generations cannot let stale font loads unblock the newest S
       Number(await frameProbe.getAttribute("data-tora-frame")),
     )
     .toBeGreaterThan(0);
+});
+
+
+test("policy-rejected visual candidate is observable while Active Story stays mounted", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const preview = page.locator(".preview-frame");
+  const duration = page.getByLabel("Duration (seconds)");
+
+  await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
+  await duration.fill("301");
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "policy-rejected",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-pending",
+    "true",
+  );
+  await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
 });
