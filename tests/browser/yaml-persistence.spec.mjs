@@ -314,3 +314,137 @@ test("persistence write failure keeps the new Story active and loss-risk protect
     page.getByRole("button", {name: "Export active Story YAML"}).first(),
   ).toBeVisible();
 });
+
+
+test("import rechecks live editor state after asynchronous File.text", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const original = File.prototype.text;
+
+    File.prototype.text = function (...args) {
+      return new Promise((resolve, reject) => {
+        window.__releaseImportRead = () => {
+          original.apply(this, args).then(resolve, reject);
+        };
+      });
+    };
+  });
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const input = page.locator(".project-toolbar input[type=file]");
+  await input.setInputFiles({
+    name: "import.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(
+      [
+        "title: Imported",
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        "    text: Imported caption",
+        "    duration: 1",
+        "",
+      ].join("\n"),
+    ),
+  });
+
+  await page.getByLabel("Caption").fill("");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+
+  await page.evaluate(() => window.__releaseImportRead());
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText(
+    "Import will discard current pending or recovery work",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+  await expect(
+    page.locator(".preview-frame").getByText("Tora tiene una regla."),
+  ).toBeVisible();
+
+  await dialog.getByRole("button", {name: "Cancel import"}).click();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+});
+
+test("retry ownership clears stale local recovery after another owner replaces it", async ({
+  context,
+  page,
+}) => {
+  const raw = "{stale-recovery";
+
+  await page.addInitScript(({raw}) => {
+    localStorage.setItem("tora-video-engine:project", raw);
+  }, {raw});
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(page.locator(".recovery-banner")).toBeVisible();
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+  await expect(secondary.locator(".recovery-banner")).toBeVisible();
+
+  await page
+    .getByRole("button", {name: "Discard stored project and continue"})
+    .click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .not.toBe(raw);
+
+  await page.close();
+
+  await secondary
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+  await expect(secondary.locator(".recovery-banner")).toHaveCount(0);
+});
+
+test("secondary tab does not claim its unchanged initial snapshot is durable", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "true",
+  );
+});
