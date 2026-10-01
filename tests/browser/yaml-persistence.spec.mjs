@@ -437,6 +437,117 @@ test("import rechecks live editor state after asynchronous File.text", async ({
   );
 });
 
+test("retry ownership serializes concurrent attempts without orphaning the writer lock", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await page.close();
+  await expect
+    .poll(() =>
+      secondary.evaluate(async () => {
+        const snapshot = await navigator.locks.query();
+        return snapshot.held.some(
+          (lock) =>
+            lock.name === "tora-video-engine:persistence-writer",
+        );
+      }),
+    )
+    .toBe(false);
+
+  await secondary.evaluate(() => {
+    const locks = navigator.locks;
+    const originalRequest = locks.request.bind(locks);
+    window.__retryOwnershipRequests = 0;
+
+    Object.defineProperty(locks, "request", {
+      configurable: true,
+      value(name, options, callback) {
+        window.__retryOwnershipRequests += 1;
+
+        return new Promise((resolve, reject) => {
+          window.__releaseRetryOwnership = () => {
+            originalRequest(name, options, callback).then(resolve, reject);
+          };
+        });
+      },
+    });
+  });
+
+  await secondary.evaluate(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) =>
+        candidate.textContent?.trim() === "Retry persistence ownership",
+    );
+
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("Retry persistence ownership button not found");
+    }
+
+    button.click();
+    button.click();
+  });
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "checking",
+  );
+  await expect(
+    secondary.getByRole("button", {name: "Checking persistence ownership"}),
+  ).toBeDisabled();
+  expect(
+    await secondary.evaluate(() => window.__retryOwnershipRequests),
+  ).toBe(1);
+
+  await secondary.evaluate(() => window.__releaseRetryOwnership());
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+  await expect
+    .poll(() =>
+      secondary.evaluate(async () => {
+        const snapshot = await navigator.locks.query();
+        return snapshot.held.filter(
+          (lock) =>
+            lock.name === "tora-video-engine:persistence-writer",
+        ).length;
+      }),
+    )
+    .toBe(1);
+
+  const follower = await context.newPage();
+  await follower.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(follower.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await secondary.close();
+
+  await follower
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+  await expect(follower.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+});
+
 test("retry ownership reconciles against edits made while lock acquisition is pending", async ({
   context,
   page,
