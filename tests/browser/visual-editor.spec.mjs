@@ -52,14 +52,16 @@ test("rapid caption generations cannot let stale font loads unblock the newest S
     const requests = [];
     window.__toraFontLoads = requests;
 
-    FontFaceSet.prototype.load = function (_font, text) {
-      return new Promise((resolve) => {
-        requests.push({
-          text,
-          release: () => resolve([{}]),
-        });
-      });
-    };
+    Object.defineProperty(document.fonts, "load", {
+      configurable: true,
+      value: (_font, text) =>
+        new Promise((resolve) => {
+          requests.push({
+            text,
+            release: () => resolve([{}]),
+          });
+        }),
+    });
   });
 
   await page.goto("/", {waitUntil: "domcontentloaded"});
