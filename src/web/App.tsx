@@ -240,6 +240,7 @@ export const App = () => {
         yamlState.transferSnapshot !== null));
 
   const importRequestRef = useRef(0);
+  const retryOwnershipInFlightRef = useRef(false);
   const liveImportStateRef = useRef({
     mode,
     lossRisk,
@@ -499,10 +500,24 @@ export const App = () => {
     };
   }, [initialProject.activeStory]);
 
+  useEffect(() => {
+    if (ownership.mode !== "checking") {
+      retryOwnershipInFlightRef.current = false;
+    }
+  }, [ownership.mode]);
+
   const retryPersistenceOwnership = async () => {
-    if (ownership.mode === "owner") {
+    if (
+      ownership.mode === "owner" ||
+      ownership.mode === "checking" ||
+      retryOwnershipInFlightRef.current
+    ) {
       return;
     }
+
+    retryOwnershipInFlightRef.current = true;
+    setPersistenceReady(false);
+    setOwnership({mode: "checking"});
 
     const lease = await acquirePersistenceOwnership(navigator.locks);
     await adoptOwnership(lease);
@@ -1050,8 +1065,14 @@ export const App = () => {
           <strong>Persistence warning</strong>
           <span>{storageWarning}</span>
           {ownership.mode !== "owner" ? (
-            <button type="button" onClick={retryPersistenceOwnership}>
-              Retry persistence ownership
+            <button
+              type="button"
+              onClick={retryPersistenceOwnership}
+              disabled={ownership.mode === "checking"}
+            >
+              {ownership.mode === "checking"
+                ? "Checking persistence ownership"
+                : "Retry persistence ownership"}
             </button>
           ) : null}
           <button type="button" onClick={exportActiveStory}>
