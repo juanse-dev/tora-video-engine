@@ -28,18 +28,19 @@ The lock covers:
 
 1. bounded pre-render cleanup of every `__remotion_render:` entry;
 2. `renderMediaOnWeb()`;
-3. the public Remotion `getBlob()` snapshot;
-4. bounded post-render cleanup.
+3. the public Remotion `getBlob()`;
+4. success-path browser download handoff while the OPFS backing file still exists;
+5. bounded post-render cleanup.
 
 Cleanup re-enumerates the prefix and retries with the WEB-006 backoff schedule before declaring `cleanup-blocked`. A blocked cleanup keeps the lock until cleanup succeeds or the page is unloaded.
 
-Tora downloads the public Blob returned by Remotion directly. It does not copy the complete MP4 through `arrayBuffer()` and it does not impose an additional encoded-file-size limit.
+Tora downloads the public Blob returned by Remotion directly. Chrome can keep a `web-fs` Blob lazily dependent on its OPFS backing file, so Tora initiates the download before post-render cleanup removes that file, then enters a non-cancellable finalizing phase until cleanup releases the render lock. It does not copy the complete MP4 through `arrayBuffer()` and it does not impose an additional encoded-file-size limit.
 
 ## Cancellation
 
 Each render owns an `AbortController`. Cancel Render aborts the current Remotion render, waits for it to settle, and runs the same locked post-render cleanup before the lifecycle completes.
 
-Story- and draft-mutating controls are disabled while rendering or cancelling so a successful MP4 represents the visible frozen Story snapshot.
+Story- and draft-mutating controls are disabled while rendering, cancelling, or finalizing so a successful MP4 represents the visible frozen Story snapshot. Cancel is no longer offered after the MP4 has been handed to the browser download flow.
 
 ## Remotion telemetry
 
