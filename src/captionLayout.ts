@@ -3,7 +3,7 @@ import type {CaptionVariant} from "./scenePresets.ts";
 export const CAPTION_BOX_MAX_HEIGHT = 620;
 export const CAPTION_TEXT_MAX_HEIGHT = 520;
 export const CAPTION_MIN_FONT_SIZE = 32;
-export const CAPTION_CONTENT_WIDTH = 868;
+export const CAPTION_CONTENT_WIDTH = 864;
 export const CAPTION_LINE_HEIGHT = 1.12;
 
 const baseFontSizes: Record<CaptionVariant, number> = {
