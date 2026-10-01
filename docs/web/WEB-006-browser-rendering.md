@@ -14,7 +14,7 @@ The user clicks **Renderizar MP4**, sees render state/progress, and receives a d
 
 Use \`@remotion/web-renderer\` at the same exact Remotion version as the repository.
 
-The renderer must consume the existing composition directly:
+The renderer must consume the shared composition. Reuse of the same React component tree does **not** by itself prove compatibility with the client-side renderer:
 
 ~~~text
 Validated Story
@@ -30,7 +30,28 @@ H.264 MP4 Blob
 browser download
 ~~~
 
-Do not render screenshots from the visible Player or maintain a parallel canvas renderer.
+Do not render screenshots from the visible Player or maintain a parallel Tora canvas renderer.
+
+## Mandatory web-renderer compatibility pass
+
+Remotion client-side rendering's default path emulates DOM layout/styles into a canvas and supports only the elements and CSS styles documented by the pinned web renderer. See the upstream [client-side rendering limitations](https://www.remotion.dev/docs/client-side-rendering/limitations).
+
+The current shared `src/components/Caption.tsx` relies on `textAlign`, `overflowWrap`, and `wordBreak` for caption semantics. Those properties are not in the documented supported text-style set, so v0.2 must not assume that Player/CLI layout will automatically survive `renderMediaOnWeb()`.
+
+For v0.2, keep the normal supported client-renderer path and **adapt the shared caption implementation** so Player, CLI, and browser render still share one component while alignment/wrapping is expressed through supported primitives or explicit deterministic line layout.
+
+Requirements:
+
+- audit `ToraVideo` and every render-critical descendant against the pinned `@remotion/web-renderer` supported elements/styles before enabling MP4 export;
+- remove or stop relying on unsupported CSS for semantic behavior such as horizontal alignment, line wrapping, clipping, or scene layering;
+- preserve the existing visible intent for both `left` and `center` captions;
+- make long natural-language text and long unbroken tokens wrap deterministically without relying on unsupported `overflowWrap` / `wordBreak` behavior;
+- keep the compatibility refactor shared so CLI/Studio/Player do not receive a separate web-only caption renderer;
+- add regression coverage that fails if Player/CLI and web-render paths disagree on caption layout.
+
+Do **not** make Remotion's optional HTML-in-canvas capture mode a v0.2 requirement or parity escape hatch. The upstream [HTML-in-canvas documentation](https://www.remotion.dev/docs/client-side-rendering/html-in-canvas) describes it as experimental, Chromium-specific, dependent on browser feature support, and able to fall back to the normal DOM composer. A future opt-in path may use it only behind explicit capability detection and separate verification.
+
+Browser MP4 export is not implementation-complete until this compatibility pass succeeds.
 
 ## Capability detection
 
@@ -137,7 +158,7 @@ A failed render must not present an old Blob as the new successful result.
 
 ## Compatibility verification
 
-The canonical Story is the golden web-render test.
+The canonical Story is one golden web-render test, but it is not sufficient by itself.
 
 Verify that browser output has:
 
@@ -147,15 +168,37 @@ Verify that browser output has:
 - 12-second duration / 360 frames for the canonical fixture;
 - expected scene order, assets, captions, and animations.
 
+Add dedicated caption golden fixtures for:
+
+- the canonical centered caption;
+- a left-aligned caption;
+- long natural-language text near the schema caption limit;
+- a long unbroken token that exercises deterministic wrapping.
+
+For fixed representative frames, compare the client-render result against the shared Player/CLI intent with a documented visual tolerance and explicit assertions for caption box position, horizontal alignment, line breaks/line count, clipping, and font usage. Anti-aliasing/codec pixels need not be byte-identical.
+
 The CLI and browser render do not need byte-identical MP4 files. They must be semantically equivalent outputs from the same Story/render plan.
 
-## Telemetry note
+## Mandatory Remotion client-render telemetry
 
-Remotion's client-side rendering may emit Remotion telemetry according to the upstream package behavior. Tora Video Engine must not add its own analytics requirement to complete a render in v0.2.
+Client-side Remotion rendering is **not telemetry-optional**. Under the current upstream [Telemetry documentation](https://www.remotion.dev/docs/telemetry), each `renderMediaOnWeb()` / `renderStillOnWeb()` attempt sends a Remotion telemetry event even when no license key is configured; successful and failed renders emit events, while aborted renders do not.
+
+The implementation and deployment documentation must therefore:
+
+- not describe browser rendering as fully offline or zero-network;
+- disclose that the end user's IP address and page origin/domain are sent to Remotion for licensing/accountability telemetry, together with render type, environment, success/failure, and a license key when configured;
+- note that video content, video metadata, and Tora user content are not sent by this telemetry according to the upstream documentation;
+- ensure privacy/CSP/deployment review accounts for this outbound telemetry request;
+- note that telemetry-request failure does not fail the video render;
+- use only a client-safe/public Remotion license key in browser code, or `"free-license"` when current Free License eligibility has been verified; never embed a private server-side license key.
+
+If organization policy forbids the required telemetry path, production deployment must resolve the reporting/licensing requirement with Remotion rather than silently claiming telemetry is disabled.
 
 ## Acceptance criteria
 
 - supported browsers can render the canonical Story to an H.264 MP4;
+- a web-renderer compatibility audit covers all render-critical shared components, and no unsupported CSS property is relied on for caption alignment/wrapping semantics;
+- centered, left-aligned, long wrapped, and long unbroken caption golden cases demonstrate semantic Player/CLI ↔ browser-render parity;
 - render happens in-browser without Tora server/serverless render infrastructure;
 - capability is checked before rendering;
 - MP4 rendering is disabled whenever the visual editor has any pending candidate not reflected by the active Story (schema-invalid or browser-policy-ineligible) or YAML contains unapplied changes, preventing accidental export of a stale active Story;
@@ -166,10 +209,11 @@ Remotion's client-side rendering may emit Remotion telemetry according to the up
 - render uses an immutable validated Story snapshot;
 - all Story/draft-mutating authoring controls remain locked from render start through success/failure/cancel;
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
-- final filename is deterministic;
+- final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration;
 - local CLI rendering remains functional;
-- render failure cannot masquerade as success.
+- render failure cannot masquerade as success;
+- client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.
 
 ## Out of scope
 
