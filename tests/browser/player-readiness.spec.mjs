@@ -139,7 +139,7 @@ test("built Player surfaces font failure without unhandled rejection", async ({
   ).toBe(0);
 
   await expect(
-    page.getByRole("button", {name: "Play video"}),
+    page.locator("[data-preview-font-error]"),
   ).toBeVisible();
 
   expect(
