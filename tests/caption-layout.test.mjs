@@ -114,6 +114,24 @@ describe("caption layout", () => {
     );
   });
 
+  it("uses a conservative bound for numeric glyphs", () => {
+    const text = "0".repeat(MAX_CAPTION_LENGTH);
+    const fontSize = getCaptionFontSize("impact", text);
+    const lines = layoutCaptionLines(text, "impact", fontSize);
+
+    assert.ok(
+      estimateCaptionLineWidth("0", "impact", 100) >= 100,
+    );
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "impact", fontSize) <=
+          CAPTION_CONTENT_WIDTH,
+      ),
+    );
+  });
+
   it("never splits a supported combining sequence across explicit lines", () => {
     const grapheme = "e\u0301";
     const text = grapheme.repeat(MAX_CAPTION_LENGTH / 2);
