@@ -497,6 +497,123 @@ test("policy-rejected import stays non-active and exports the original source ve
   expect(await readFile(downloadedPath, "utf8")).toBe(source);
 });
 
+test("canceling an eligible import preserves the previously retained policy-rejected candidate", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const retainedSource = [
+    "title: Retained CLI Candidate",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: Keep this candidate",
+    "    duration: 301",
+    "",
+    "# retained verbatim",
+    "",
+  ].join("\n");
+
+  const input = page.locator(".project-toolbar input[type=file]");
+  await input.setInputFiles({
+    name: "retained.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(retainedSource),
+  });
+
+  const candidateBanner = page.locator(
+    '[data-import-candidate="policy-rejected"]',
+  );
+  await expect(candidateBanner).toBeVisible();
+
+  const eligibleSource = [
+    "title: Eligible replacement",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: Eligible replacement",
+    "    duration: 1",
+    "",
+  ].join("\n");
+
+  await input.setInputFiles({
+    name: "eligible.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(eligibleSource),
+  });
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText(
+    "Import will discard current pending or recovery work",
+  );
+  await dialog.getByRole("button", {name: "Cancel import"}).click();
+
+  await expect(candidateBanner).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await candidateBanner
+    .getByRole("button", {name: "Export imported YAML candidate"})
+    .click();
+  const download = await downloadPromise;
+  const downloadedPath = await download.path();
+  assertDownloadPath(downloadedPath);
+  expect(await readFile(downloadedPath, "utf8")).toBe(retainedSource);
+});
+
+test("a newer rejected import invalidates an older staged import", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  await page.getByLabel("Caption").fill("");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+
+  const input = page.locator(".project-toolbar input[type=file]");
+  const eligibleSource = [
+    "title: Staged import",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: Must never commit",
+    "    duration: 1",
+    "",
+  ].join("\n");
+
+  await input.setInputFiles({
+    name: "staged.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(eligibleSource),
+  });
+
+  await expect(page.getByRole("dialog")).toContainText(
+    "Import will discard current pending or recovery work",
+  );
+
+  await input.setInputFiles({
+    name: "too-large.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.alloc(1_048_577, 0x61),
+  });
+
+  await expect(page.getByText(/Import rejected before reading/)).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.locator(".preview-frame").getByText("Must never commit"),
+  ).toHaveCount(0);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "schema-invalid",
+  );
+});
+
 test("deleted durable slot becomes a conflict and confirmed reset clears it", async ({
   context,
   page,
