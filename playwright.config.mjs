@@ -5,6 +5,7 @@ export default defineConfig({
   timeout: 20_000,
   use: {
     baseURL: "http://127.0.0.1:4173",
+    channel: process.env.TORA_PLAYWRIGHT_CHANNEL || undefined,
     headless: true,
   },
   webServer: {
