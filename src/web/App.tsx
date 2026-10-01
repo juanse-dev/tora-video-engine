@@ -59,7 +59,14 @@ type TransitionState =
   | null;
 
 type PersistenceConflict = {
-  durableStory: Story;
+  durableStory: Story | null;
+};
+
+type PolicyRejectedImport = {
+  source: string;
+  story: Story;
+  filename: string;
+  policyMessage: string;
 };
 
 type InitialProject = {
@@ -110,6 +117,65 @@ const loadInitialProject = (): InitialProject => {
 const cleanAuthoringState = (activeStory: Story) =>
   createAuthoringState(activeStory);
 
+const optionalStoriesSemanticallyEqual = (
+  left: Story | null,
+  right: Story | null,
+): boolean => {
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  return storiesSemanticallyEqual(left, right);
+};
+
+const recoveriesSemanticallyEqual = (
+  left: ProtectedRecovery | null,
+  right: ProtectedRecovery | null,
+): boolean => {
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  if (left.kind !== right.kind) {
+    return false;
+  }
+
+  if (left.kind === "raw" && right.kind === "raw") {
+    return left.reason === right.reason && left.raw === right.raw;
+  }
+
+  if (left.kind === "policy-rejected" && right.kind === "policy-rejected") {
+    return (
+      left.policy.reason === right.policy.reason &&
+      storiesSemanticallyEqual(left.story, right.story)
+    );
+  }
+
+  return false;
+};
+
+const hasPersistenceConflict = (
+  previousDurable: Story | null,
+  currentDurable: Story | null,
+  activeStory: Story,
+): boolean => {
+  if (
+    currentDurable !== null &&
+    storiesSemanticallyEqual(currentDurable, activeStory)
+  ) {
+    return false;
+  }
+
+  if (!optionalStoriesSemanticallyEqual(previousDurable, currentDurable)) {
+    return true;
+  }
+
+  return (
+    currentDurable !== null &&
+    !storiesSemanticallyEqual(currentDurable, activeStory)
+  );
+};
+
 export const App = () => {
   const [initialProject] = useState(loadInitialProject);
   const [authoringState, setAuthoringState] = useState(() =>
@@ -133,6 +199,8 @@ export const App = () => {
   >({mode: "checking"});
   const [conflict, setConflict] = useState<PersistenceConflict | null>(null);
   const [persistenceReady, setPersistenceReady] = useState(false);
+  const [policyRejectedImport, setPolicyRejectedImport] =
+    useState<PolicyRejectedImport | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const {activeStory, visual} = authoringState;
@@ -141,21 +209,29 @@ export const App = () => {
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
 
+  const initialRecoveryFallbackStillProtected =
+    !activeStoryChangedFromInitial &&
+    initialProject.recovery !== null &&
+    recoveriesSemanticallyEqual(initialProject.recovery, recovery);
+
   const activeStoryDurable =
     (ownership.mode === "owner" &&
       persistenceReady &&
       recovery === null &&
       conflict === null &&
       storiesSemanticallyEqual(durableStory, activeStory)) ||
+    initialRecoveryFallbackStillProtected ||
     (!activeStoryChangedFromInitial &&
-      (recovery !== null || ownership.mode === "session-only"));
+      recovery === null &&
+      ownership.mode === "session-only");
 
-  const lossRisk = hasLossRisk({
-    visual,
-    yaml: yamlState,
-    recovery,
-    activeStoryDurable,
-  });
+  const lossRisk =
+    hasLossRisk({
+      visual,
+      yaml: yamlState,
+      recovery,
+      activeStoryDurable,
+    }) || policyRejectedImport !== null;
 
   const renderBlocked =
     visual.pending ||
@@ -219,10 +295,15 @@ export const App = () => {
       ownership.mode === "owner" &&
       persistenceReady &&
       recovery === null &&
-      conflict === null &&
-      !storiesSemanticallyEqual(durableStory, activeStory)
+      conflict === null
     ) {
-      persistStory(activeStory);
+      if (!storiesSemanticallyEqual(durableStory, activeStory)) {
+        persistStory(activeStory);
+      } else {
+        setStorageWarning((current) =>
+          current?.startsWith("Autosave failed:") ? null : current,
+        );
+      }
     }
   }, [
     activeStory,
@@ -289,13 +370,18 @@ export const App = () => {
         }
 
         if (
-          current.durableStory !== null &&
-          !storiesSemanticallyEqual(current.durableStory, activeStory)
+          hasPersistenceConflict(
+            durableStory,
+            current.durableStory,
+            activeStory,
+          )
         ) {
           setDurableStory(current.durableStory);
           setConflict({durableStory: current.durableStory});
           setStorageWarning(
-            "Durable storage changed while this tab did not own persistence.",
+            current.durableStory === null
+              ? "Durable storage was cleared while this tab did not own persistence."
+              : "Durable storage changed while this tab did not own persistence.",
           );
           return;
         }
@@ -312,7 +398,7 @@ export const App = () => {
         );
       }
     },
-    [activeStory],
+    [activeStory, durableStory],
   );
 
   useEffect(() => {
@@ -362,8 +448,8 @@ export const App = () => {
         }
 
         if (
-          current.durableStory !== null &&
-          !storiesSemanticallyEqual(
+          hasPersistenceConflict(
+            initialProject.durableStory,
             current.durableStory,
             initialProject.activeStory,
           )
@@ -371,7 +457,9 @@ export const App = () => {
           setDurableStory(current.durableStory);
           setConflict({durableStory: current.durableStory});
           setStorageWarning(
-            "Durable storage changed before persistence ownership was acquired.",
+            current.durableStory === null
+              ? "Durable storage was cleared before persistence ownership was acquired."
+              : "Durable storage changed before persistence ownership was acquired.",
           );
           return;
         }
@@ -422,6 +510,17 @@ export const App = () => {
     downloadText(
       serializeStorySource(visual.candidate),
       getYamlDownloadFilename(visual.candidate.title),
+    );
+  };
+
+  const exportPolicyRejectedImport = () => {
+    if (policyRejectedImport === null) {
+      return;
+    }
+
+    downloadText(
+      policyRejectedImport.source,
+      getYamlDownloadFilename(policyRejectedImport.story.title),
     );
   };
 
@@ -613,6 +712,7 @@ export const App = () => {
       }
     }
 
+    setPolicyRejectedImport(null);
     setImportMessage(null);
     setTransition(null);
   };
@@ -651,17 +751,28 @@ export const App = () => {
 
     const validation = evaluateYamlSource(source, file.name);
 
+    if (validation.kind === "policy-rejected") {
+      setPolicyRejectedImport({
+        source,
+        story: validation.story,
+        filename: file.name,
+        policyMessage: validation.policy.message,
+      });
+      setImportMessage(null);
+      return;
+    }
+
     if (validation.kind !== "eligible") {
+      setPolicyRejectedImport(null);
       setImportMessage(
-        validation.kind === "policy-rejected"
-          ? `Import is valid for CLI but browser-ineligible: ${validation.policy.message}`
-          : validation.kind === "pending"
-            ? "Import validation did not complete."
-            : validation.message,
+        validation.kind === "pending"
+          ? "Import validation did not complete."
+          : validation.message,
       );
       return;
     }
 
+    setPolicyRejectedImport(null);
     const liveState = liveImportStateRef.current;
 
     if (liveState.lossRisk || liveState.recovery !== null) {
@@ -690,6 +801,8 @@ export const App = () => {
       return;
     }
 
+    setConflict(null);
+    setStorageWarning(null);
     commitImportedStory(
       transition.source,
       transition.story,
@@ -703,6 +816,9 @@ export const App = () => {
     }
 
     const fallback = getFallbackStory();
+    setConflict(null);
+    setStorageWarning(null);
+    setPolicyRejectedImport(null);
     setAuthoringState(cleanAuthoringState(fallback));
     setYamlState(null);
     setMode("visual");
@@ -725,10 +841,14 @@ export const App = () => {
       return;
     }
 
-    setAuthoringState(cleanAuthoringState(conflict.durableStory));
+    const reloadedStory =
+      conflict.durableStory ?? getFallbackStory();
+
+    setAuthoringState(cleanAuthoringState(reloadedStory));
     setYamlState(null);
     setMode("visual");
     setDurableStory(conflict.durableStory);
+    setPolicyRejectedImport(null);
     setConflict(null);
     setStorageWarning(null);
     setVisualRevision((value) => value + 1);
@@ -941,15 +1061,41 @@ export const App = () => {
       {conflict !== null ? (
         <div className="app-banner recovery-banner" role="dialog">
           <strong>Persistence conflict</strong>
-          <span>Durable storage changed while this tab was secondary.</span>
+          <span>
+            {conflict.durableStory === null
+              ? "Durable storage was cleared while this tab was secondary."
+              : "Durable storage changed while this tab was secondary."}
+          </span>
           <button type="button" onClick={reloadDurableConflict}>
-            Reload durable project
+            Reload durable state
           </button>
           <button type="button" onClick={overwriteDurableConflict}>
             Keep current in memory and overwrite
           </button>
           <button type="button" onClick={exportActiveStory}>
             Export current YAML
+          </button>
+        </div>
+      ) : null}
+
+      {policyRejectedImport !== null ? (
+        <div
+          className="app-banner warning-banner"
+          role="status"
+          data-import-candidate="policy-rejected"
+        >
+          <strong>Imported Story is valid but browser-ineligible</strong>
+          <span>
+            {policyRejectedImport.filename}: {policyRejectedImport.policyMessage}
+          </span>
+          <button type="button" onClick={exportPolicyRejectedImport}>
+            Export imported YAML candidate
+          </button>
+          <button
+            type="button"
+            onClick={() => setPolicyRejectedImport(null)}
+          >
+            Dismiss imported candidate
           </button>
         </div>
       ) : null}
