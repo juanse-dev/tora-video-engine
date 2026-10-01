@@ -21,15 +21,17 @@ const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
     await route.continue();
   });
 
-  await page.goto("/tests/browser/readiness.html", {
-    waitUntil: "domcontentloaded",
-  });
+  await page.goto("/", {waitUntil: "domcontentloaded"});
 
   await expect
     .poll(() => delayedRequests.length, {timeout: 10_000})
     .toBeGreaterThan(0);
 
-  const frameProbe = page.locator("html");
+  const playButton = page.getByRole("button", {name: "Play video"});
+  await expect(playButton).toBeVisible();
+  await playButton.click();
+
+  const frameProbe = page.locator("[data-tora-frame]").first();
 
   await expect
     .poll(
@@ -58,14 +60,18 @@ const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
     .toBeGreaterThan(0);
 };
 
-test("Player waits for the caption font before advancing", async ({page}) => {
+test("built Player waits for the caption font before advancing", async ({
+  page,
+}) => {
   await runBlockedPlaybackCase({
     page,
     shouldDelay: (url) => url.endsWith(".woff2"),
   });
 });
 
-test("Player waits for scene images before advancing", async ({page}) => {
+test("built Player waits for scene images before advancing", async ({
+  page,
+}) => {
   await runBlockedPlaybackCase({
     page,
     shouldDelay: (url) =>
