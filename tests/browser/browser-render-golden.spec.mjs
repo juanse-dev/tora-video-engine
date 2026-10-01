@@ -407,9 +407,24 @@ const assertEncodedCaption = async ({
   }
 
   if (expectation.align === "center") {
-    for (const {minX, maxX} of lines) {
+    for (const [index, {minX, maxX}] of lines.entries()) {
+      const actualCenter = (minX + maxX) / 2;
+      const expectedBox = expectation.lineBoxes[index];
+      const expectedWidth =
+        expectedBox.widthRatio * captionWidth;
+
       expect(
-        Math.abs((minX + maxX) / 2 - FRAME_WIDTH / 2),
+        Math.abs(actualCenter - FRAME_WIDTH / 2),
+        JSON.stringify({
+          index,
+          minX,
+          maxX,
+          actualCenter,
+          expectedCenter: FRAME_WIDTH / 2,
+          expectedWidth,
+          expectedBox,
+          encoded: lines[index],
+        }),
       ).toBeLessThan(22);
     }
   } else {
