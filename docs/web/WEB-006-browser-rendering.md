@@ -66,7 +66,7 @@ For v0.2, browser MP4 export is supported only when:
 - `canRender === true`; and
 - `resolvedOutputTarget === "web-fs"`.
 
-The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 **during the entire render**. v0.2 deliberately does not use that fallback. The separate post-render materialization cap defined below is not equivalent: rendering still streams to OPFS first, and only the finalized output is copied into bounded memory after its exact encoded size is known.
+The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 **during the entire render**. v0.2 deliberately does not use that fallback. The accepted `web-fs` path instead streams render output to OPFS and returns the pinned public Remotion Blob snapshot at the end.
 
 If capability fails or resolves only to `arraybuffer`:
 
