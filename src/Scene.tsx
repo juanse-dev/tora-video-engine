@@ -58,7 +58,7 @@ export const Scene = ({scene}: SceneProps) => {
 
         <AbsoluteFill
           style={{
-            background: preset.overlay,
+            backgroundColor: preset.overlay,
           }}
         />
 
