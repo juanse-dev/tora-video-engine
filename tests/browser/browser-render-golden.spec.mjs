@@ -133,9 +133,15 @@ const getCaptionExpectation = async (page) => {
       frameHeight:
         frameRect.height * (936 / frameRect.width) * 0.5,
       lineCount: lines.length,
-      lineWidthRatios: lines.map((line) => {
+      lineBoxes: lines.map((line) => {
         const rect = line.getBoundingClientRect();
-        return rect.width / frameRect.width;
+
+        return {
+          topRatio:
+            (rect.top - frameRect.top) / frameRect.height,
+          heightRatio: rect.height / frameRect.height,
+          widthRatio: rect.width / frameRect.width,
+        };
       }),
     };
   });
@@ -144,7 +150,7 @@ const getCaptionExpectation = async (page) => {
 const analyzeEncodedCaptionFrame = async (
   page,
   path,
-  scan,
+  lineRegions,
 ) => {
   const encodedMp4 = (await readFile(path)).toString("base64");
 
@@ -153,7 +159,7 @@ const analyzeEncodedCaptionFrame = async (
       encodedMp4: base64,
       frameWidth,
       frameHeight,
-      scan: scanRegion,
+      lineRegions: regions,
     }) => {
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
@@ -169,10 +175,7 @@ const analyzeEncodedCaptionFrame = async (
       video.preload = "auto";
       video.src = url;
 
-      const waitFor = (
-        eventName,
-        errorMessage,
-      ) =>
+      const waitFor = (eventName, errorMessage) =>
         new Promise((resolve, reject) => {
           const cleanup = () => {
             video.removeEventListener(eventName, onSuccess);
@@ -215,7 +218,9 @@ const analyzeEncodedCaptionFrame = async (
           );
           video.currentTime = seekTime;
           await seeked;
-        } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        } else if (
+          video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+        ) {
           await waitFor(
             "loadeddata",
             "Could not decode rendered MP4 frame",
@@ -258,79 +263,59 @@ const analyzeEncodedCaptionFrame = async (
           );
         };
 
-        const activeRows = [];
-
-        for (
-          let py = scanRegion.y;
-          py < scanRegion.y + scanRegion.height;
-          py += 1
-        ) {
-          let brightPixels = 0;
-
-          for (
-            let px = scanRegion.x;
-            px < scanRegion.x + scanRegion.width;
-            px += 1
-          ) {
-            if (luminanceAt(px, py) > 150) {
-              brightPixels += 1;
-            }
-          }
-
-          if (brightPixels >= 3) {
-            activeRows.push(py);
-          }
-        }
-
-        const bands = [];
-
-        for (const row of activeRows) {
-          const current = bands.at(-1);
-
-          if (current && row - current.end <= 3) {
-            current.end = row;
-          } else {
-            bands.push({start: row, end: row});
-          }
-        }
-
-        const bounds = bands.map((band) => {
+        const lines = regions.map((region) => {
           let minX = Number.POSITIVE_INFINITY;
           let maxX = Number.NEGATIVE_INFINITY;
+          let minY = Number.POSITIVE_INFINITY;
+          let maxY = Number.NEGATIVE_INFINITY;
+          let brightPixels = 0;
 
-          for (
-            let py = band.start;
-            py <= band.end;
-            py += 1
-          ) {
-            for (
-              let px = scanRegion.x;
-              px < scanRegion.x + scanRegion.width;
-              px += 1
-            ) {
+          const startX = Math.max(0, Math.floor(region.x));
+          const endX = Math.min(
+            frameWidth,
+            Math.ceil(region.x + region.width),
+          );
+          const startY = Math.max(0, Math.floor(region.y));
+          const endY = Math.min(
+            frameHeight,
+            Math.ceil(region.y + region.height),
+          );
+
+          for (let py = startY; py < endY; py += 1) {
+            for (let px = startX; px < endX; px += 1) {
               if (luminanceAt(px, py) > 150) {
                 minX = Math.min(minX, px);
                 maxX = Math.max(maxX, px);
+                minY = Math.min(minY, py);
+                maxY = Math.max(maxY, py);
+                brightPixels += 1;
               }
             }
           }
 
           if (
             !Number.isFinite(minX) ||
-            !Number.isFinite(maxX)
+            !Number.isFinite(maxX) ||
+            !Number.isFinite(minY) ||
+            !Number.isFinite(maxY)
           ) {
             throw new Error(
-              "Expected encoded caption pixels",
+              "Expected encoded caption pixels in every line window",
             );
           }
 
-          return {minX, maxX};
+          return {
+            minX,
+            maxX,
+            minY,
+            maxY,
+            brightPixels,
+          };
         });
 
         return {
-          bands,
-          bounds,
           decodedDuration: video.duration,
+          lines,
         };
       } finally {
         video.remove();
@@ -341,7 +326,7 @@ const analyzeEncodedCaptionFrame = async (
       encodedMp4,
       frameWidth: FRAME_WIDTH,
       frameHeight: FRAME_HEIGHT,
-      scan,
+      lineRegions,
     },
   );
 };
@@ -354,6 +339,9 @@ const assertEncodedCaption = async ({
 }) => {
   expect(expectation.fontFamily).toMatch(/Inter/i);
   expect(expectation.lineCount).toBeGreaterThan(1);
+  expect(expectation.lineBoxes).toHaveLength(
+    expectation.lineCount,
+  );
 
   const captionX = 36;
   const captionWidth = 468;
@@ -363,37 +351,48 @@ const assertEncodedCaption = async ({
       : Math.round(
           FRAME_HEIGHT - 48 - expectation.frameHeight,
         );
-  const scan = {
-    x: captionX + 8,
-    y: captionY + 4,
-    width: captionWidth - 16,
-    height: Math.max(
-      1,
-      Math.round(expectation.frameHeight) - 8,
-    ),
-  };
-  const {bands, bounds, decodedDuration} =
-    await analyzeEncodedCaptionFrame(page, path, scan);
+
+  const lineRegions = expectation.lineBoxes.map((line) => ({
+    x: captionX + 4,
+    y:
+      captionY +
+      line.topRatio * expectation.frameHeight -
+      2,
+    width: captionWidth - 8,
+    height:
+      line.heightRatio * expectation.frameHeight +
+      4,
+  }));
+
+  const {decodedDuration, lines} =
+    await analyzeEncodedCaptionFrame(
+      page,
+      path,
+      lineRegions,
+    );
 
   expect(decodedDuration).toBeCloseTo(1, 2);
-  expect(bands).toHaveLength(expectation.lineCount);
+  expect(lines).toHaveLength(expectation.lineCount);
 
-  for (let index = 0; index < bands.length; index += 1) {
-    const band = bands[index];
-    const bound = bounds[index];
-    const bandHeight = band.end - band.start + 1;
-    const encodedWidth = bound.maxX - bound.minX + 1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const encoded = lines[index];
+    const expected = expectation.lineBoxes[index];
+    const encodedWidth =
+      encoded.maxX - encoded.minX + 1;
+    const encodedHeight =
+      encoded.maxY - encoded.minY + 1;
     const expectedWidth =
-      expectation.lineWidthRatios[index] * captionWidth;
+      expected.widthRatio * captionWidth;
 
-    expect(bandHeight).toBeGreaterThan(
+    expect(encoded.brightPixels).toBeGreaterThan(20);
+    expect(encodedHeight).toBeGreaterThan(
       Math.max(8, expectation.fontSize * 0.16),
     );
-    expect(bandHeight).toBeLessThan(
+    expect(encodedHeight).toBeLessThan(
       expectation.fontSize * 0.65,
     );
-    expect(bound.minX).toBeGreaterThan(captionX + 4);
-    expect(bound.maxX).toBeLessThan(
+    expect(encoded.minX).toBeGreaterThan(captionX + 4);
+    expect(encoded.maxX).toBeLessThan(
       captionX + captionWidth - 4,
     );
     expect(encodedWidth).toBeGreaterThan(
@@ -405,13 +404,13 @@ const assertEncodedCaption = async ({
   }
 
   if (expectation.align === "center") {
-    for (const {minX, maxX} of bounds) {
+    for (const {minX, maxX} of lines) {
       expect(
         Math.abs((minX + maxX) / 2 - FRAME_WIDTH / 2),
       ).toBeLessThan(22);
     }
   } else {
-    const leftEdges = bounds.map(({minX}) => minX);
+    const leftEdges = lines.map(({minX}) => minX);
     expect(Math.min(...leftEdges)).toBeLessThan(70);
     expect(
       Math.max(...leftEdges) - Math.min(...leftEdges),
