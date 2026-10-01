@@ -115,13 +115,23 @@ describe("caption layout", () => {
   });
 
   it("uses a conservative bound for numeric glyphs", () => {
-    const text = "0".repeat(MAX_CAPTION_LENGTH);
-    const fontSize = getCaptionFontSize("impact", text);
-    const lines = layoutCaptionLines(text, "impact", fontSize);
+    const shortNumeric = "0".repeat(15);
+    const shortLines = layoutCaptionLines(
+      shortNumeric,
+      "impact",
+      92,
+    );
 
     assert.ok(
       estimateCaptionLineWidth("0", "impact", 100) >= 100,
     );
+    assert.ok(shortLines.length > 1);
+    assert.equal(shortLines.join(""), shortNumeric);
+
+    const text = "0".repeat(MAX_CAPTION_LENGTH);
+    const fontSize = getCaptionFontSize("impact", text);
+    const lines = layoutCaptionLines(text, "impact", fontSize);
+
     assert.equal(lines.join(""), text);
     assert.ok(
       lines.every(
