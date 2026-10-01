@@ -10,7 +10,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -43,6 +43,12 @@ jobs:
           test -s dist/web/characters/tora/coffee.png
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
+
+      - name: Install browser test runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify Player resource buffering
+        run: npm run test:browser
 
       - name: Render reference story
         run: npm run video -- stories/friday-deploy.yaml
