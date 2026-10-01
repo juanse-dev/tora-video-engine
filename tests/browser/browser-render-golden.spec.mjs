@@ -7,6 +7,147 @@ const execFileAsync = promisify(execFile);
 
 const FRAME_WIDTH = 540;
 const FRAME_HEIGHT = 960;
+const RGB_CHANNELS = 3;
+
+const decodeMp4Frame = async (path, seconds) => {
+  const {stdout} = await execFileAsync(
+    "npx",
+    [
+      "remotion",
+      "ffmpeg",
+      "-v",
+      "error",
+      "-i",
+      path,
+      "-ss",
+      String(seconds),
+      "-frames:v",
+      "1",
+      "-vf",
+      `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}:flags=bilinear`,
+      "-pix_fmt",
+      "rgb24",
+      "-f",
+      "rawvideo",
+      "pipe:1",
+    ],
+    {
+      encoding: null,
+      maxBuffer:
+        FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS +
+        1024 * 1024,
+      timeout: 60_000,
+    },
+  );
+
+  const frame = Buffer.isBuffer(stdout)
+    ? stdout
+    : Buffer.from(stdout);
+
+  expect(frame.byteLength).toBe(
+    FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS,
+  );
+
+  return frame;
+};
+
+const regionStats = (
+  frame,
+  {x, y, width, height},
+  step = 3,
+) => {
+  let count = 0;
+  let sum = 0;
+  let sumSquares = 0;
+  let dark = 0;
+  let bright = 0;
+
+  for (let py = y; py < y + height; py += step) {
+    for (let px = x; px < x + width; px += step) {
+      const index = (py * FRAME_WIDTH + px) * RGB_CHANNELS;
+      const luminance =
+        frame[index] * 0.2126 +
+        frame[index + 1] * 0.7152 +
+        frame[index + 2] * 0.0722;
+
+      count += 1;
+      sum += luminance;
+      sumSquares += luminance * luminance;
+
+      if (luminance < 70) {
+        dark += 1;
+      }
+
+      if (luminance > 210) {
+        bright += 1;
+      }
+    }
+  }
+
+  const mean = sum / count;
+
+  return {
+    mean,
+    standardDeviation: Math.sqrt(
+      Math.max(0, sumSquares / count - mean * mean),
+    ),
+    darkRatio: dark / count,
+    brightRatio: bright / count,
+  };
+};
+
+const meanAbsoluteFrameDifference = (
+  first,
+  second,
+  {x, y, width, height},
+  step = 4,
+) => {
+  let count = 0;
+  let difference = 0;
+
+  for (let py = y; py < y + height; py += step) {
+    for (let px = x; px < x + width; px += step) {
+      const index = (py * FRAME_WIDTH + px) * RGB_CHANNELS;
+
+      difference +=
+        (Math.abs(first[index] - second[index]) +
+          Math.abs(first[index + 1] - second[index + 1]) +
+          Math.abs(first[index + 2] - second[index + 2])) /
+        RGB_CHANNELS;
+      count += 1;
+    }
+  }
+
+  return difference / count;
+};
+
+const captionHorizontalEdgeContrast = (frame, y) => {
+  const insideLeft = regionStats(
+    frame,
+    {x: 42, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const insideRight = regionStats(
+    frame,
+    {x: 480, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const outsideLeft = regionStats(
+    frame,
+    {x: 12, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const outsideRight = regionStats(
+    frame,
+    {x: 510, y, width: 18, height: 18},
+    1,
+  ).mean;
+
+  return (
+    (outsideLeft + outsideRight) / 2 -
+    (insideLeft + insideRight) / 2
+  );
+};
 
 const waitForOwner = async (page) => {
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -442,7 +583,10 @@ const assertEncodedCaption = async ({
   }
 };
 
-const assertMp4Metadata = async (path) => {
+const assertMp4Metadata = async (
+  path,
+  {expectedFrames = 30, expectedDuration = 1} = {},
+) => {
   const {stdout} = await execFileAsync(
     "npx",
     [
@@ -477,10 +621,148 @@ const assertMp4Metadata = async (path) => {
   );
   const duration = Number(metadata.format.duration);
 
-  expect(frameCount).toBe(30);
-  expect(duration).toBeCloseTo(1, 2);
+  expect(frameCount).toBe(expectedFrames);
+  expect(duration).toBeCloseTo(expectedDuration, 2);
   expect(frameCount / duration).toBeCloseTo(30, 1);
 };
+
+test("required Chrome runtime renders the canonical 12-second Story golden", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await requireBrowserRender(page);
+
+  const downloadPromise = page.waitForEvent("download", {
+    timeout: 220_000,
+  });
+  await page.getByRole("button", {name: "Render MP4"}).click();
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "true",
+  );
+  await expect(page.getByLabel("Caption")).toBeDisabled();
+  await expect(
+    page.getByRole("button", {name: "Cancel Render"}),
+  ).toBeVisible();
+
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("Deploy-Friday.mp4");
+
+  const path = await download.path();
+
+  if (path === null) {
+    throw new Error("Expected canonical browser MP4 download path");
+  }
+
+  const bytes = await readFile(path);
+  expect(bytes.byteLength).toBeGreaterThan(0);
+
+  await assertMp4Metadata(path, {
+    expectedFrames: 360,
+    expectedDuration: 12,
+  });
+
+  const [introFrame, dialogueFrame, chaosFrame, punchlineFrame] =
+    await Promise.all([
+      decodeMp4Frame(path, 1.5),
+      decodeMp4Frame(path, 4.5),
+      decodeMp4Frame(path, 7.5),
+      decodeMp4Frame(path, 10.5),
+    ]);
+
+  for (const frame of [
+    introFrame,
+    dialogueFrame,
+    chaosFrame,
+    punchlineFrame,
+  ]) {
+    const fullFrame = regionStats(frame, {
+      x: 0,
+      y: 0,
+      width: FRAME_WIDTH,
+      height: FRAME_HEIGHT,
+    });
+
+    expect(fullFrame.standardDeviation).toBeGreaterThan(15);
+    expect(fullFrame.brightRatio).toBeGreaterThan(0.001);
+  }
+
+  const topCaptionRegion = {
+    x: 36,
+    y: 48,
+    width: 468,
+    height: 92,
+  };
+  const bottomCaptionRegion = {
+    x: 36,
+    y: 830,
+    width: 468,
+    height: 82,
+  };
+
+  for (const [frame, region, edgeY] of [
+    [introFrame, topCaptionRegion, 68],
+    [dialogueFrame, bottomCaptionRegion, 860],
+    [chaosFrame, topCaptionRegion, 68],
+    [punchlineFrame, bottomCaptionRegion, 860],
+  ]) {
+    const captionStats = regionStats(frame, region, 2);
+
+    expect(captionStats.darkRatio).toBeGreaterThan(0.08);
+    expect(captionStats.brightRatio).toBeGreaterThan(0.0005);
+    expect(
+      captionHorizontalEdgeContrast(frame, edgeY),
+    ).toBeGreaterThan(5);
+  }
+
+  const toraRegion = {
+    x: 36,
+    y: 390,
+    width: 430,
+    height: 390,
+  };
+  expect(
+    meanAbsoluteFrameDifference(
+      introFrame,
+      dialogueFrame,
+      toraRegion,
+    ),
+  ).toBeGreaterThan(10);
+  expect(
+    meanAbsoluteFrameDifference(
+      introFrame,
+      punchlineFrame,
+      toraRegion,
+    ),
+  ).toBeGreaterThan(10);
+
+  expect(
+    meanAbsoluteFrameDifference(
+      dialogueFrame,
+      chaosFrame,
+      {
+        x: 0,
+        y: 0,
+        width: FRAME_WIDTH,
+        height: FRAME_HEIGHT,
+      },
+      6,
+    ),
+  ).toBeGreaterThan(10);
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "success",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+});
 
 test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
   page,
