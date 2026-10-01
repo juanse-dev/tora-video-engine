@@ -32,6 +32,18 @@ export const OPFS_CLEANUP_BACKOFF_MS = [
   3_200,
 ] as const;
 
+export const BROWSER_FRAME_DURATION_MICROSECONDS = Math.round(
+  1_000_000 / VIDEO_FPS,
+);
+
+export const withBrowserFrameDuration = (
+  frame: VideoFrame,
+): VideoFrame =>
+  new VideoFrame(frame, {
+    timestamp: frame.timestamp,
+    duration: BROWSER_FRAME_DURATION_MICROSECONDS,
+  });
+
 export type BrowserRenderCapability =
   | {
       kind: "ready";
@@ -406,6 +418,7 @@ export const renderStoryMediaOnWeb = async (
     onProgress: options.onProgress,
     licenseKey: options.licenseKey ?? null,
     allowHtmlInCanvas: false,
+    onFrame: withBrowserFrameDuration,
   });
 };
 
