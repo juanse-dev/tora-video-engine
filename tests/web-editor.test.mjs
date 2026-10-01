@@ -7,6 +7,10 @@ import {
   sceneTypes,
 } from "../src/story/schema.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
+import {
+  applyVisualDraftEvaluation,
+  createAuthoringState,
+} from "../src/web/authoringState.ts";
 import {parseStorySource} from "../src/story/parseStory.ts";
 import {
   MAX_BROWSER_CANONICAL_YAML_BYTES,
@@ -141,6 +145,62 @@ describe("WEB-003 browser Story policy", () => {
 
     assert.equal(result.eligible, false);
     assert.equal(result.reason, "canonical-yaml");
+  });
+});
+
+describe("WEB-003 application authoring state", () => {
+  it("keeps schema-invalid visual work observable without replacing Active Story", () => {
+    const state = createAuthoringState(exampleStory);
+    const draft = storyToVisualDraft(exampleStory);
+    draft.scenes[0].duration = "";
+    const evaluation = evaluateVisualDraft(draft);
+
+    assert.equal(evaluation.kind, "schema-invalid");
+
+    const next = applyVisualDraftEvaluation(state, evaluation);
+
+    assert.equal(next.activeStory, state.activeStory);
+    assert.equal(next.visual.kind, "schema-invalid");
+    assert.equal(next.visual.pending, true);
+    assert.equal(next.visual.candidate, null);
+    assert.match(next.visual.errors["scenes.0.duration"], /number|finite/i);
+  });
+
+  it("exposes the exact policy-rejected candidate while retaining Active Story", () => {
+    const state = createAuthoringState(exampleStory);
+    const draft = storyToVisualDraft(exampleStory);
+
+    for (const scene of draft.scenes) {
+      scene.duration = "76";
+    }
+
+    const evaluation = evaluateVisualDraft(draft);
+    assert.equal(evaluation.kind, "policy-rejected");
+
+    const next = applyVisualDraftEvaluation(state, evaluation);
+
+    assert.equal(next.activeStory, state.activeStory);
+    assert.equal(next.visual.kind, "policy-rejected");
+    assert.equal(next.visual.pending, true);
+    assert.equal(next.visual.candidate, evaluation.story);
+    assert.equal(next.visual.policy.reason, "duration");
+    assert.deepEqual(next.visual.candidate, evaluation.story);
+  });
+
+  it("commits eligible visual evaluation and clears pending state", () => {
+    const state = createAuthoringState(exampleStory);
+    const draft = storyToVisualDraft(exampleStory);
+    draft.title = "Application-owned";
+    const evaluation = evaluateVisualDraft(draft);
+
+    assert.equal(evaluation.kind, "eligible");
+
+    const next = applyVisualDraftEvaluation(state, evaluation);
+
+    assert.equal(next.activeStory, evaluation.story);
+    assert.equal(next.visual.kind, "clean");
+    assert.equal(next.visual.pending, false);
+    assert.equal(next.visual.candidate, null);
   });
 });
 
