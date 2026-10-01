@@ -135,11 +135,19 @@ export const App = () => {
   const {activeStory, visual} = authoringState;
   const previewConfig = getWebPlayerConfig(activeStory);
 
+  const activeStoryChangedFromInitial =
+    !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
+
   const activeStoryDurable =
-    ownership.mode === "owner" &&
-    recovery === null &&
-    conflict === null &&
-    storiesSemanticallyEqual(durableStory, activeStory);
+    (ownership.mode === "owner" &&
+      recovery === null &&
+      conflict === null &&
+      storiesSemanticallyEqual(durableStory, activeStory)) ||
+    (!activeStoryChangedFromInitial &&
+      (recovery !== null ||
+        ownership.mode === "secondary" ||
+        ownership.mode === "session-only" ||
+        ownership.mode === "checking"));
 
   const lossRisk = hasLossRisk({
     visual,
