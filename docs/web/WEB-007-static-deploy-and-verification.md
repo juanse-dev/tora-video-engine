@@ -35,7 +35,7 @@ As of **2026-09-30**, Remotion's published [License & Pricing](https://www.remot
 - individuals and organizations/teams of up to 3 people are eligible for the Free License, with additional categories such as non-profits/evaluation described upstream;
 - organizations not eligible for the Free License require a Company License;
 - programmatic `renderMediaOnWeb()` / `renderStillOnWeb()` and use of `<Player>` are classified as automation; video editors are explicitly listed as an Automators use case;
-- under the current Company License pricing, Remotion for Automators is priced per render with a monthly minimum; Player previews themselves are not counted as renders.
+- under the current Company License pricing, Remotion for Automators is **$0.01 per render with a $100/month minimum**; Player previews themselves are not counted as renders.
 
 Therefore static hosting/no Tora backend must never be documented as implying zero software-license cost.
 
