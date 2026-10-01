@@ -54,12 +54,24 @@ jobs:
       - name: Verify Player resource buffering
         run: npm run test:browser
 
+      - name: Render PR smoke story
+        if: github.event_name == 'pull_request'
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+        run: npm run video -- stories/ci-smoke.yaml
+
+      - name: Verify PR smoke artifact
+        if: github.event_name == 'pull_request'
+        run: test -s output/ci-smoke.mp4
+
       - name: Render reference story
+        if: github.event_name == 'push'
         env:
           TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: npm run video -- stories/friday-deploy.yaml
 
-      - name: Verify artifact
+      - name: Verify reference artifact
+        if: github.event_name == 'push'
         run: test -s output/friday-deploy.mp4
 
       - name: Upload reference render
@@ -74,6 +86,8 @@ jobs:
       - name: Reject stale output after validation failure
         shell: bash
         run: |
+          mkdir -p output
+          printf 'stale' > output/friday-deploy.mp4
           printf 'title: Broken\nscenes: []\n' > /tmp/friday-deploy.yaml
           if npm run video -- /tmp/friday-deploy.yaml; then
             echo "Expected invalid story render to fail"
