@@ -54,7 +54,7 @@ const glyphAdvanceEm = (grapheme: string): number => {
     return 0.33;
   }
 
-  if (/[A-Z@%&]/u.test(baseCharacter)) {
+  if (/[A-Z0-9@%&]/u.test(baseCharacter)) {
     return CONSERVATIVE_WIDE_ADVANCE_EM;
   }
 
@@ -62,11 +62,11 @@ const glyphAdvanceEm = (grapheme: string): number => {
     return 0.82;
   }
 
-  if (/[ilIjtfr1|]/u.test(baseCharacter)) {
+  if (/[ilIjtfr|]/u.test(baseCharacter)) {
     return 0.36;
   }
 
-  if (/[a-z0-9]/u.test(baseCharacter)) {
+  if (/[a-z]/u.test(baseCharacter)) {
     return 0.58;
   }
 
