@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
+import {
+  animations,
+  backgrounds,
+  poses,
+  sceneTypes,
+} from "../src/story/schema.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
 import {
   MAX_BROWSER_CANONICAL_YAML_BYTES,
@@ -18,6 +24,7 @@ import {
   storyToVisualDraft,
   validateRawVisualCaption,
   validateRawVisualTitle,
+  visualEditorOptions,
 } from "../src/web/visualDraft.ts";
 
 describe("WEB-003 browser Story policy", () => {
@@ -98,6 +105,25 @@ describe("WEB-003 browser Story policy", () => {
     assert.equal(serializeCalls, 0);
   });
 
+  it("accepts the current maximum-shape boundary below 1 MiB", () => {
+    const story = {
+      title: "T".repeat(MAX_BROWSER_TITLE_CODE_UNITS),
+      scenes: Array.from({length: 200}, () => ({
+        type: "intro",
+        pose: "formal",
+        background: "office",
+        text: "A".repeat(180),
+        duration: 1,
+      })),
+    };
+
+    const result = evaluateBrowserStoryPolicy(story);
+
+    assert.equal(result.eligible, true);
+    assert.equal(result.totalFrames, 6_000);
+    assert.ok(result.canonicalBytes <= MAX_BROWSER_CANONICAL_YAML_BYTES);
+  });
+
   it("checks canonical UTF-8 bytes only after earlier gates pass", () => {
     const result = evaluateBrowserStoryPolicy(exampleStory, {
       deriveTotalFrames: () => MAX_BROWSER_TOTAL_FRAMES,
@@ -111,6 +137,13 @@ describe("WEB-003 browser Story policy", () => {
 });
 
 describe("WEB-003 visual draft transformations", () => {
+  it("uses the shared schema enum catalogs without duplicated UI arrays", () => {
+    assert.equal(visualEditorOptions.sceneTypes, sceneTypes);
+    assert.equal(visualEditorOptions.poses, poses);
+    assert.equal(visualEditorOptions.backgrounds, backgrounds);
+    assert.equal(visualEditorOptions.animations, animations);
+  });
+
   it("turns valid edits into an eligible Story", () => {
     const draft = storyToVisualDraft(exampleStory);
     draft.title = "Edited";
@@ -137,6 +170,19 @@ describe("WEB-003 visual draft transformations", () => {
       "discard",
       "stay",
     ]);
+  });
+
+  it("retains an over-duration Story as a policy-rejected candidate", () => {
+    const draft = storyToVisualDraft(exampleStory);
+
+    for (const scene of draft.scenes) {
+      scene.duration = "76";
+    }
+
+    const result = evaluateVisualDraft(draft);
+
+    assert.equal(result.kind, "policy-rejected");
+    assert.equal(result.policy.reason, "duration");
   });
 
   it("retains a 201-scene candidate as policy-rejected", () => {
