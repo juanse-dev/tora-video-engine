@@ -448,3 +448,257 @@ test("secondary tab does not claim its unchanged initial snapshot is durable", a
     "true",
   );
 });
+
+
+test("policy-rejected import stays non-active and exports the original source verbatim", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const source = [
+    "title: CLI Candidate",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: Keep active preview",
+    "    duration: 301",
+    "",
+    "# preserve this exact comment",
+    "",
+  ].join("\n");
+
+  await page.locator(".project-toolbar input[type=file]").setInputFiles({
+    name: "cli-candidate.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(source),
+  });
+
+  const candidateBanner = page.locator(
+    '[data-import-candidate="policy-rejected"]',
+  );
+  await expect(candidateBanner).toBeVisible();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "true",
+  );
+  await expect(
+    page.locator(".preview-frame").getByText("Tora tiene una regla."),
+  ).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await candidateBanner
+    .getByRole("button", {name: "Export imported YAML candidate"})
+    .click();
+  const download = await downloadPromise;
+  const downloadedPath = await download.path();
+  assertDownloadPath(downloadedPath);
+  expect(await readFile(downloadedPath, "utf8")).toBe(source);
+});
+
+test("deleted durable slot becomes a conflict and confirmed reset clears it", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await page.evaluate(() => {
+    localStorage.removeItem("tora-video-engine:project");
+  });
+  await page.close();
+
+  await secondary
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+  await expect(secondary.getByText("Persistence conflict")).toBeVisible();
+  expect(
+    await secondary.evaluate(() =>
+      localStorage.getItem("tora-video-engine:project"),
+    ),
+  ).toBeNull();
+
+  await secondary.getByRole("button", {name: "Reset project"}).click();
+  const dialog = secondary.getByRole("dialog");
+  await dialog
+    .getByRole("button", {name: "Discard current state and reset"})
+    .click();
+
+  await expect(secondary.getByText("Persistence conflict")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      secondary.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .not.toBeNull();
+});
+
+test("recovery replacing a previously durable Story keeps unload loss-risk active", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "tora-video-engine:project",
+      "{replacement-recovery",
+    );
+  });
+  await page.close();
+
+  await secondary
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+  await expect(secondary.locator(".recovery-banner")).toBeVisible();
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "true",
+  );
+});
+
+test("autosave failure warning clears when active Story returns to durable state", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .not.toBeNull();
+
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+
+    Object.defineProperty(Storage.prototype, "setItem", {
+      configurable: true,
+      value(key, value) {
+        if (
+          this === window.localStorage &&
+          key === "tora-video-engine:project"
+        ) {
+          throw new DOMException("quota", "QuotaExceededError");
+        }
+
+        return original.call(this, key, value);
+      },
+    });
+  });
+
+  const caption = page.getByLabel("Caption");
+  await caption.fill("Temporary memory-only edit");
+  await expect(page.getByText(/Autosave failed:/)).toBeVisible();
+
+  await caption.fill("Tora tiene una regla.");
+
+  await expect(page.getByText(/Autosave failed:/)).toHaveCount(0);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "false",
+  );
+});
+
+test("confirmed eligible import clears an existing persistence conflict", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await page.getByLabel("Caption").fill("Owner changed durable");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .toContain("Owner changed durable");
+  await page.close();
+
+  await secondary
+    .getByRole("button", {name: "Retry persistence ownership"})
+    .click();
+  await expect(secondary.getByText("Persistence conflict")).toBeVisible();
+
+  const source = [
+    "title: Imported after conflict",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: Imported after conflict",
+    "    duration: 1",
+    "",
+  ].join("\n");
+
+  await secondary
+    .locator(".project-toolbar input[type=file]")
+    .setInputFiles({
+      name: "conflict-import.yaml",
+      mimeType: "text/yaml",
+      buffer: Buffer.from(source),
+    });
+
+  const dialog = secondary.getByRole("dialog");
+  await expect(dialog).toContainText(
+    "Import will discard current pending or recovery work",
+  );
+  await dialog
+    .getByRole("button", {name: "Discard current work and import"})
+    .click();
+
+  await expect(secondary.getByText("Persistence conflict")).toHaveCount(0);
+  await expect(
+    secondary.locator(".preview-frame").getByText("Imported after conflict"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      secondary.evaluate(() =>
+        localStorage.getItem("tora-video-engine:project"),
+      ),
+    )
+    .toContain("Imported after conflict");
+});
