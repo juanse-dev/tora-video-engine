@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import {resolve} from "node:path";
+import {dirname, resolve} from "node:path";
 import {describe, it} from "node:test";
 import {parseStorySource} from "../src/story/parseStory.ts";
 import {serializeStorySource} from "../src/story/serializeStory.ts";
@@ -106,13 +106,44 @@ scenes:
     );
   });
 
-  it("keeps browser-safe boundary modules free of node:* imports", async () => {
-    for (const path of [
+  it("keeps the browser-safe local dependency graph free of node:* imports", async () => {
+    const pending = [
       resolve("src/story/parseStory.ts"),
       resolve("src/story/serializeStory.ts"),
-    ]) {
+    ];
+    const visited = new Set();
+
+    while (pending.length > 0) {
+      const path = pending.pop();
+
+      if (path === undefined || visited.has(path)) {
+        continue;
+      }
+
+      visited.add(path);
       const source = await readFile(path, "utf8");
-      assert.doesNotMatch(source, /from\s+["']node:/);
+
+      assert.doesNotMatch(
+        source,
+        /from\s+["']node:/,
+        `${path} must remain browser-safe`,
+      );
+
+      for (const match of source.matchAll(/from\s+["'](\.[^"']+)["']/g)) {
+        const specifier = match[1];
+
+        if (specifier.endsWith(".ts")) {
+          pending.push(resolve(dirname(path), specifier));
+        }
+      }
     }
+  });
+
+  it("keeps loadStory as a thin Node filesystem adapter", async () => {
+    const source = await readFile(resolve("src/story/loadStory.ts"), "utf8");
+
+    assert.match(source, /parseStorySource/);
+    assert.doesNotMatch(source, /from\s+["']yaml["']/);
+    assert.doesNotMatch(source, /StorySchema/);
   });
 });
