@@ -130,7 +130,11 @@ A useful automated smoke flow is:
 43. with the primary tab protecting a rejected stored recovery snapshot, edit/import/reset from the secondary tab and verify no project/recovery `localStorage` key is mutated; after the primary closes, use **Retry persistence ownership**, re-read durable state, and require explicit conflict resolution before any overwrite;
 44. verify the shared filename sanitizer rejects/prefixes Win32 Unicode device aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`, including aliases followed by extensions;
 45. mock/force capability detection to resolve `web-fs` and verify both `canRenderMediaOnWeb()` and `renderMediaOnWeb()` receive `muted: true`, the render call receives `outputTarget: "web-fs"`, and the canonical MP4 has no audio track, exactly 360 video frames, and 12.0-second container duration;
-46. mock/force capability detection to return `canRender: true` with `resolvedOutputTarget: "arraybuffer"`; verify Render MP4 remains disabled, `renderMediaOnWeb()` is not called, and editing/preview/YAML export/CLI guidance remain available.
+46. mock/force capability detection to return `canRender: true` with `resolvedOutputTarget: "arraybuffer"`; verify Render MP4 remains disabled, `renderMediaOnWeb()` is not called, and editing/preview/YAML export/CLI guidance remain available;
+47. open two same-origin tabs with `web-fs` capability and start Render MP4 in tab A; verify tab B cannot enter `renderMediaOnWeb()` until A has completed `getBlob()`, download handoff, and OPFS cleanup/released the dedicated render lock;
+48. seed stale `__remotion_render:` OPFS files, then perform 20 sequential successful renders in one long-lived tab plus one cancelled and one failed render; after each lifecycle verify no render-prefixed file accumulation remains and origin storage usage does not monotonically grow from leaked Remotion outputs;
+49. paste a multi-megabyte caption into a visual scene and verify the 360-UTF-16-unit raw guard rejects it before `StorySchema.safeParse()`, code-point counting, or font-coverage validation;
+50. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -152,6 +156,7 @@ For each tested browser record:
 - reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
 - opening a second same-origin tab never creates a second storage writer: only the persistence-owner tab may mutate project/recovery localStorage keys, and secondary-tab edits are visibly session-only;
+- browser `web-fs` renders are separately serialized across tabs; a second tab cannot start Remotion rendering while the dedicated render lock is owned;
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result including `resolvedOutputTarget`;
 - browser MP4 export is offered only for `web-fs`; an `arraybuffer`-only result is explained and does not start rendering;
@@ -221,10 +226,11 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
-- [ ] visual title >65,536 UTF-16 code units is rejected before Story construction
+- [ ] visual title >65,536 UTF-16 code units and visual caption >360 UTF-16 code units are rejected before Story validation
 - [ ] YAML/import/restore title >65,536 is rejected by centralized post-schema policy before timeline/serialization
 - [ ] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
 - [ ] 201+ scene candidates never invoke timeline derivation or canonical serialization in visual/YAML/import/restore/render-recheck paths
+- [ ] visual Add cannot grow an over-budget pending draft beyond 201 scenes
 - [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount, with a final defensive canonical-YAML ≤1 MiB invariant
 - [ ] maximum-boundary v0.2 fixture remains ≤1 MiB canonical YAML, so no unreachable canonical-only rejection test is required
 - [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
@@ -257,6 +263,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
 - [ ] capability and render calls both use `muted: true`
 - [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
+- [ ] dedicated render Web Lock serializes `web-fs` rendering across same-origin tabs through Blob/download handoff and cleanup
+- [ ] repeated success/failure/cancel render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
 - [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
