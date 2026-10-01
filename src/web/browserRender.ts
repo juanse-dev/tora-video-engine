@@ -484,10 +484,12 @@ export const startBrowserRenderTransaction = async (
     });
     const blob = await result.getBlob();
 
-    pending = {
-      kind: "success",
-      blob,
-    };
+    pending = options.signal.aborted
+      ? {kind: "cancelled"}
+      : {
+          kind: "success",
+          blob,
+        };
   } catch (error) {
     pending = options.signal.aborted
       ? {kind: "cancelled"}
@@ -498,6 +500,10 @@ export const startBrowserRenderTransaction = async (
   }
 
   const postCleanup = await cleanupSafely(cleanup);
+
+  if (options.signal.aborted && pending.kind === "success") {
+    pending = {kind: "cancelled"};
+  }
 
   if (!postCleanup.ok) {
     return {
