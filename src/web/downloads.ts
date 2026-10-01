@@ -7,6 +7,21 @@ const WINDOWS_RESERVED =
 const trimUnsafeEdges = (value: string): string =>
   value.replace(/^[ .-]+|[ .-]+$/gu, "");
 
+const RESERVED_FILENAME_CHARACTERS = new Set(
+  Array.from('<>:"/\\\\|?*'),
+);
+
+const replaceControlAndReservedCharacters = (value: string): string =>
+  Array.from(value, (codePoint) => {
+    const value = codePoint.codePointAt(0) ?? 0;
+    const control =
+      value <= 0x1f || (value >= 0x7f && value <= 0x9f);
+
+    return control || RESERVED_FILENAME_CHARACTERS.has(codePoint)
+      ? "-"
+      : codePoint;
+  }).join("");
+
 const utf8Length = (value: string): number =>
   new TextEncoder().encode(value).byteLength;
 
