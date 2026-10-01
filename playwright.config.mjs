@@ -8,7 +8,8 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "npm run web:dev -- --host 127.0.0.1 --port 4173",
+    command:
+      "npm run web:preview -- --host 127.0.0.1 --port 4173",
     port: 4173,
     reuseExistingServer: false,
   },
