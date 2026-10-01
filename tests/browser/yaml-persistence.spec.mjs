@@ -137,7 +137,12 @@ test("malformed stored project is protected and fallback edits cannot overwrite 
   await page.goto("/", {waitUntil: "domcontentloaded"});
   await waitForOwner(page);
 
-  await expect(page.getByText("Stored recovery is protected")).toBeVisible();
+  await expect(
+    page.locator(".recovery-banner strong").getByText(
+      "Stored recovery is protected",
+      {exact: true},
+    ),
+  ).toBeVisible();
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-loss-risk",
     "false",
@@ -269,17 +274,19 @@ test("persistence write failure keeps the new Story active and loss-risk protect
     .not.toBeNull();
 
   await page.evaluate(() => {
-    const storage = window.localStorage;
-    const original = storage.setItem.bind(storage);
+    const original = Storage.prototype.setItem;
 
-    Object.defineProperty(storage, "setItem", {
+    Object.defineProperty(Storage.prototype, "setItem", {
       configurable: true,
-      value: (key, value) => {
-        if (key === "tora-video-engine:project") {
+      value(key, value) {
+        if (
+          this === window.localStorage &&
+          key === "tora-video-engine:project"
+        ) {
           throw new DOMException("quota", "QuotaExceededError");
         }
 
-        return original(key, value);
+        return original.call(this, key, value);
       },
     });
   });
