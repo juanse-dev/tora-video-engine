@@ -231,7 +231,7 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(seen.composition.durationInFrames, 360);
   });
 
-  it("holds the render lock through getBlob and final cleanup", async () => {
+  it("consumes the public Blob before cleanup and holds the lock through both", async () => {
     const events = [];
     const blob = new Blob(["immutable-public-snapshot"]);
     const lease = {
@@ -258,17 +258,23 @@ describe("WEB-006 browser rendering", () => {
           internalState: {},
         };
       },
+      consumeBlob: async (received) => {
+        events.push("consume");
+        assert.equal(received, blob);
+      },
     });
 
     assert.deepEqual(events, [
       "cleanup",
       "render",
       "getBlob",
+      "consume",
       "cleanup",
       "release",
     ]);
     assert.equal(outcome.kind, "success");
     assert.equal(outcome.blob, blob);
+    assert.equal(outcome.consumed, true);
   });
 
   it("treats cancellation during getBlob as cancelled", async () => {
@@ -433,6 +439,7 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(blocked.stage, "post");
     assert.equal(blocked.pending.kind, "success");
     assert.equal(blocked.pending.blob, blob);
+    assert.equal(blocked.pending.consumed, false);
     assert.equal(released, false);
 
     const retried = await retryBrowserRenderCleanup(
@@ -442,6 +449,7 @@ describe("WEB-006 browser rendering", () => {
 
     assert.equal(retried.kind, "success");
     assert.equal(retried.blob, blob);
+    assert.equal(retried.consumed, false);
     assert.equal(released, true);
   });
 
