@@ -124,7 +124,11 @@ A useful automated smoke flow is:
 37. simulate persistence failure after a valid Story becomes active with no dirty YAML/visual draft/recovery snapshot, invoke Reset, and verify Reset still requires explicit destructive confirmation and keeps **Export active Story YAML** available before discard;
 38. render fixed frames for canonical centered captions, left-aligned captions, long natural text, and a long unbroken token; verify documented Player/CLI ↔ web-render semantic parity for alignment, line breaks, clipping, and font usage;
 39. verify YAML and MP4 filename generation share the same sanitizer across reserved separators/control characters, Windows device names, Unicode/emoji, whitespace-only-after-sanitization, and a 65,536-code-unit title; assert basename ≤96 UTF-8 bytes;
-40. verify the deployed render path is documented as emitting Remotion client telemetry, uses only a client-safe/free license-key configuration, and does not depend on telemetry success for render completion.
+40. verify the deployed render path is documented as emitting Remotion client telemetry, uses only a client-safe/free license-key configuration, and does not depend on telemetry success for render completion;
+41. feed a schema-valid 201-scene candidate through visual policy, YAML Apply/import, localStorage restore, and WEB-006's defensive recheck; in every path assert the centralized policy rejects on scene count **without calling timeline derivation or `serializeStorySource()`**;
+42. open two same-origin tabs simultaneously and verify exactly one acquires the persistence-writer lock; edits in the secondary tab remain session-only/unpersisted and cannot overwrite the primary tab's durable Story;
+43. with the primary tab protecting a rejected stored recovery snapshot, edit/import/reset from the secondary tab and verify no project/recovery `localStorage` key is mutated; after the primary closes, use **Retry persistence ownership**, re-read durable state, and require explicit conflict resolution before any overwrite;
+44. verify the shared filename sanitizer rejects/prefixes Win32 Unicode device aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`, including aliases followed by extensions.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -145,11 +149,12 @@ For each tested browser record:
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
 - reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
+- opening a second same-origin tab never creates a second storage writer: only the persistence-owner tab may mutate project/recovery localStorage keys, and secondary-tab edits are visibly session-only;
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
 - centered/left/long/unbroken caption fixtures match the documented shared-layout semantics under the normal web renderer without relying on experimental HTML-in-canvas;
-- downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles;
+- downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles, including Win32 superscript device aliases;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
 - oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
@@ -215,6 +220,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] visual editor flow passes
 - [ ] visual title >65,536 UTF-16 code units is rejected before Story construction
 - [ ] YAML/import/restore title >65,536 is rejected by centralized post-schema policy before timeline/serialization
+- [ ] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
+- [ ] 201+ scene candidates never invoke timeline derivation or canonical serialization in visual/YAML/import/restore/render-recheck paths
 - [ ] browser authoring/preview budget blocks >200 scenes, >9,000 frames, or >1 MiB canonical YAML before Player mount
 - [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
@@ -230,6 +237,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
+- [ ] cross-tab persistence has exactly one Web Locks writer and secondary tabs cannot overwrite active/recovery storage
+- [ ] persistence ownership retry re-reads durable state and requires explicit conflict resolution before overwrite
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] YAML baseline is regenerated from current Active Story on candidate transfer
 - [ ] Reset requires explicit destructive confirmation whenever any loss-risk/recovery state exists, including an active Story that differs from durable storage
@@ -239,7 +248,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] invalid/cancelled imports preserve existing pending work
 - [ ] normal web-renderer compatibility pass covers all render-critical shared components
 - [ ] centered/left/long/unbroken caption golden parity passes without depending on experimental HTML-in-canvas
-- [ ] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, device-name, empty-result, and 65,536-code-unit boundary tests
+- [ ] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, ASCII and superscript Win32 device-name, empty-result, and 65,536-code-unit boundary tests
 - [ ] Remotion client-render telemetry is disclosed in deployment/privacy/CSP docs
 - [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
 - [ ] canonical browser MP4 render passes on a supported browser
