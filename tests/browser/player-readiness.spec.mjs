@@ -79,3 +79,70 @@ test("built Player waits for scene images before advancing", async ({
       url.includes("/backgrounds/"),
   });
 });
+
+
+test("built Player surfaces font failure without unhandled rejection", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__toraUnhandledRejections = [];
+    window.addEventListener("unhandledrejection", (event) => {
+      window.__toraUnhandledRejections.push(
+        event.reason instanceof Error
+          ? event.reason.message
+          : String(event.reason),
+      );
+    });
+  });
+
+  let releaseFontRequest;
+  let fontRequestSeen = false;
+
+  await page.route("**/*.woff2", async (route) => {
+    fontRequestSeen = true;
+
+    await new Promise((resolve) => {
+      releaseFontRequest = resolve;
+    });
+
+    await route.abort("failed");
+  });
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  await expect
+    .poll(() => fontRequestSeen, {timeout: 10_000})
+    .toBe(true);
+
+  const frameProbe = page.locator("[data-tora-frame]").first();
+  const playButton = page.getByRole("button", {name: "Play video"});
+
+  await expect(playButton).toBeVisible();
+  await playButton.click();
+
+  await page.waitForTimeout(500);
+
+  expect(
+    Number(await frameProbe.getAttribute("data-tora-frame")),
+  ).toBe(0);
+
+  releaseFontRequest();
+
+  await expect(page.getByRole("alert")).toContainText(
+    "Preview unavailable:",
+  );
+
+  await page.waitForTimeout(500);
+
+  expect(
+    Number(await frameProbe.getAttribute("data-tora-frame")),
+  ).toBe(0);
+
+  await expect(
+    page.getByRole("button", {name: "Play video"}),
+  ).toBeVisible();
+
+  expect(
+    await page.evaluate(() => window.__toraUnhandledRejections),
+  ).toEqual([]);
+});
