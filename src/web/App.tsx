@@ -477,12 +477,22 @@ export const App = () => {
       return;
     }
 
-    setYamlState(
-      createYamlStateFromTransferredCandidate(
-        activeStory,
-        visual.candidate,
-      ),
-    );
+    try {
+      setYamlState(
+        createYamlStateFromTransferredCandidate(
+          activeStory,
+          visual.candidate,
+        ),
+      );
+    } catch (error) {
+      setImportMessage(
+        error instanceof Error
+          ? `Candidate transfer blocked: ${error.message}`
+          : "Candidate transfer blocked by browser YAML limits.",
+      );
+      return;
+    }
+
     setAuthoringState(cleanAuthoringState(activeStory));
     setMode("yaml");
     setTransition(null);
