@@ -140,7 +140,11 @@ A useful automated smoke flow is:
 53. paste a multi-megabyte caption into a visual scene and verify the 360-UTF-16-unit raw guard rejects it before `StorySchema.safeParse()`, code-point counting, or font-coverage validation;
 54. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again;
 55. simulate an old deployed tab and a newly deployed tab using the same Remotion `__remotion_render:` OPFS prefix; verify both request the exact unversioned lock `tora-video-engine:web-fs-render` and cannot render concurrently across bundle versions;
-56. build a near-maximum 200-scene Story with many distinct supported caption characters and verify one font-readiness generation invokes `FontFaceSet.load()` at most once per required weight (currently 3 calls total), independent of unique character count; then run rapid A → B → C edits and verify obsolete generations cannot settle C's render handle or enqueue unbounded additional work.
+56. build a near-maximum 200-scene Story with many distinct supported caption characters and verify one font-readiness generation invokes `FontFaceSet.load()` at most once per required weight (currently 3 calls total), independent of unique character count; then run rapid A → B → C edits and verify obsolete generations cannot settle C's render handle or enqueue unbounded additional work;
+57. simulate an old deployed tab and a newly deployed tab that still share the same project/recovery localStorage slots; verify both request the exact unversioned lock `tora-video-engine:persistence-writer` and cannot write concurrently across bundle versions;
+58. seed localStorage with a raw persisted envelope above 1,048,576 UTF-16 code units and verify startup does not call `JSON.parse()`, StorySchema, timeline, serializer, or font coverage; fallback stays in memory, the durable slot is protected, and **Export stored raw JSON** returns the original bytes/text;
+59. seed a bounded compact JSON envelope containing thousands/201+ terse scenes (and separately an oversized raw caption/title); verify JSON parsing may occur but the cheap storage preflight rejects it before `StorySchema.safeParse()` / font coverage and preserves the raw envelope as recovery data;
+60. serialize the maximum-boundary normal v0.2 persisted envelope with compact JSON and verify it stays within `MAX_PERSISTED_ENVELOPE_CODE_UNITS`; force an envelope-write overflow and verify it is handled as persistence failure without replacing the prior durable slot.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -159,9 +163,9 @@ For each tested browser record:
 - a successful Apply of noncanonical YAML clears dirty state without requiring canonical text equality;
 - dirty YAML cannot be bypassed by switching into editable visual mode without an Apply/Discard/Stay decision, and Reset cannot silently discard dirty, pending, recovery, **or unpersisted active** state;
 - an invalid visual draft cannot be bypassed by switching to YAML without a Discard/Stay decision;
-- reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
+- reload bounds the raw stored envelope before JSON parsing, cheap-preflights current-browser-impossible title/scene/caption shapes before StorySchema, and only then validates/restores; raw/preflight-rejected storage remains protected/exportable as raw JSON while validated policy-rejected storage remains YAML-exportable;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
-- opening a second same-origin tab never creates a second storage writer: only the persistence-owner tab may mutate project/recovery localStorage keys, and secondary-tab edits are visibly session-only;
+- opening a second same-origin tab or leaving an old bundle tab open across deploy never creates a second storage writer: all versions sharing the physical project/recovery slots use the same unversioned persistence lock; secondary-tab edits are visibly session-only;
 - browser `web-fs` renders are separately serialized across tabs **and old/new bundle versions** using the same unversioned render lock; a second tab cannot start Remotion rendering while that lock is owned;
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result including `resolvedOutputTarget`;
@@ -256,7 +260,10 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
-- [ ] cross-tab persistence has exactly one Web Locks writer and secondary tabs cannot overwrite active/recovery storage
+- [ ] cross-tab/cross-version persistence has exactly one writer under unversioned lock `tora-video-engine:persistence-writer` while physical project/recovery slots are shared
+- [ ] raw stored envelope >1,048,576 code units is quarantined before `JSON.parse()`/Zod and exportable as raw JSON
+- [ ] storage cheap preflight rejects title >65,536, scenes >200, or raw caption >360 before StorySchema/font coverage
+- [ ] maximum-boundary compact persisted envelope fits its code-unit bound; write overflow preserves prior durable data
 - [ ] persistence ownership retry re-reads durable state and requires explicit conflict resolution before overwrite
 - [ ] YAML/visual mode-switch conflict guards pass in both directions
 - [ ] YAML baseline is regenerated from current Active Story on candidate transfer
