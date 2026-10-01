@@ -337,7 +337,7 @@ On startup:
 7. for parsed/supported envelopes, perform a **cheap storage preflight before StorySchema** on the candidate Story: if `title` is a string require `title.length <= 65_536`; if `scenes` is an array require `scenes.length <= 200`; for each of those at most 200 entries, if `text` is a string require `text.length <= 360`;
 8. if that preflight fails, do **not** call `StorySchema.safeParse()` or caption font-coverage validation. Preserve the original raw envelope as a **preflight-rejected raw stored recovery snapshot**;
 9. only after raw-size + parse/version + cheap preflight pass, call `StorySchema.safeParse()`. If StorySchema fails, preserve the exact original raw envelope as a **schema-invalid raw stored recovery snapshot** instead of treating fallback as free to overwrite the slot;
-10. every raw recovery form above activates the fallback only in memory, protects the original durable slot from autosave, shows a persistent recovery banner, and offers **Export stored raw JSON** using the exact original string with a fixed safe filename such as `tora-stored-recovery.json`, plus **Discard stored project and continue**. Do not label raw recovery as valid Story YAML;
+10. every raw recovery form above activates the fallback only in memory, protects the original durable slot from autosave, shows a persistent recovery banner, and offers **Export stored raw data** using the exact original string with a fixed safe filename such as `tora-stored-recovery.txt`, plus **Discard stored project and continue**. Do not label raw recovery as JSON or valid Story YAML because malformed/never-parsed forms have not established either format;
 11. only a stored candidate that survives raw bound, parse/version, cheap preflight, and StorySchema may call the same ordered `evaluateBrowserStoryPolicy()` used by visual editing, YAML Apply, and import;
 12. if schema + policy pass, restore it as the active Story;
 13. if schema-valid but browser-policy-ineligible for a reason not already eliminated by cheap preflight (for example >9,000 derived frames), retain the validated payload in memory as a **validated policy-rejected stored recovery snapshot**, activate the fallback only in memory, and offer **Export stored project YAML**;
@@ -356,7 +356,7 @@ For the remainder of WEB-005, **protected stored recovery snapshot** is the umbr
 - schema-invalid raw envelope;
 - validated browser-policy-rejected Story.
 
-Destructive Reset/Import and autosave suppression rules apply equally to all six. Raw forms export the exact stored JSON/text verbatim; only the validated policy-rejected Story may export as Story YAML.
+Destructive Reset/Import and autosave suppression rules apply equally to all six. Raw forms export the exact stored string verbatim as neutral raw text (`.txt`); only the validated policy-rejected Story may export as Story YAML.
 
 ## Reset
 
@@ -405,8 +405,8 @@ Cover:
 - a schema-valid visual candidate rejected for reachable browser-policy reasons (for example scene count or duration) can be transferred/exported while its resulting YAML remains ≤1 MiB;
 - editing a transferred buffer invalidates its transfer snapshot and returns the candidate to the normal source-size/parse/schema validation path;
 - bounded malformed JSON, unsupported storage-version envelopes, and bounded StorySchema-invalid storage fall back only in memory while preserving the exact raw durable value as protected raw recovery; a valid fallback edit cannot overwrite it before explicit discard/reset/import acknowledgement;
-- raw storage envelopes above 1,048,576 code units are quarantined before `JSON.parse()`/Zod, remain protected from fallback autosave, and can be exported verbatim as raw JSON;
-- bounded parsed storage with title >65,536, scenes >200, or any raw caption >360 code units is quarantined by cheap preflight before StorySchema/font coverage and remains raw-JSON recoverable;
+- raw storage envelopes above 1,048,576 code units are quarantined before `JSON.parse()`/Zod, remain protected from fallback autosave, and can be exported verbatim as neutral raw data;
+- bounded parsed storage with title >65,536, scenes >200, or any raw caption >360 code units is quarantined by cheap preflight before StorySchema/font coverage and remains raw-data recoverable;
 - schema-valid storage that passes cheap preflight but fails later browser policy (for example frame budget) is retained as a validated YAML-exportable recovery snapshot and is not overwritten by fallback autosave;
 - exporting a rejected stored recovery snapshot does not clear it; explicit discard/reset acknowledgement is required before its storage slot can be replaced;
 - schema-valid, browser-eligible localStorage restores only after raw-envelope and cheap storage preflight guards, then uses the same ordered browser policy including the final defensive canonical-YAML ≤1 MiB invariant;
@@ -446,7 +446,7 @@ Cover:
 - browser-eligible valid YAML round-trips without semantic loss;
 - every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow; a maximum-boundary v0.2 fixture demonstrates this without requiring an unreachable canonical-size rejection case;
 - schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate when its buffer is within the source-size ceiling;
-- when persistence succeeds, page reload restores the last persisted Story only after raw bound, parse/version, cheap preflight, StorySchema, and current browser-policy checks; malformed/unsupported/preflight/schema-invalid payloads remain exact raw protected recovery, while schema-valid policy-rejected Stories remain validated YAML-exportable recovery until explicit discard;
+- when persistence succeeds, page reload restores the last persisted Story only after raw bound, parse/version, cheap preflight, StorySchema, and current browser-policy checks; malformed/unsupported/preflight/schema-invalid payloads remain exact raw protected recovery exportable as neutral raw data, while schema-valid policy-rejected Stories remain validated YAML-exportable recovery until explicit discard;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
 - only the exclusive persistence-owner tab may write project/recovery localStorage keys; the lock name is unversioned while those physical slots are shared, so old/new bundle versions cannot become concurrent writers; secondary tabs cannot overwrite the durable baseline or protected recovery slot;
 - intentionally suppressed persistence while protecting a rejected recovery snapshot is treated identically as loss-risk for unload purposes;
