@@ -20,9 +20,14 @@ const letterSpacing: Record<CaptionVariant, number> = {
 };
 
 const COMBINING_MARK = /^\p{Mark}$/u;
-const COLLAPSIBLE_WHITESPACE = /[^\S\u00A0\u202F]+/u;
-const LEADING_COLLAPSIBLE_WHITESPACE = /^[^\S\u00A0\u202F]+/u;
-const TRAILING_COLLAPSIBLE_WHITESPACE = /[^\S\u00A0\u202F]+$/u;
+// Preserve every supported Unicode no-break whitespace character. JavaScript's
+// \s includes all four, so each must be excluded explicitly from the
+// collapsible set to avoid creating new line-break opportunities.
+const COLLAPSIBLE_WHITESPACE = /[^\S\u00A0\u2007\u202F\uFEFF]+/u;
+const LEADING_COLLAPSIBLE_WHITESPACE =
+  /^[^\S\u00A0\u2007\u202F\uFEFF]+/u;
+const TRAILING_COLLAPSIBLE_WHITESPACE =
+  /[^\S\u00A0\u2007\u202F\uFEFF]+$/u;
 
 // Inter Variable's accepted uppercase/non-ASCII glyphs at weights 700/800/900
 // are conservatively bounded below 1.1em. Overestimating here is intentional:
