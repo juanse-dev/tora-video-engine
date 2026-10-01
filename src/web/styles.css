@@ -524,3 +524,164 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+
+.project-toolbar,
+.yaml-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.project-toolbar button,
+.yaml-toolbar button,
+.file-button,
+.app-banner button,
+.transition-panel button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  padding: 8px 11px;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.project-toolbar button:hover,
+.yaml-toolbar button:hover:not(:disabled),
+.file-button:hover,
+.app-banner button:hover,
+.transition-panel button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.yaml-toolbar button:disabled,
+.transition-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-banner,
+.transition-panel {
+  width: min(100% - 32px, 1120px);
+  margin: 0 auto 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-banner strong,
+.transition-panel strong {
+  margin-right: 4px;
+}
+
+.app-banner span,
+.transition-panel span {
+  flex: 1 1 320px;
+  line-height: 1.45;
+}
+
+.warning-banner {
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(120, 53, 15, 0.24);
+  color: #fde68a;
+}
+
+.recovery-banner {
+  border: 1px solid rgba(248, 113, 113, 0.26);
+  background: rgba(127, 29, 29, 0.2);
+  color: #fecaca;
+}
+
+.transition-panel {
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: rgba(30, 64, 175, 0.18);
+  color: #dbeafe;
+}
+
+.transition-panel > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.yaml-editor {
+  min-height: 720px;
+}
+
+.yaml-source-field textarea {
+  min-height: 520px;
+  resize: vertical;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.yaml-validation {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 12px 13px;
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 10px;
+  background: rgba(20, 83, 45, 0.16);
+  color: #bbf7d0;
+}
+
+.yaml-validation-error {
+  border-color: rgba(248, 113, 113, 0.22);
+  background: rgba(127, 29, 29, 0.16);
+  color: #fecaca;
+}
+
+.yaml-validation small,
+.yaml-baseline-note {
+  color: #94a3b8;
+}
+
+.yaml-baseline-note {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 620px) {
+  .project-toolbar,
+  .yaml-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-toolbar button,
+  .yaml-toolbar button,
+  .file-button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .app-banner,
+  .transition-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
