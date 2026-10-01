@@ -176,17 +176,18 @@ For v0.2, define centralized browser-authoring limits:
 
 These are browser policy limits, not additions to `StorySchema`.
 
-Before **any** schema-valid candidate becomes the active validated Story used by the visual editor and Player:
+Before **any** schema-valid candidate becomes the active validated Story used by the visual editor and Player, call one centralized policy function (for example `evaluateBrowserStoryPolicy(story)`) with this exact short-circuit order:
 
-1. check `story.title.length <= 65_536` as the first centralized post-schema policy check, regardless of whether the candidate came from visual editing, YAML Apply/import, or storage restore;
-2. if the title exceeds that bound, stop before timeline derivation or `serializeStorySource()`;
-3. derive total frames with the existing timeline/render-plan logic;
-4. serialize the candidate through the shared canonical `serializeStorySource()`;
-5. measure the canonical YAML as UTF-8 bytes;
-6. check scene count, total frames, and canonical YAML size against the remaining browser budget;
-7. only commit/mount the candidate when all checks pass.
+1. check `story.title.length <= 65_536`;
+2. check `story.scenes.length <= 200`;
+3. only if both cheap structural checks pass, derive total frames with the existing timeline/render-plan logic and require `totalFrames <= 9_000`;
+4. only if the frame check passes, serialize the candidate through the shared canonical `serializeStorySource()`;
+5. measure the canonical YAML as UTF-8 bytes and require it to be ≤ 1 MiB;
+6. only commit/mount the candidate when every check passes.
 
-For the visual source, step 1 is normally redundant because the cheap raw-input guard already blocked the oversized value. It remains required so all candidate sources share one authoritative policy.
+The order is part of the contract, not an implementation detail. A title or scene-count failure must return before timeline derivation; a title/scene/frame failure must return before canonical serialization. WEB-005 Apply/import/restore and WEB-006's defensive render-time recheck must call this same ordered policy rather than duplicating the checks independently.
+
+For the visual source, the title check is normally redundant because the cheap raw-input guard already blocked the oversized value. It remains required so all candidate sources share one authoritative policy.
 
 The canonical-size condition is a round-trip invariant: every Story the web app accepts as active must produce a canonical YAML export that the same app can later accept through its 1 MiB pre-parse source guard.
 
@@ -229,6 +230,7 @@ Add automated coverage for state/domain transformations where practical:
 - a 65,537-code-unit visual update is rejected by the cheap pre-construction guard;
 - a schema-valid 65,537-code-unit Story arriving from YAML/import/restore is rejected by the centralized post-schema title check before timeline derivation or canonical serialization;
 - a schema-valid Story at the remaining browser budget boundary can become active;
+- a 201-scene schema-valid candidate is rejected by the centralized policy without invoking timeline derivation or `serializeStorySource()`;
 - a schema-valid Story with 201 scenes is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
 - a schema-valid Story above 9,000 derived frames is retained as a pending visual candidate, rejected by browser authoring policy before Player mount, and disables MP4 rendering;
 - raw visual title input above 65,536 code units is rejected before candidate serialization;
