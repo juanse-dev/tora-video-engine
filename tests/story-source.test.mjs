@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
-import {resolve} from "node:path";
+import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {builtinModules} from "node:module";
+import {tmpdir} from "node:os";
+import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
 import ts from "typescript";
 import {parseStorySource} from "../src/story/parseStory.ts";
@@ -16,6 +18,157 @@ scenes:
     text: Test
     duration: 1
 `;
+
+
+const compilerOptions = {
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  allowImportingTsExtensions: true,
+  allowJs: true,
+  jsx: ts.JsxEmit.ReactJSX,
+};
+
+const normalizedBuiltins = new Set(
+  builtinModules.map((specifier) => specifier.replace(/^node:/, "")),
+);
+
+const isNodeBuiltin = (specifier) => {
+  const normalized = specifier.replace(/^node:/, "");
+
+  return [...normalizedBuiltins].some(
+    (builtin) =>
+      normalized === builtin || normalized.startsWith(`${builtin}/`),
+  );
+};
+
+const scriptKindForPath = (path) => {
+  if (path.endsWith(".tsx")) {
+    return ts.ScriptKind.TSX;
+  }
+
+  if (path.endsWith(".jsx")) {
+    return ts.ScriptKind.JSX;
+  }
+
+  if (
+    path.endsWith(".js") ||
+    path.endsWith(".mjs") ||
+    path.endsWith(".cjs")
+  ) {
+    return ts.ScriptKind.JS;
+  }
+
+  return ts.ScriptKind.TS;
+};
+
+const staticModuleSpecifiers = (path, source) => {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(path),
+  );
+  const specifiers = [];
+
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    }
+
+    if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression &&
+      ts.isStringLiteralLike(node.moduleReference.expression)
+    ) {
+      specifiers.push(node.moduleReference.expression.text);
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0]) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) &&
+          node.expression.text === "require"))
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return specifiers;
+};
+
+const isTraversableLocalSource = (path) =>
+  /\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/u.test(path);
+
+const assertBrowserSafeDependencyGraph = async (entryPaths) => {
+  const pending = [...entryPaths];
+  const visited = new Set();
+
+  while (pending.length > 0) {
+    const path = pending.pop();
+
+    if (path === undefined || visited.has(path)) {
+      continue;
+    }
+
+    visited.add(path);
+    const source = await readFile(path, "utf8");
+
+    for (const specifier of staticModuleSpecifiers(path, source)) {
+      assert.equal(
+        isNodeBuiltin(specifier),
+        false,
+        `${path} must not import Node builtin ${specifier}`,
+      );
+
+      if (!specifier.startsWith(".")) {
+        continue;
+      }
+
+      const resolvedModule = ts.resolveModuleName(
+        specifier,
+        path,
+        compilerOptions,
+        ts.sys,
+      ).resolvedModule;
+
+      assert.ok(
+        resolvedModule,
+        `Unable to resolve local dependency ${specifier} from ${path}`,
+      );
+
+      if (isTraversableLocalSource(resolvedModule.resolvedFileName)) {
+        pending.push(resolvedModule.resolvedFileName);
+      }
+    }
+  }
+};
+
+const withDependencyFixture = async (files, callback) => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "tora-browser-boundary-"),
+  );
+
+  try {
+    for (const [name, source] of Object.entries(files)) {
+      await writeFile(join(directory, name), source, "utf8");
+    }
+
+    await callback(directory);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+};
 
 describe("browser-safe Story source boundary", () => {
   it("parses the canonical YAML without filesystem coupling", async () => {
@@ -107,112 +260,46 @@ scenes:
     );
   });
 
-  it("keeps the browser-safe local dependency graph free of node:* imports", async () => {
-    const compilerOptions = {
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      allowImportingTsExtensions: true,
-      jsx: ts.JsxEmit.ReactJSX,
-    };
-
-    const staticModuleSpecifiers = (path, source) => {
-      const scriptKind = path.endsWith(".tsx")
-        ? ts.ScriptKind.TSX
-        : ts.ScriptKind.TS;
-      const sourceFile = ts.createSourceFile(
-        path,
-        source,
-        ts.ScriptTarget.Latest,
-        true,
-        scriptKind,
-      );
-      const specifiers = [];
-
-      const visit = (node) => {
-        if (
-          (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-          node.moduleSpecifier &&
-          ts.isStringLiteralLike(node.moduleSpecifier)
-        ) {
-          specifiers.push(node.moduleSpecifier.text);
-        }
-
-        if (
-          ts.isImportEqualsDeclaration(node) &&
-          ts.isExternalModuleReference(node.moduleReference) &&
-          node.moduleReference.expression &&
-          ts.isStringLiteralLike(node.moduleReference.expression)
-        ) {
-          specifiers.push(node.moduleReference.expression.text);
-        }
-
-        if (
-          ts.isCallExpression(node) &&
-          node.arguments.length === 1 &&
-          ts.isStringLiteralLike(node.arguments[0]) &&
-          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-            (ts.isIdentifier(node.expression) &&
-              node.expression.text === "require"))
-        ) {
-          specifiers.push(node.arguments[0].text);
-        }
-
-        ts.forEachChild(node, visit);
-      };
-
-      visit(sourceFile);
-      return specifiers;
-    };
-
-    const pending = [
+  it("keeps the browser-safe local dependency graph free of Node builtins", async () => {
+    await assertBrowserSafeDependencyGraph([
       resolve("src/story/parseStory.ts"),
       resolve("src/story/serializeStory.ts"),
-    ];
-    const visited = new Set();
+    ]);
+  });
 
-    while (pending.length > 0) {
-      const path = pending.pop();
-
-      if (path === undefined || visited.has(path)) {
-        continue;
-      }
-
-      visited.add(path);
-      const source = await readFile(path, "utf8");
-
-      for (const specifier of staticModuleSpecifiers(path, source)) {
-        assert.equal(
-          specifier.startsWith("node:"),
-          false,
-          `${path} must not import Node builtin ${specifier}`,
+  it("rejects bare Node builtin imports", async () => {
+    await withDependencyFixture(
+      {
+        "entry.ts": 'import {readFile} from "fs";\nexport {readFile};\n',
+      },
+      async (directory) => {
+        await assert.rejects(
+          () =>
+            assertBrowserSafeDependencyGraph([
+              join(directory, "entry.ts"),
+            ]),
+          /Node builtin fs/,
         );
+      },
+    );
+  });
 
-        if (!specifier.startsWith(".")) {
-          continue;
-        }
-
-        const resolvedModule = ts.resolveModuleName(
-          specifier,
-          path,
-          compilerOptions,
-          ts.sys,
-        ).resolvedModule;
-
-        assert.ok(
-          resolvedModule,
-          `Unable to resolve local dependency ${specifier} from ${path}`,
+  it("follows local JavaScript intermediaries before checking builtins", async () => {
+    await withDependencyFixture(
+      {
+        "entry.ts": 'import "./helper.js";\n',
+        "helper.js": 'import "node:path";\nexport const ok = true;\n',
+      },
+      async (directory) => {
+        await assert.rejects(
+          () =>
+            assertBrowserSafeDependencyGraph([
+              join(directory, "entry.ts"),
+            ]),
+          /Node builtin node:path/,
         );
-
-        const dependencyPath = resolvedModule.resolvedFileName;
-
-        if (
-          dependencyPath.endsWith(".ts") ||
-          dependencyPath.endsWith(".tsx")
-        ) {
-          pending.push(dependencyPath);
-        }
-      }
-    }
+      },
+    );
   });
 
   it("keeps loadStory as a thin Node filesystem adapter", async () => {
