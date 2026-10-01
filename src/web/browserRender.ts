@@ -104,10 +104,10 @@ export type BrowserRenderCleanupRetryOutcome =
       kind: "pre-cleanup-cleared";
     };
 
-type OpfsRoot = Pick<
-  FileSystemDirectoryHandle,
-  "entries" | "removeEntry"
->;
+type OpfsRoot = {
+  entries: () => AsyncIterable<[string, unknown]>;
+  removeEntry: (name: string) => Promise<void>;
+};
 
 type CapabilityChecker = typeof canRenderMediaOnWeb;
 type RenderFunction = typeof renderMediaOnWeb;
@@ -123,8 +123,8 @@ const defaultWait = (milliseconds: number): Promise<void> =>
 const defaultGetLocks = (): LockManager | undefined =>
   typeof navigator === "undefined" ? undefined : navigator.locks;
 
-const defaultGetDirectory = (): Promise<FileSystemDirectoryHandle> =>
-  navigator.storage.getDirectory();
+const defaultGetDirectory = async (): Promise<OpfsRoot> =>
+  (await navigator.storage.getDirectory()) as unknown as OpfsRoot;
 
 const listRemotionEntries = async (
   root: OpfsRoot,
@@ -210,7 +210,10 @@ export const getBrowserRenderLockStatus = async (
 
   try {
     const snapshot = await locks.query();
-    const relevant = [...snapshot.held, ...snapshot.pending].some(
+    const relevant = [
+      ...(snapshot.held ?? []),
+      ...(snapshot.pending ?? []),
+    ].some(
       (lock) => lock.name === WEB_RENDER_LOCK_NAME,
     );
 
@@ -243,13 +246,13 @@ export const acquireBrowserRenderLock = async (
     resolveAcquired = resolve;
   });
 
-  let requestFailed: Error | null = null;
+  const requestState: {error: Error | null} = {error: null};
 
   void locks
     .request(
       WEB_RENDER_LOCK_NAME,
       {mode: "exclusive", ifAvailable: true},
-      async (lock) => {
+      async (lock: Lock | null) => {
         resolveAcquired?.(lock !== null);
 
         if (lock !== null) {
@@ -258,17 +261,17 @@ export const acquireBrowserRenderLock = async (
       },
     )
     .catch((error) => {
-      requestFailed = asError(error);
+      requestState.error = asError(error);
       resolveAcquired?.(false);
     });
 
   const owned = await acquired;
 
   if (!owned) {
-    if (requestFailed !== null) {
+    if (requestState.error !== null) {
       return {
         mode: "unavailable",
-        message: `Could not acquire the browser render lock: ${requestFailed.message}`,
+        message: `Could not acquire the browser render lock: ${requestState.error.message}`,
       };
     }
 
@@ -291,9 +294,7 @@ export const cleanupRemotionOpfsUntilEmpty = async (
     backoffMs?: readonly number[];
   } = {},
 ): Promise<OpfsCleanupResult> => {
-  const getDirectory =
-    options.getDirectory ??
-    (defaultGetDirectory as () => Promise<OpfsRoot>);
+  const getDirectory = options.getDirectory ?? defaultGetDirectory;
   const wait = options.wait ?? defaultWait;
   const backoffMs =
     options.backoffMs ?? OPFS_CLEANUP_BACKOFF_MS;
@@ -377,6 +378,7 @@ export const renderStoryMediaOnWeb = async (
       width: VIDEO_WIDTH,
       height: VIDEO_HEIGHT,
       calculateMetadata: null,
+      defaultProps: {story},
     },
     inputProps: {story},
     container: "mp4",
