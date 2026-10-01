@@ -80,6 +80,18 @@ export const storyToVisualDraft = (story: Story): VisualStoryDraft => ({
   })),
 });
 
+
+export const updateVisualScene = (
+  draft: VisualStoryDraft,
+  index: number,
+  patch: Partial<VisualSceneDraft>,
+): VisualStoryDraft => ({
+  ...draft,
+  scenes: draft.scenes.map((scene, sceneIndex) =>
+    sceneIndex === index ? {...scene, ...patch} : scene,
+  ),
+});
+
 const durationFromInput = (value: string): number =>
   value.trim().length === 0 ? Number.NaN : Number(value);
 
