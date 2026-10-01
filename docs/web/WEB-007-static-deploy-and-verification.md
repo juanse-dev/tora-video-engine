@@ -138,7 +138,9 @@ A useful automated smoke flow is:
 51. start a render, invoke **Cancel Render**, verify state becomes `cancelling`, the owned `AbortController` is aborted exactly once, the render promise is awaited, and cleanup completes (or enters `cleanup-blocked`) before the render lifecycle is considered finished;
 52. paste/edit a multi-megabyte YAML string and verify the `nextBuffer.length > 1_048_576` guard rejects it before editor-state commit, `TextEncoder`, YAML parsing, or Zod;
 53. paste a multi-megabyte caption into a visual scene and verify the 360-UTF-16-unit raw guard rejects it before `StorySchema.safeParse()`, code-point counting, or font-coverage validation;
-54. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again.
+54. create the 201st visual scene, then repeatedly invoke Add and verify the visual candidate remains exactly 201 scenes while edit/delete/reorder/transfer remain available; delete back to 200 and verify Add becomes available again;
+55. simulate an old deployed tab and a newly deployed tab using the same Remotion `__remotion_render:` OPFS prefix; verify both request the exact unversioned lock `tora-video-engine:web-fs-render` and cannot render concurrently across bundle versions;
+56. build a near-maximum 200-scene Story with many distinct supported caption characters and verify one font-readiness generation invokes `FontFaceSet.load()` at most once per required weight (currently 3 calls total), independent of unique character count; then run rapid A → B → C edits and verify obsolete generations cannot settle C's render handle or enqueue unbounded additional work.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -160,7 +162,7 @@ For each tested browser record:
 - reload restores browser-eligible valid local state when persistence succeeds; schema-valid stored state rejected only by current browser policy remains recoverable/exportable and protected from fallback overwrite;
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
 - opening a second same-origin tab never creates a second storage writer: only the persistence-owner tab may mutate project/recovery localStorage keys, and secondary-tab edits are visibly session-only;
-- browser `web-fs` renders are separately serialized across tabs; a second tab cannot start Remotion rendering while the dedicated render lock is owned;
+- browser `web-fs` renders are separately serialized across tabs **and old/new bundle versions** using the same unversioned render lock; a second tab cannot start Remotion rendering while that lock is owned;
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result including `resolvedOutputTarget`;
 - browser MP4 export is offered only for `web-fs`; an `arraybuffer`-only result is explained and does not start rendering;
@@ -177,7 +179,7 @@ For each tested browser record:
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
-- repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle;
+- repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle; font readiness is batched to one full-text load per required weight rather than per-character loading;
 - Remotion telemetry/privacy/CSP behavior is documented and verified for the deployed origin;
 - the production release record states the current Remotion license basis and confirms that no private license key is shipped client-side.
 
@@ -250,6 +252,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] editing a transferred buffer clears validated-transfer provenance and requires normal validation again
 - [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
+- [ ] caption font readiness uses ≤1 full-text `FontFaceSet.load()` per required weight per generation (currently ≤3 total), independent of unique caption characters
 - [ ] asset catalog flow passes
 - [ ] YAML import/export flow passes
 - [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
@@ -269,7 +272,7 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
 - [ ] capability and render calls both use `muted: true`
 - [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
-- [ ] dedicated render Web Lock serializes `web-fs` rendering across same-origin tabs through Blob/download handoff and positively-completed cleanup
+- [ ] dedicated **unversioned** render Web Lock `tora-video-engine:web-fs-render` serializes `web-fs` rendering across same-origin tabs and concurrently open old/new Tora bundle versions through Blob/download handoff and positively-completed cleanup
 - [ ] Cancel Render is mandatory, uses `AbortController`, awaits render settlement, and shares the locked cleanup path
 - [ ] delayed writer-close test proves cleanup retries/backoff while retaining the render lock
 - [ ] exhausted cleanup enters `cleanup-blocked`; Retry cleanup is required before the lock/render capability is released
