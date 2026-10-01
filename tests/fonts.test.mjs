@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {
   isCaptionTextSupported,
   loadCaptionFontForText,
+  REQUIRED_FONT_WEIGHTS,
 } from "../src/fontCoverage.ts";
 
 describe("caption font coverage", () => {
@@ -20,7 +21,7 @@ describe("caption font coverage", () => {
     assert.equal(isCaptionTextSupported("Tora 😀"), false);
   });
 
-  it("checks every renderable code point against every required weight", async () => {
+  it("loads the full caption text once per required weight", async () => {
     const calls = [];
 
     await loadCaptionFontForText("AЖ A", async (font, text) => {
@@ -28,10 +29,29 @@ describe("caption font coverage", () => {
       return [{}];
     });
 
+    assert.equal(calls.length, REQUIRED_FONT_WEIGHTS.length);
     assert.deepEqual(
       calls.map(([, text]) => text),
-      ["A", "Ж", "A", "Ж", "A", "Ж"],
+      REQUIRED_FONT_WEIGHTS.map(() => "AЖ A"),
     );
+  });
+
+  it("keeps near-maximum caption loading bounded by font weights", async () => {
+    const supportedCharacters =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
+      "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßŒœЖЙФΨΩ€—";
+    const captionText = Array.from({length: 200}, (_, index) =>
+      supportedCharacters.slice(index % 20, (index % 20) + 40),
+    ).join("\n");
+    const calls = [];
+
+    await loadCaptionFontForText(captionText, async (font, text) => {
+      calls.push([font, text]);
+      return [{}];
+    });
+
+    assert.equal(calls.length, REQUIRED_FONT_WEIGHTS.length);
+    assert.ok(calls.every(([, text]) => text === captionText));
   });
 
   it("does not call the browser loader for unsupported text", async () => {
@@ -49,13 +69,13 @@ describe("caption font coverage", () => {
     assert.equal(calls, 0);
   });
 
-  it("still fails if a supported bundled glyph cannot be loaded", async () => {
+  it("still fails if a required font weight cannot load the caption", async () => {
     await assert.rejects(
       () =>
-        loadCaptionFontForText("AЖ", async (_font, text) =>
-          text === "Ж" ? [] : [{}],
+        loadCaptionFontForText("AЖ", async (font) =>
+          font.startsWith("800 ") ? [] : [{}],
         ),
-      /U\+0416/,
+      /weight 800/,
     );
   });
 });

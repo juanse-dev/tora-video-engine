@@ -1,5 +1,5 @@
 import "@fontsource-variable/inter/wght.css";
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {
   useBufferState,
   useDelayRender,
@@ -20,13 +20,21 @@ export const useCaptionFont = (story: Story) => {
   const {cancelRender, continueRender, delayRender} = useDelayRender();
   const environment = useRemotionEnvironment();
   const [previewError, setPreviewError] = useState<Error | null>(null);
+  const generationRef = useRef(0);
 
   useEffect(() => {
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    setPreviewError(null);
+
     const renderHandle = delayRender("Loading bundled caption font");
     const playbackHandle = delayPlayback();
     let active = true;
     let renderSettled = false;
     let playbackSettled = false;
+
+    const isCurrentGeneration = () =>
+      active && generationRef.current === generation;
 
     const unblockPlayback = () => {
       if (playbackSettled) {
@@ -53,14 +61,14 @@ export const useCaptionFont = (story: Story) => {
           (font, text) => document.fonts.load(font, text),
         );
 
-        if (!active) {
+        if (!isCurrentGeneration()) {
           return;
         }
 
         unblockPlayback();
         continueRenderOnce();
       } catch (error) {
-        if (!active) {
+        if (!isCurrentGeneration()) {
           return;
         }
 
@@ -69,7 +77,7 @@ export const useCaptionFont = (story: Story) => {
           environment.isRendering || environment.isClientSideRendering;
 
         if (!isRenderEnvironment) {
-          renderSettled = true;
+          continueRenderOnce();
           setPreviewError(normalizedError);
           return;
         }
@@ -104,7 +112,5 @@ export const useCaptionFont = (story: Story) => {
     environment.isRendering,
   ]);
 
-  if (previewError !== null) {
-    throw previewError;
-  }
+  return previewError;
 };

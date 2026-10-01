@@ -1,6 +1,6 @@
 export const CAPTION_FONT_FAMILY = "Inter Variable";
 
-const REQUIRED_FONT_WEIGHTS = [700, 800, 900] as const;
+export const REQUIRED_FONT_WEIGHTS = [700, 800, 900] as const;
 
 // Keep this in sync with @fontsource-variable/inter@5.3.0 unicode ranges
 // loaded by wght.css: cyrillic-ext, cyrillic, greek-ext, greek,
@@ -91,9 +91,6 @@ export const isCaptionTextSupported = (text: string): boolean =>
     return codePoint !== undefined && isSupportedCodePoint(codePoint);
   });
 
-const uniqueRenderableCodePoints = (text: string): string[] =>
-  [...new Set(Array.from(text).filter((character) => !/\s/u.test(character)))];
-
 const formatCodePoint = (character: string): string =>
   `U+${character.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`;
 
@@ -112,19 +109,23 @@ export const loadCaptionFontForText = async (
     );
   }
 
-  const characters = uniqueRenderableCodePoints(captionText);
+  const results = await Promise.all(
+    REQUIRED_FONT_WEIGHTS.map(async (weight) => {
+      const font = `${weight} 16px "${CAPTION_FONT_FAMILY}"`;
+      const faces = await loadFont(font, captionText);
 
-  for (const weight of REQUIRED_FONT_WEIGHTS) {
-    const font = `${weight} 16px "${CAPTION_FONT_FAMILY}"`;
+      return {
+        weight,
+        faces,
+      };
+    }),
+  );
 
-    for (const character of characters) {
-      const faces = await loadFont(font, character);
+  const failedWeight = results.find(({faces}) => faces.length === 0);
 
-      if (faces.length === 0) {
-        throw new Error(
-          `Bundled caption font failed to load ${formatCodePoint(character)} ("${character}") at weight ${weight}`,
-        );
-      }
-    }
+  if (failedWeight) {
+    throw new Error(
+      `Bundled caption font failed to load caption text at weight ${failedWeight.weight}`,
+    );
   }
 };

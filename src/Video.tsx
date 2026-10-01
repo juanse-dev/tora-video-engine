@@ -8,7 +8,29 @@ export type ToraVideoProps = {
 };
 
 export const ToraVideo = ({story}: ToraVideoProps) => {
-  useCaptionFont(story);
+  const previewFontError = useCaptionFont(story);
+
+  if (previewFontError !== null) {
+    return (
+      <AbsoluteFill
+        data-preview-font-error
+        role="alert"
+        style={{
+          alignItems: "center",
+          background: "#0a0d12",
+          color: "#f8fafc",
+          display: "flex",
+          fontFamily: "Inter, sans-serif",
+          fontSize: 48,
+          justifyContent: "center",
+          padding: 72,
+          textAlign: "center",
+        }}
+      >
+        Preview unavailable: {previewFontError.message}
+      </AbsoluteFill>
+    );
+  }
 
   return (
     <AbsoluteFill>
