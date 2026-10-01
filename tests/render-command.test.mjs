@@ -5,6 +5,7 @@ import {
   buildRenderArgs,
   COMPOSITION_ID,
   getOutputPath,
+  getRemotionBrowserExecutable,
   getRemotionCliPath,
   getRemotionExecutable,
   getStoryPath,
@@ -64,21 +65,62 @@ describe("render command support", () => {
   });
 
   it("builds a deterministic H.264 Remotion invocation", () => {
-    assert.deepEqual(
-      buildRenderArgs(
-        "output/friday-deploy.mp4",
-        "/tmp/tora/props.json",
-      ),
-      [
-        getRemotionCliPath(),
-        "render",
-        REMOTION_ENTRY_POINT,
-        COMPOSITION_ID,
-        "output/friday-deploy.mp4",
-        "--codec=h264",
-        "--overwrite=true",
-        "--props=/tmp/tora/props.json",
-      ],
-    );
+    const previous =
+      process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+    delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+
+    try {
+      assert.equal(getRemotionBrowserExecutable(), null);
+      assert.deepEqual(
+        buildRenderArgs(
+          "output/friday-deploy.mp4",
+          "/tmp/tora/props.json",
+        ),
+        [
+          getRemotionCliPath(),
+          "render",
+          REMOTION_ENTRY_POINT,
+          COMPOSITION_ID,
+          "output/friday-deploy.mp4",
+          "--codec=h264",
+          "--overwrite=true",
+          "--props=/tmp/tora/props.json",
+        ],
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+      } else {
+        process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
+      }
+    }
+  });
+
+  it("uses an explicit CI browser without changing local defaults", () => {
+    const previous =
+      process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+    process.env.TORA_REMOTION_BROWSER_EXECUTABLE =
+      " /usr/bin/google-chrome ";
+
+    try {
+      assert.equal(
+        getRemotionBrowserExecutable(),
+        "/usr/bin/google-chrome",
+      );
+      assert.ok(
+        buildRenderArgs(
+          "output/friday-deploy.mp4",
+          "/tmp/tora/props.json",
+        ).includes(
+          "--browser-executable=/usr/bin/google-chrome",
+        ),
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+      } else {
+        process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
+      }
+    }
   });
 });
