@@ -47,16 +47,33 @@ describe("WEB-006 MP4 downloads", () => {
       },
     };
 
+    let scheduledRevoke = null;
+    const scheduleRevoke = (callback) => {
+      events.push(["schedule-revoke"]);
+      scheduledRevoke = callback;
+    };
+
     downloadBlob(
       blob,
       getMp4DownloadFilename("Deploy Friday"),
       documentRef,
       urlRef,
+      scheduleRevoke,
     );
 
     assert.deepEqual(events, [
       ["create", blob],
       ["click", "blob:tora-test", "Deploy-Friday.mp4"],
+      ["schedule-revoke"],
+    ]);
+    assert.equal(typeof scheduledRevoke, "function");
+
+    scheduledRevoke();
+
+    assert.deepEqual(events, [
+      ["create", blob],
+      ["click", "blob:tora-test", "Deploy-Friday.mp4"],
+      ["schedule-revoke"],
       ["revoke", "blob:tora-test"],
     ]);
   });
