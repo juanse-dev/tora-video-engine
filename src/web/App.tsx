@@ -22,6 +22,7 @@ import {
   getYamlDownloadFilename,
 } from "./downloads.ts";
 import {
+  canDownloadBrowserRenderSnapshot,
   checkBrowserRenderCapability,
   getBrowserRenderLockStatus,
   retryBrowserRenderCleanup,
@@ -287,6 +288,7 @@ export const App = () => {
   const importRequestRef = useRef(0);
   const retryOwnershipInFlightRef = useRef(false);
   const renderInFlightRef = useRef(false);
+  const cleanupRetryInFlightRef = useRef(false);
   const renderAbortRef = useRef<AbortController | null>(null);
   const renderCleanupBlockedRef =
     useRef<BrowserRenderCleanupBlocked | null>(null);
@@ -672,8 +674,11 @@ export const App = () => {
     const live = liveRenderStateRef.current;
 
     if (
-      live.renderInputBlocked ||
-      !storiesSemanticallyEqual(snapshot, live.activeStory)
+      !canDownloadBrowserRenderSnapshot(
+        snapshot,
+        live.activeStory,
+        live.renderInputBlocked,
+      )
     ) {
       setRenderUi({
         phase: "failure",
@@ -818,12 +823,18 @@ export const App = () => {
   const retryRenderCleanup = async () => {
     const blocked = renderCleanupBlockedRef.current;
 
-    if (blocked === null || cleanupRetrying) {
+    if (
+      blocked === null ||
+      cleanupRetrying ||
+      cleanupRetryInFlightRef.current
+    ) {
       return;
     }
 
+    cleanupRetryInFlightRef.current = true;
     setCleanupRetrying(true);
     const outcome = await retryBrowserRenderCleanup(blocked);
+    cleanupRetryInFlightRef.current = false;
     setCleanupRetrying(false);
 
     if (outcome.kind === "cleanup-blocked") {
