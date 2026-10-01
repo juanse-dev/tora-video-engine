@@ -43,6 +43,13 @@ export const getOutputPath = (storyPath: string): string =>
 
 export const getRemotionExecutable = (): string => process.execPath;
 
+export const getRemotionBrowserExecutable = (): string | null => {
+  const executable =
+    process.env.TORA_REMOTION_BROWSER_EXECUTABLE?.trim();
+
+  return executable ? executable : null;
+};
+
 export const getRemotionCliPath = (): string =>
   resolve(
     "node_modules",
@@ -54,13 +61,20 @@ export const getRemotionCliPath = (): string =>
 export const buildRenderArgs = (
   outputPath: string,
   propsPath: string,
-): string[] => [
-  getRemotionCliPath(),
-  "render",
-  REMOTION_ENTRY_POINT,
-  COMPOSITION_ID,
-  outputPath,
-  "--codec=h264",
-  "--overwrite=true",
-  `--props=${propsPath}`,
-];
+): string[] => {
+  const browserExecutable = getRemotionBrowserExecutable();
+
+  return [
+    getRemotionCliPath(),
+    "render",
+    REMOTION_ENTRY_POINT,
+    COMPOSITION_ID,
+    outputPath,
+    "--codec=h264",
+    "--overwrite=true",
+    `--props=${propsPath}`,
+    ...(browserExecutable === null
+      ? []
+      : [`--browser-executable=${browserExecutable}`]),
+  ];
+};
