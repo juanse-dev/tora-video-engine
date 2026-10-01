@@ -17,7 +17,7 @@ export const ToraVideo = ({story}: ToraVideoProps) => {
         role="alert"
         style={{
           alignItems: "center",
-          background: "#0a0d12",
+          backgroundColor: "#0a0d12",
           color: "#f8fafc",
           display: "flex",
           fontFamily: "Inter, sans-serif",
