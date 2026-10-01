@@ -271,6 +271,92 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(outcome.blob, blob);
   });
 
+  it("treats cancellation during getBlob as cancelled", async () => {
+    const controller = new AbortController();
+    let releaseBlob = null;
+    let released = false;
+    const blobReady = new Promise((resolve) => {
+      releaseBlob = resolve;
+    });
+
+    const transaction = startBrowserRenderTransaction(exampleStory, {
+      signal: controller.signal,
+      checkCapability: readyCapability,
+      acquireLock: async () => ({
+        mode: "owner",
+        release: () => {
+          released = true;
+        },
+      }),
+      cleanup: async () => ({ok: true, attempts: 1}),
+      renderStory: async () => ({
+        getBlob: async () => {
+          await blobReady;
+          return new Blob(["late-blob"]);
+        },
+        internalState: {},
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    releaseBlob();
+
+    const outcome = await transaction;
+
+    assert.deepEqual(outcome, {kind: "cancelled"});
+    assert.equal(released, true);
+  });
+
+  it("treats cancellation during post-render cleanup as cancelled", async () => {
+    const controller = new AbortController();
+    let cleanupCall = 0;
+    let finishPostCleanup = null;
+    let signalPostCleanupStarted = null;
+    let released = false;
+    const postCleanupStarted = new Promise((resolve) => {
+      signalPostCleanupStarted = resolve;
+    });
+    const postCleanupGate = new Promise((resolve) => {
+      finishPostCleanup = resolve;
+    });
+
+    const transaction = startBrowserRenderTransaction(exampleStory, {
+      signal: controller.signal,
+      checkCapability: readyCapability,
+      acquireLock: async () => ({
+        mode: "owner",
+        release: () => {
+          released = true;
+        },
+      }),
+      cleanup: async () => {
+        cleanupCall += 1;
+
+        if (cleanupCall === 1) {
+          return {ok: true, attempts: 1};
+        }
+
+        signalPostCleanupStarted();
+        await postCleanupGate;
+        return {ok: true, attempts: 1};
+      },
+      renderStory: async () => ({
+        getBlob: async () => new Blob(["completed-blob"]),
+        internalState: {},
+      }),
+    });
+
+    await postCleanupStarted;
+    controller.abort();
+    finishPostCleanup();
+
+    const outcome = await transaction;
+
+    assert.deepEqual(outcome, {kind: "cancelled"});
+    assert.equal(released, true);
+  });
+
   it("does not start a render when preflight cleanup remains blocked", async () => {
     let released = false;
     let rendered = false;
