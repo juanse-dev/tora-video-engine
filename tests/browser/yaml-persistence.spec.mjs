@@ -1067,9 +1067,14 @@ test("confirmed eligible import clears an existing persistence conflict", async 
     .click();
 
   await expect(secondary.getByText("Persistence conflict")).toHaveCount(0);
-  await expect(
-    secondary.locator(".preview-frame").getByText("Imported after conflict"),
-  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      secondary
+        .locator(".preview-frame [data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toContain("Imported after conflict");
   await expect
     .poll(() =>
       secondary.evaluate(() =>
