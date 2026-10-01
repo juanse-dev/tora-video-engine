@@ -42,6 +42,8 @@ The first web version is intentionally single-user, local-first, and backend-fre
 10. **Local persistence is best-effort and recovery-safe.** A valid Story must remain usable in memory even if browser storage is unavailable or full. Storage failures are surfaced to the user and must never cause Apply/import to fail after validation succeeds. If a previously persisted Story is still schema-valid but no longer passes the current browser policy, preserve it as a recoverable stored snapshot and do not overwrite its storage slot until the user explicitly exports/discards that recovery state.
 11. **A browser render freezes authoring.** From render start until success/failure/cancel, Story-changing and draft-changing controls are read-only. Preview playback may remain available, but the Story shown by the editor cannot diverge from the in-flight render snapshot.
 12. **Loss-risk state has one destructive-transition policy.** While dirty YAML, a pending visual draft, validated transfer state, or an active Story that differs from durable storage for **any** reason would be lost, treat it as loss-risk state. “Not durably persisted” includes both failed writes and writes intentionally suppressed to protect a rejected stored recovery snapshot. The same predicate must protect unload, Reset, and import commit: none may silently discard loss-risk state.
+13. **Web-render parity is proven, not assumed.** The Player/CLI composition remains shared, but browser MP4 export may only ship after every render-critical component uses primitives supported by the pinned `@remotion/web-renderer` path or has explicit equivalent coverage. Unsupported CSS must not silently define caption alignment/wrapping semantics.
+14. **Static/local-first does not mean zero-network or license-free.** Client-side Remotion rendering has mandatory upstream telemetry behavior and Remotion licensing requirements that must be documented and verified before production deployment.
 
 ## System architecture
 
@@ -182,13 +184,15 @@ v0.2 is complete only when all of the following are true:
 - when browser persistence succeeds, startup restores a stored project only after it passes both StorySchema and the current browser authoring policy; schema-valid but policy-rejected stored payloads are preserved as exportable recovery snapshots and cannot be silently overwritten by the fallback/default Story; quota/unavailable-storage failures are handled without losing the in-memory active Story and are clearly surfaced;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
 - authoring controls are locked for the lifetime of an in-flight browser render so the completed MP4 cannot become stale relative to the visible Story;
-- the web render matches the Story timing/dimensions used by the CLI;
+- the web render matches the Story timing/dimensions used by the CLI, and caption alignment/wrapping parity is verified for canonical, long, and unbroken text fixtures rather than assumed from shared React code;
 - unsupported browser rendering capability is detected and explained before starting a render;
 - browser authoring rejects raw visual titles above 65,536 UTF-16 code units before Story construction, and the centralized post-schema policy rejects `Story.title.length > 65_536` for visual, YAML, import, and restored candidates before timeline/canonical serialization; Stories above the remaining browser authoring/preview budget never mount into the live visual editor/Player;
 - every Active Story exported as canonical YAML is ≤1 MiB UTF-8 and can therefore pass the browser's own pre-parse import guard;
 - browser MP4 export rechecks that the active Story is still within the same 300-second / 9,000-frame browser ceiling; over-budget candidates are rejected earlier by authoring policy and cannot become active/renderable;
 - reload/navigation/tab close warns before discarding session-only authoring state or any in-memory Story that is not durably persisted, including fallback edits whose autosave is suppressed while a recovery slot is protected;
-- no custom backend is required to use the application.
+- YAML and MP4 downloads use one bounded deterministic basename sanitizer so Story titles cannot create invalid or platform-dependent filenames;
+- production documentation discloses Remotion client-render telemetry and records the license basis/current client-safe license-key configuration;
+- no custom Tora backend is required to use the application, but browser rendering must not be described as fully offline because Remotion client renders emit upstream telemetry.
 
 ## Remotion constraint
 
