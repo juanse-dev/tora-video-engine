@@ -1,4 +1,5 @@
 import {execFile} from "node:child_process";
+import {readFile} from "node:fs/promises";
 import {promisify} from "node:util";
 import {expect, test} from "@playwright/test";
 
@@ -6,7 +7,6 @@ const execFileAsync = promisify(execFile);
 
 const FRAME_WIDTH = 540;
 const FRAME_HEIGHT = 960;
-const RGB_CHANNELS = 3;
 
 const waitForOwner = async (page) => {
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -141,119 +141,214 @@ const getCaptionExpectation = async (page) => {
   });
 };
 
-const decodeFrame = async (path) => {
-  const {stdout} = await execFileAsync(
-    "npx",
-    [
-      "remotion",
-      "ffmpeg",
-      "-v",
-      "error",
-      "-i",
-      path,
-      "-ss",
-      "0.5",
-      "-frames:v",
-      "1",
-      "-vf",
-      `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}:flags=bilinear`,
-      "-pix_fmt",
-      "rgb24",
-      "-f",
-      "rawvideo",
-      "pipe:1",
-    ],
+const analyzeEncodedCaptionFrame = async (
+  page,
+  path,
+  scan,
+) => {
+  const encodedMp4 = (await readFile(path)).toString("base64");
+
+  return page.evaluate(
+    async ({
+      encodedMp4: base64,
+      frameWidth,
+      frameHeight,
+      scan: scanRegion,
+    }) => {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+
+      const blob = new Blob([bytes], {type: "video/mp4"});
+      const url = URL.createObjectURL(blob);
+      const video = document.createElement("video");
+      video.muted = true;
+      video.preload = "auto";
+      video.src = url;
+
+      const waitFor = (
+        eventName,
+        errorMessage,
+      ) =>
+        new Promise((resolve, reject) => {
+          const cleanup = () => {
+            video.removeEventListener(eventName, onSuccess);
+            video.removeEventListener("error", onError);
+          };
+          const onSuccess = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = () => {
+            cleanup();
+            reject(
+              new Error(
+                `${errorMessage}: ${video.error?.message ?? "unknown video error"}`,
+              ),
+            );
+          };
+
+          video.addEventListener(eventName, onSuccess, {once: true});
+          video.addEventListener("error", onError, {once: true});
+        });
+
+      document.body.append(video);
+
+      try {
+        await waitFor(
+          "loadedmetadata",
+          "Could not load rendered MP4 metadata",
+        );
+
+        const seekTime = Math.min(
+          0.5,
+          Math.max(0, video.duration / 2),
+        );
+
+        if (Math.abs(video.currentTime - seekTime) > 0.001) {
+          const seeked = waitFor(
+            "seeked",
+            "Could not seek rendered MP4",
+          );
+          video.currentTime = seekTime;
+          await seeked;
+        } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          await waitFor(
+            "loadeddata",
+            "Could not decode rendered MP4 frame",
+          );
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = frameWidth;
+        canvas.height = frameHeight;
+        const context = canvas.getContext("2d", {
+          willReadFrequently: true,
+        });
+
+        if (context === null) {
+          throw new Error("Could not create canvas context");
+        }
+
+        context.drawImage(
+          video,
+          0,
+          0,
+          frameWidth,
+          frameHeight,
+        );
+
+        const pixels = context.getImageData(
+          0,
+          0,
+          frameWidth,
+          frameHeight,
+        ).data;
+
+        const luminanceAt = (x, y) => {
+          const index = (y * frameWidth + x) * 4;
+
+          return (
+            pixels[index] * 0.2126 +
+            pixels[index + 1] * 0.7152 +
+            pixels[index + 2] * 0.0722
+          );
+        };
+
+        const activeRows = [];
+
+        for (
+          let py = scanRegion.y;
+          py < scanRegion.y + scanRegion.height;
+          py += 1
+        ) {
+          let brightPixels = 0;
+
+          for (
+            let px = scanRegion.x;
+            px < scanRegion.x + scanRegion.width;
+            px += 1
+          ) {
+            if (luminanceAt(px, py) > 150) {
+              brightPixels += 1;
+            }
+          }
+
+          if (brightPixels >= 3) {
+            activeRows.push(py);
+          }
+        }
+
+        const bands = [];
+
+        for (const row of activeRows) {
+          const current = bands.at(-1);
+
+          if (current && row - current.end <= 3) {
+            current.end = row;
+          } else {
+            bands.push({start: row, end: row});
+          }
+        }
+
+        const bounds = bands.map((band) => {
+          let minX = Number.POSITIVE_INFINITY;
+          let maxX = Number.NEGATIVE_INFINITY;
+
+          for (
+            let py = band.start;
+            py <= band.end;
+            py += 1
+          ) {
+            for (
+              let px = scanRegion.x;
+              px < scanRegion.x + scanRegion.width;
+              px += 1
+            ) {
+              if (luminanceAt(px, py) > 150) {
+                minX = Math.min(minX, px);
+                maxX = Math.max(maxX, px);
+              }
+            }
+          }
+
+          if (
+            !Number.isFinite(minX) ||
+            !Number.isFinite(maxX)
+          ) {
+            throw new Error(
+              "Expected encoded caption pixels",
+            );
+          }
+
+          return {minX, maxX};
+        });
+
+        return {
+          bands,
+          bounds,
+          decodedDuration: video.duration,
+        };
+      } finally {
+        video.remove();
+        URL.revokeObjectURL(url);
+      }
+    },
     {
-      encoding: null,
-      maxBuffer:
-        FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS +
-        1024 * 1024,
-      timeout: 60_000,
+      encodedMp4,
+      frameWidth: FRAME_WIDTH,
+      frameHeight: FRAME_HEIGHT,
+      scan,
     },
   );
-
-  const frame = Buffer.isBuffer(stdout)
-    ? stdout
-    : Buffer.from(stdout);
-
-  expect(frame.byteLength).toBe(
-    FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS,
-  );
-
-  return frame;
 };
 
-const luminanceAt = (frame, x, y) => {
-  const index = (y * FRAME_WIDTH + x) * RGB_CHANNELS;
-
-  return (
-    frame[index] * 0.2126 +
-    frame[index + 1] * 0.7152 +
-    frame[index + 2] * 0.0722
-  );
-};
-
-const findTextBands = (
-  frame,
-  {x, y, width, height},
-) => {
-  const activeRows = [];
-
-  for (let py = y; py < y + height; py += 1) {
-    let brightPixels = 0;
-
-    for (let px = x; px < x + width; px += 1) {
-      if (luminanceAt(frame, px, py) > 150) {
-        brightPixels += 1;
-      }
-    }
-
-    if (brightPixels >= 3) {
-      activeRows.push(py);
-    }
-  }
-
-  const bands = [];
-
-  for (const row of activeRows) {
-    const current = bands.at(-1);
-
-    if (current && row - current.end <= 3) {
-      current.end = row;
-    } else {
-      bands.push({start: row, end: row});
-    }
-  }
-
-  return bands;
-};
-
-const getBandBounds = (
-  frame,
-  band,
-  {x, width},
-) => {
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-
-  for (let py = band.start; py <= band.end; py += 1) {
-    for (let px = x; px < x + width; px += 1) {
-      if (luminanceAt(frame, px, py) > 150) {
-        minX = Math.min(minX, px);
-        maxX = Math.max(maxX, px);
-      }
-    }
-  }
-
-  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
-    throw new Error("Expected encoded caption pixels");
-  }
-
-  return {minX, maxX};
-};
-
-const assertEncodedCaption = ({
-  frame,
+const assertEncodedCaption = async ({
+  page,
+  path,
   expectation,
   placement,
 }) => {
@@ -277,16 +372,11 @@ const assertEncodedCaption = ({
       Math.round(expectation.frameHeight) - 8,
     ),
   };
-  const bands = findTextBands(frame, scan);
+  const {bands, bounds, decodedDuration} =
+    await analyzeEncodedCaptionFrame(page, path, scan);
 
+  expect(decodedDuration).toBeCloseTo(1, 2);
   expect(bands).toHaveLength(expectation.lineCount);
-
-  const bounds = bands.map((band) =>
-    getBandBounds(frame, band, {
-      x: scan.x,
-      width: scan.width,
-    }),
-  );
 
   for (let index = 0; index < bands.length; index += 1) {
     const band = bands[index];
@@ -409,10 +499,9 @@ test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
     const path = await downloadRenderedMp4(page);
 
     await assertMp4Metadata(path);
-    const frame = await decodeFrame(path);
-
-    assertEncodedCaption({
-      frame,
+    await assertEncodedCaption({
+      page,
+      path,
       expectation,
       placement: fixture.placement,
     });
