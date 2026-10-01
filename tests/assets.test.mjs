@@ -4,9 +4,23 @@ import {resolve} from "node:path";
 import {describe, it} from "node:test";
 import {inflateSync} from "node:zlib";
 import {
+  animationCatalog,
   backgroundAssets,
+  backgroundCatalog,
   toraPoseAssets,
+  toraPoseCatalog,
 } from "../src/assets.ts";
+import {
+  animations,
+  backgrounds,
+  poses,
+} from "../src/story/schema.ts";
+import {exampleStory} from "../src/story/exampleStory.ts";
+import {
+  evaluateVisualDraft,
+  storyToVisualDraft,
+  updateVisualScene,
+} from "../src/web/visualDraft.ts";
 
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -124,4 +138,93 @@ describe("PNG assets", () => {
       await validatePng(asset);
     });
   }
+});
+
+
+describe("WEB-004 asset catalog contract", () => {
+  it("covers every Story pose exactly once", () => {
+    assert.deepEqual(Object.keys(toraPoseCatalog), [...poses]);
+
+    for (const pose of poses) {
+      const asset = toraPoseCatalog[pose];
+
+      assert.equal(asset.id, pose);
+      assert.equal(asset.storyValue, pose);
+      assert.equal(asset.category, "pose");
+      assert.equal(toraPoseAssets[pose], asset.previewPath);
+    }
+  });
+
+  it("covers every Story background exactly once", () => {
+    assert.deepEqual(Object.keys(backgroundCatalog), [...backgrounds]);
+
+    for (const background of backgrounds) {
+      const asset = backgroundCatalog[background];
+
+      assert.equal(asset.id, background);
+      assert.equal(asset.storyValue, background);
+      assert.equal(asset.category, "background");
+      assert.equal(backgroundAssets[background], asset.previewPath);
+    }
+  });
+
+  it("covers every explicit Story animation", () => {
+    assert.deepEqual(Object.keys(animationCatalog), [...animations]);
+
+    for (const animation of animations) {
+      const asset = animationCatalog[animation];
+
+      assert.equal(asset.id, animation);
+      assert.equal(asset.storyValue, animation);
+      assert.equal(asset.category, "animation");
+      assert.equal(asset.previewPath, null);
+    }
+  });
+
+  it("keeps catalog paths on the expected bundled public assets", () => {
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(toraPoseCatalog).map(([id, asset]) => [
+          id,
+          asset.previewPath,
+        ]),
+      ),
+      {
+        formal: "characters/tora/formal.png",
+        confused: "characters/tora/confused.png",
+        panic: "characters/tora/panic.png",
+        coffee: "characters/tora/coffee.png",
+      },
+    );
+
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(backgroundCatalog).map(([id, asset]) => [
+          id,
+          asset.previewPath,
+        ]),
+      ),
+      {
+        office: "backgrounds/office.png",
+        "server-room": "backgrounds/server-room.png",
+      },
+    );
+  });
+
+  it("applies catalog selections through the visual draft candidate path", () => {
+    let draft = storyToVisualDraft(exampleStory);
+
+    draft = updateVisualScene(draft, 0, {
+      pose: toraPoseCatalog.coffee.storyValue,
+      background: backgroundCatalog["server-room"].storyValue,
+      animation: animationCatalog.slowZoom.storyValue,
+    });
+
+    const result = evaluateVisualDraft(draft);
+
+    assert.equal(result.kind, "eligible");
+    assert.equal(result.story.scenes[0].pose, "coffee");
+    assert.equal(result.story.scenes[0].background, "server-room");
+    assert.equal(result.story.scenes[0].animation, "slowZoom");
+  });
 });
