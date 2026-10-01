@@ -265,7 +265,7 @@ export const acquirePersistenceOwnership = async (
     .request(
       PERSISTENCE_WRITER_LOCK,
       {mode: "exclusive", ifAvailable: true},
-      async (lock) => {
+      async (lock: Lock | null) => {
         resolveAcquired?.(lock !== null);
 
         if (lock !== null) {
