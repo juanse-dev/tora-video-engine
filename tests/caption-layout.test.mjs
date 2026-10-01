@@ -154,12 +154,29 @@ describe("caption layout", () => {
     );
   });
 
-  it("preserves no-break spaces inside caption tokens", () => {
-    const text = "Value 10\u00A0kg and 20\u202Fms";
-    const lines = layoutCaptionLines(text, "dialogue", 60);
+  it("preserves every supported no-break whitespace inside caption tokens", () => {
+    const fixtures = [
+      ["U+00A0", "\u00A0"],
+      ["U+2007", "\u2007"],
+      ["U+202F", "\u202F"],
+      ["U+FEFF", "\uFEFF"],
+    ];
 
-    assert.equal(lines.join(" "), text);
-    assert.ok(lines.some((line) => line.includes("10\u00A0kg")));
-    assert.ok(lines.some((line) => line.includes("20\u202Fms")));
+    for (const [label, whitespace] of fixtures) {
+      const token = `left${whitespace}right`;
+      const text = `prefix ${token} suffix`;
+      const lines = layoutCaptionLines(text, "dialogue", 60);
+      const reconstructed = lines.join(" ");
+
+      assert.equal(
+        reconstructed,
+        text,
+        `${label} must survive caption tokenization unchanged`,
+      );
+      assert.ok(
+        lines.some((line) => line.includes(token)),
+        `${label} must not create a token boundary`,
+      );
+    }
   });
 });
