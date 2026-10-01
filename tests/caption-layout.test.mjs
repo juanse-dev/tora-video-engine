@@ -70,7 +70,7 @@ describe("caption layout", () => {
 
     assert.deepEqual(first, second);
     assert.ok(first.length > 1);
-    assert.equal(first.join(" ").replace(/\\s+/gu, " "), text);
+    assert.equal(first.join(" ").replace(/\s+/gu, " "), text);
     assert.ok(
       first.every(
         (line) =>
