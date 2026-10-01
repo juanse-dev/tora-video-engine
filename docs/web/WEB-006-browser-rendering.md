@@ -151,7 +151,8 @@ When rendering succeeds:
 
 - obtain the Blob from the web renderer;
 - create a temporary object URL;
-- trigger/download using a deterministic \`.mp4\` filename;
+- name the file `${getDownloadBasename(renderSnapshot.title)}.mp4`, reusing the exact shared sanitizer specified by WEB-005;
+- trigger the browser download;
 - revoke temporary URLs when they are no longer needed.
 
 A failed render must not present an old Blob as the new successful result.
@@ -181,7 +182,7 @@ The CLI and browser render do not need byte-identical MP4 files. They must be se
 
 ## Mandatory Remotion client-render telemetry
 
-Client-side Remotion rendering is **not telemetry-optional**. Under the current upstream [Telemetry documentation](https://www.remotion.dev/docs/telemetry), each `renderMediaOnWeb()` / `renderStillOnWeb()` attempt sends a Remotion telemetry event even when no license key is configured; successful and failed renders emit events, while aborted renders do not.
+Client-side Remotion rendering is **not telemetry-optional**. Under the current upstream [Telemetry documentation](https://www.remotion.dev/docs/telemetry) and [License FAQ](https://www.remotion.dev/docs/license/faq), client-side telemetry cannot be disabled: each `renderMediaOnWeb()` / `renderStillOnWeb()` attempt sends a Remotion telemetry event even when no license key is configured; successful and failed renders emit events, while aborted renders do not.
 
 The implementation and deployment documentation must therefore:
 
