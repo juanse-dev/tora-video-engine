@@ -217,7 +217,7 @@ test("storage reread failure releases ownership and falls back to session-only",
     page.getByText(/Persistence ownership was released because storage could not be reread/),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", {name: "Export active Story YAML"}),
+    page.getByRole("button", {name: "Export active Story YAML"}).first(),
   ).toBeVisible();
 
   await expect
