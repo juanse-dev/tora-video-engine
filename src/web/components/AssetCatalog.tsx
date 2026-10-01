@@ -54,6 +54,10 @@ export const AssetCatalog = ({
                   onChange({pose: asset.storyValue})
                 }
               >
+                {/* Editor chrome thumbnail, not Remotion composition media. */}
+                {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+                {/* Editor chrome thumbnail, not Remotion composition media. */}
+                {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
                 <img
                   src={staticFile(asset.previewPath)}
                   alt=""
