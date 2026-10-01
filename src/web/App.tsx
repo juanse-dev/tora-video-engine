@@ -1,4 +1,8 @@
+import {exampleStory} from "../story/exampleStory.ts";
 import {Preview} from "./components/Preview.tsx";
+import {getWebPlayerConfig} from "./previewConfig.ts";
+
+const previewConfig = getWebPlayerConfig(exampleStory);
 
 export const App = () => {
   return (
@@ -19,12 +23,15 @@ export const App = () => {
           <div className="preview-card-header">
             <div>
               <p className="section-kicker">Canonical story</p>
-              <h2 id="preview-heading">Deploy Friday</h2>
+              <h2 id="preview-heading">{exampleStory.title}</h2>
             </div>
-            <span className="format-badge">9:16 · 30 FPS</span>
+            <span className="format-badge">
+              {previewConfig.compositionWidth}×
+              {previewConfig.compositionHeight} · {previewConfig.fps} FPS
+            </span>
           </div>
 
-          <Preview />
+          <Preview story={exampleStory} />
         </section>
       </main>
     </div>
