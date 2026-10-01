@@ -103,6 +103,26 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
     )
     .toBe("Centered caption fixture");
 
+  const measureContentWidth = () =>
+    caption.locator("[data-caption-content]").evaluate((element) => {
+      const style = getComputedStyle(element);
+
+      return (
+        element.clientWidth -
+        Number.parseFloat(style.paddingLeft) -
+        Number.parseFloat(style.paddingRight)
+      );
+    });
+  const borderBoxWidth = await measureContentWidth();
+  expect(borderBoxWidth).toBeCloseTo(864, 0);
+
+  await page.addStyleTag({
+    content:
+      ".preview-frame [data-caption-align], .preview-frame [data-caption-align] * { box-sizing: content-box !important; }",
+  });
+  const contentBoxWidth = await measureContentWidth();
+  expect(contentBoxWidth).toBeCloseTo(borderBoxWidth, 0);
+
   await importSingleScene(page, {
     type: "dialogue",
     text: "Left aligned caption fixture",
@@ -135,6 +155,60 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
 
   const hardText = await hardLines.allTextContents();
   expect(hardText.join("")).toBe(token);
+
+  const wideToken = "OQ".repeat(90);
+  await importSingleScene(page, {
+    type: "chaos",
+    text: wideToken,
+    pose: "panic",
+    background: "server-room",
+  });
+  caption = page.locator("[data-caption-align=center]").first();
+
+  const clipping = await caption.evaluate((element) => {
+    const content = element.querySelector("[data-caption-content]");
+    const lines = [...element.querySelectorAll("[data-caption-line]")];
+
+    if (!(content instanceof HTMLElement)) {
+      throw new Error("Missing caption content element");
+    }
+
+    const style = getComputedStyle(content);
+    const available =
+      content.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+
+    return lines.map((line) => ({
+      text: line.textContent ?? "",
+      width:
+        line instanceof HTMLElement
+          ? line.scrollWidth
+          : Number.POSITIVE_INFINITY,
+      available,
+    }));
+  });
+
+  expect(clipping.length).toBeGreaterThan(1);
+  expect(
+    clipping.every(({width, available}) => width <= available + 1),
+  ).toBe(true);
+
+  const decomposed = "e\u0301".repeat(90);
+  await importSingleScene(page, {
+    type: "chaos",
+    text: decomposed,
+    pose: "panic",
+    background: "server-room",
+  });
+  const decomposedLines = await page
+    .locator("[data-caption-align=center] [data-caption-line]")
+    .allTextContents();
+
+  expect(decomposedLines.join("")).toBe(decomposed);
+  expect(
+    decomposedLines.every((line) => !/^\p{Mark}/u.test(line)),
+  ).toBe(true);
 });
 
 test("browser render capability either explains fallback or renders canonical H.264 MP4", async ({
