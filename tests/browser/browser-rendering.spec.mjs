@@ -309,17 +309,26 @@ const importSingleScene = async (page, {
       buffer: Buffer.from(source),
     });
 
+  const collapsibleWhitespace = /[^\S\u00A0\u2007\u202F\uFEFF]+/gu;
+  const hasCollapsibleWhitespace =
+    /[^\S\u00A0\u2007\u202F\uFEFF]/u.test(text);
+  const normalizeCollapsibleWhitespace = (value) =>
+    value
+      .replace(collapsibleWhitespace, " ")
+      .replace(/^[^\S\u00A0\u2007\u202F\uFEFF]+/u, "")
+      .replace(/[^\S\u00A0\u2007\u202F\uFEFF]+$/u, "");
+
   await expect
     .poll(async () => {
       const lines = await page
         .locator(".preview-frame [data-caption-line]")
         .allTextContents();
 
-      return text.includes(" ")
-        ? lines.join(" ").replace(/\s+/gu, " ").trim()
+      return hasCollapsibleWhitespace
+        ? normalizeCollapsibleWhitespace(lines.join(" "))
         : lines.join("");
     })
-    .toBe(text.replace(/\s+/gu, " ").trim());
+    .toBe(normalizeCollapsibleWhitespace(text));
 };
 
 test("pending visual and YAML drafts block browser render", async ({page}) => {
