@@ -4,7 +4,7 @@ import {
   type RenderMediaOnWebProgress,
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
-import {ToraVideo} from "../Video.tsx";
+import type {ComponentType} from "react";
 import type {Story} from "../story/types.ts";
 import {
   VIDEO_FPS,
@@ -353,6 +353,7 @@ export const renderStoryMediaOnWeb = async (
     onProgress?: (progress: RenderMediaOnWebProgress) => void;
     licenseKey?: string | null;
     render?: RenderFunction;
+    component?: ComponentType<{story: Story}>;
   },
 ): Promise<RenderMediaOnWebResult> => {
   const policy = evaluateBrowserRenderPolicy(story);
@@ -364,11 +365,13 @@ export const renderStoryMediaOnWeb = async (
   }
 
   const render = options.render ?? renderMediaOnWeb;
+  const component =
+    options.component ?? (await import("../Video.tsx")).ToraVideo;
 
   return render({
     composition: {
       id: "ToraVideo",
-      component: ToraVideo,
+      component,
       durationInFrames: policy.totalFrames,
       fps: VIDEO_FPS,
       width: VIDEO_WIDTH,
