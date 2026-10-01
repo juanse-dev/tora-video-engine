@@ -14,6 +14,17 @@ export type AssetCatalogEntry<T extends string> = {
   storyValue: T;
 };
 
+export type ImageAssetCatalogEntry<T extends string> =
+  AssetCatalogEntry<T> & {
+    previewPath: string;
+  };
+
+export type AnimationAssetCatalogEntry =
+  AssetCatalogEntry<Animation> & {
+    category: "animation";
+    previewPath: null;
+  };
+
 export const toraPoseCatalog = {
   formal: {
     id: "formal",
@@ -43,7 +54,7 @@ export const toraPoseCatalog = {
     previewPath: "characters/tora/coffee.png",
     storyValue: "coffee",
   },
-} as const satisfies Record<Pose, AssetCatalogEntry<Pose>>;
+} as const satisfies Record<Pose, ImageAssetCatalogEntry<Pose>>;
 
 export const backgroundCatalog = {
   office: {
@@ -60,7 +71,7 @@ export const backgroundCatalog = {
     previewPath: "backgrounds/server-room.png",
     storyValue: "server-room",
   },
-} as const satisfies Record<Background, AssetCatalogEntry<Background>>;
+} as const satisfies Record<Background, ImageAssetCatalogEntry<Background>>;
 
 export const animationCatalog = {
   fade: {
@@ -84,7 +95,7 @@ export const animationCatalog = {
     previewPath: null,
     storyValue: "slowZoom",
   },
-} as const satisfies Record<Animation, AssetCatalogEntry<Animation>>;
+} as const satisfies Record<Animation, AnimationAssetCatalogEntry>;
 
 export const toraPoseAssets = Object.fromEntries(
   Object.entries(toraPoseCatalog).map(([id, asset]) => [
