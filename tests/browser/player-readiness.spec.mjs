@@ -146,3 +146,63 @@ test("built Player surfaces font failure without unhandled rejection", async ({
     await page.evaluate(() => window.__toraUnhandledRejections),
   ).toEqual([]);
 });
+
+
+test("built Player recovers when a later caption generation loads after a font failure", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__toraUnhandledRejections = [];
+
+    window.addEventListener("unhandledrejection", (event) => {
+      window.__toraUnhandledRejections.push(
+        event.reason instanceof Error
+          ? event.reason.message
+          : String(event.reason),
+      );
+    });
+
+    Object.defineProperty(document.fonts, "load", {
+      configurable: true,
+      value: (_font, text) => {
+        if (text.includes("Tora tiene una regla.")) {
+          return Promise.reject(new Error("forced initial font failure"));
+        }
+
+        return Promise.resolve([{}]);
+      },
+    });
+  });
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const preview = page.locator(".preview-frame");
+  const fontError = preview.locator("[data-preview-font-error]");
+
+  await expect(fontError).toContainText(
+    "Preview unavailable: forced initial font failure",
+  );
+
+  const caption = page.getByLabel("Caption");
+  await caption.fill("Recovered caption");
+
+  await expect(fontError).toHaveCount(0);
+  await expect(preview.getByText("Recovered caption")).toBeVisible();
+
+  const playButton = page.getByRole("button", {name: "Play video"});
+  await playButton.click();
+
+  const frameProbe = page.locator("[data-tora-frame]").first();
+
+  await expect
+    .poll(
+      async () =>
+        Number(await frameProbe.getAttribute("data-tora-frame")),
+      {timeout: 10_000},
+    )
+    .toBeGreaterThan(0);
+
+  expect(
+    await page.evaluate(() => window.__toraUnhandledRejections),
+  ).toEqual([]);
+});
