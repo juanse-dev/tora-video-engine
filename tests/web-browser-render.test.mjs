@@ -180,9 +180,12 @@ describe("WEB-006 browser rendering", () => {
     let seen = null;
     const controller = new AbortController();
 
+    const StubComposition = () => null;
+
     await renderStoryMediaOnWeb(exampleStory, {
       signal: controller.signal,
       licenseKey: "public-test-key",
+      component: StubComposition,
       render: async (options) => {
         seen = options;
 
