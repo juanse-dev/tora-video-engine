@@ -1,10 +1,11 @@
-import type {ChangeEvent} from "react";
+import {useEffect, type ChangeEvent} from "react";
 import type {Story} from "../../story/types.ts";
 import {
   canExportYamlCandidate,
   getYamlCandidateStory,
   isYamlDirty,
   tryEditYamlBuffer,
+  validateYamlBuffer,
   type YamlEditorState,
 } from "../yamlState.ts";
 
@@ -25,6 +26,8 @@ const validationMessage = (state: YamlEditorState): string => {
   }
 
   switch (state.validation.kind) {
+    case "pending":
+      return "Validating YAML…";
     case "eligible":
       return "YAML is schema-valid and browser-eligible.";
     case "policy-rejected":
@@ -50,6 +53,25 @@ export const YamlEditor = ({
   const candidate = getYamlCandidateStory(state);
   const canApply = state.validation.kind === "eligible";
   const canExportCandidate = canExportYamlCandidate(state);
+
+  useEffect(() => {
+    if (state.validation.kind !== "pending") {
+      return;
+    }
+
+    const buffer = state.buffer;
+    const timeout = window.setTimeout(() => {
+      const validated = validateYamlBuffer(state);
+
+      if (validated.buffer === buffer) {
+        onStateChange(validated);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [onStateChange, state]);
 
   const onBufferChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const result = tryEditYamlBuffer(state, event.target.value);
