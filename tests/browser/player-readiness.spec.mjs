@@ -187,7 +187,14 @@ test("built Player recovers when a later caption generation loads after a font f
   await caption.fill("Recovered caption");
 
   await expect(fontError).toHaveCount(0);
-  await expect(preview.getByText("Recovered caption")).toBeVisible();
+  await expect
+    .poll(async () =>
+      preview
+        .locator("[data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe("Recovered caption");
 
   const playButton = page.getByRole("button", {name: "Play video"});
   await playButton.click();
