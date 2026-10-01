@@ -5,7 +5,9 @@ import {
   CAPTION_TEXT_MAX_HEIGHT,
   estimateCaptionHeight,
   estimateCaptionLineCount,
+  estimateCaptionLineWidth,
   getCaptionFontSize,
+  layoutCaptionLines,
 } from "../src/captionLayout.ts";
 import {MAX_CAPTION_LENGTH} from "../src/story/constraints.ts";
 
@@ -55,6 +57,41 @@ describe("caption layout", () => {
     assert.ok(
       getCaptionFontSize("hero", "Short caption") >
         CAPTION_MIN_FONT_SIZE,
+    );
+  });
+
+  it("wraps natural-language captions into deterministic explicit lines", () => {
+    const text =
+      "Deploy Friday is fine until the tiny change becomes a very long production incident description.";
+    const fontSize = getCaptionFontSize("dialogue", text);
+    const first = layoutCaptionLines(text, "dialogue", fontSize);
+    const second = layoutCaptionLines(text, "dialogue", fontSize);
+
+    assert.deepEqual(first, second);
+    assert.ok(first.length > 1);
+    assert.equal(first.join(" ").replace(/\\s+/gu, " "), text);
+    assert.ok(
+      first.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "dialogue", fontSize) <=
+          868,
+      ),
+    );
+  });
+
+  it("hard-wraps long unbroken tokens without CSS word breaking", () => {
+    const text = "W".repeat(MAX_CAPTION_LENGTH);
+    const fontSize = getCaptionFontSize("impact", text);
+    const lines = layoutCaptionLines(text, "impact", fontSize);
+
+    assert.ok(lines.length > 1);
+    assert.equal(lines.join(""), text);
+    assert.ok(
+      lines.every(
+        (line) =>
+          estimateCaptionLineWidth(line, "impact", fontSize) <=
+          868,
+      ),
     );
   });
 });
