@@ -10,6 +10,7 @@ export const Background = ({background}: BackgroundProps) => {
   return (
     <AbsoluteFill>
       <Img
+        pauseWhenLoading
         src={staticFile(backgroundAssets[background])}
         style={{
           height: "100%",
