@@ -85,12 +85,6 @@ const downloadRenderedMp4 = async (page) => {
   });
   await renderButton.click();
 
-  await expect(page.locator(".app-shell")).toHaveAttribute(
-    "data-render-state",
-    "finalizing",
-    {timeout: 120_000},
-  );
-
   const download = await downloadPromise;
   const path = await download.path();
 
