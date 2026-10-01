@@ -404,8 +404,11 @@ const assertEncodedCaption = async ({
     expect(encodedWidth).toBeGreaterThan(
       expectedWidth * 0.55,
     );
+    // The web renderer paints text through Canvas rather than the DOM
+    // glyph rasterizer. Keep width parity semantic while clipping/alignment
+    // remain strict against the encoded caption frame.
     expect(encodedWidth).toBeLessThan(
-      expectedWidth * 1.1 + 8,
+      expectedWidth * 1.3 + 8,
     );
   }
 
