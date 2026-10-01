@@ -43,7 +43,7 @@ const glyphAdvanceEm = (character: string): number => {
     return 0.58;
   }
 
-  if (/[.,:;!'"\-()\[\]{}]/u.test(character)) {
+  if (`.,:;!'"-()[]{}`.includes(character)) {
     return 0.38;
   }
 
