@@ -15,6 +15,7 @@ import {
   evaluateBrowserStoryPolicy,
   type BrowserStoryPolicyDependencies,
 } from "./browserPolicy.ts";
+import {storiesSemanticallyEqual} from "./persistence.ts";
 
 export const WEB_RENDER_LOCK_NAME =
   "tora-video-engine:web-fs-render";
@@ -346,6 +347,14 @@ export const evaluateBrowserRenderPolicy = (
   story: Story,
   dependencies: BrowserStoryPolicyDependencies = {},
 ) => evaluateBrowserStoryPolicy(story, dependencies);
+
+export const canDownloadBrowserRenderSnapshot = (
+  snapshot: Story,
+  activeStory: Story,
+  inputBlocked: boolean,
+): boolean =>
+  !inputBlocked &&
+  storiesSemanticallyEqual(snapshot, activeStory);
 
 export const renderStoryMediaOnWeb = async (
   story: Story,
