@@ -320,4 +320,18 @@ describe("WEB-005 persistence writer lock", () => {
       {mode: "secondary"},
     );
   });
+
+
+  it("degrades to session-only when Web Locks request fails", async () => {
+    const locks = {
+      request: async () => {
+        throw new Error("locks unavailable");
+      },
+    };
+
+    assert.deepEqual(
+      await acquirePersistenceOwnership(locks),
+      {mode: "session-only"},
+    );
+  });
 });
