@@ -163,6 +163,227 @@ const waitForOwner = async (page) => {
   );
 };
 
+const waitForBrowserRenderAvailability = async (page) => {
+  const banner = page.locator(".render-banner");
+  const renderButton = page.getByRole("button", {name: "Render MP4"});
+
+  await expect
+    .poll(async () => {
+      const text = (await banner.textContent()) ?? "";
+      const disabled = await renderButton.isDisabled();
+
+      return (
+        !text.includes("Checking browser render support") &&
+        (!disabled || /unavailable|requires|instead|local CLI/i.test(text))
+      );
+    }, {timeout: 15_000})
+    .toBe(true);
+
+  return !(await renderButton.isDisabled());
+};
+
+const renderCurrentStoryToPath = async (page) => {
+  const renderButton = page.getByRole("button", {name: "Render MP4"});
+  const downloadPromise = page.waitForEvent("download", {
+    timeout: 120_000,
+  });
+
+  await renderButton.click();
+  const download = await downloadPromise;
+  const path = await download.path();
+
+  if (path === null) {
+    throw new Error("Expected browser MP4 download path");
+  }
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "success",
+    {timeout: 30_000},
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+
+  return path;
+};
+
+const getCaptionExpectation = async (page) => {
+  const caption = page.locator(".preview-frame [data-caption-align]").first();
+  await expect(caption).toBeVisible();
+
+  const lines = caption.locator("[data-caption-line]");
+  const lineCount = await lines.count();
+  const frame = caption.locator("[data-caption-frame]");
+
+  const geometry = await frame.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+
+    return {
+      fontFamily: style.fontFamily,
+      fontSize: Number.parseFloat(style.fontSize),
+      height: rect.height,
+      width: rect.width,
+    };
+  });
+
+  return {
+    align: await caption.getAttribute("data-caption-align"),
+    frameHeight:
+      (geometry.height / geometry.width) *
+      936 *
+      0.5,
+    fontFamily: geometry.fontFamily,
+    fontSize: geometry.fontSize,
+    lineCount,
+  };
+};
+
+const brightTextBands = (
+  frame,
+  {x, y, width, height},
+) => {
+  const activeRows = [];
+
+  for (let py = y; py < y + height; py += 1) {
+    let brightPixels = 0;
+
+    for (let px = x; px < x + width; px += 1) {
+      const index =
+        (py * DECODED_FRAME_WIDTH + px) * RGB_CHANNELS;
+      const luminance =
+        frame[index] * 0.2126 +
+        frame[index + 1] * 0.7152 +
+        frame[index + 2] * 0.0722;
+
+      if (luminance > 150) {
+        brightPixels += 1;
+      }
+    }
+
+    if (brightPixels >= 3) {
+      activeRows.push(py);
+    }
+  }
+
+  const bands = [];
+
+  for (const row of activeRows) {
+    const previous = bands.at(-1);
+
+    if (previous && row - previous.end <= 3) {
+      previous.end = row;
+      continue;
+    }
+
+    bands.push({start: row, end: row});
+  }
+
+  return bands;
+};
+
+const brightBoundsForBand = (
+  frame,
+  band,
+  {x, width},
+) => {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let brightPixels = 0;
+
+  for (let py = band.start; py <= band.end; py += 1) {
+    for (let px = x; px < x + width; px += 1) {
+      const index =
+        (py * DECODED_FRAME_WIDTH + px) * RGB_CHANNELS;
+      const luminance =
+        frame[index] * 0.2126 +
+        frame[index + 1] * 0.7152 +
+        frame[index + 2] * 0.0722;
+
+      if (luminance > 150) {
+        minX = Math.min(minX, px);
+        maxX = Math.max(maxX, px);
+        brightPixels += 1;
+      }
+    }
+  }
+
+  if (brightPixels === 0) {
+    throw new Error("Expected bright caption pixels");
+  }
+
+  return {minX, maxX, brightPixels};
+};
+
+const assertEncodedCaptionGeometry = ({
+  frame,
+  expectation,
+  placement,
+}) => {
+  const frameX = 36;
+  const frameWidth = 468;
+  const frameY =
+    placement === "top"
+      ? 48
+      : Math.round(
+          DECODED_FRAME_HEIGHT -
+            48 -
+            expectation.frameHeight,
+        );
+  const frameHeight = Math.round(expectation.frameHeight);
+  const scan = {
+    x: frameX + 8,
+    y: frameY + 4,
+    width: frameWidth - 16,
+    height: Math.max(1, frameHeight - 8),
+  };
+  const bands = brightTextBands(frame, scan);
+
+  expect(expectation.fontFamily).toMatch(/Inter/i);
+  expect(expectation.lineCount).toBeGreaterThan(1);
+  expect(bands).toHaveLength(expectation.lineCount);
+
+  const bounds = bands.map((band) =>
+    brightBoundsForBand(frame, band, {
+      x: scan.x,
+      width: scan.width,
+    }),
+  );
+
+  for (const band of bands) {
+    const height = band.end - band.start + 1;
+
+    expect(height).toBeGreaterThan(
+      Math.max(8, expectation.fontSize * 0.16),
+    );
+    expect(height).toBeLessThan(
+      expectation.fontSize * 0.65,
+    );
+  }
+
+  const rightPaddingStart = frameX + frameWidth - 12;
+  expect(
+    bounds.every(({maxX}) => maxX < rightPaddingStart),
+  ).toBe(true);
+
+  if (expectation.align === "center") {
+    for (const {minX, maxX} of bounds) {
+      expect(
+        Math.abs((minX + maxX) / 2 - DECODED_FRAME_WIDTH / 2),
+      ).toBeLessThan(22);
+    }
+  } else {
+    const leftEdges = bounds.map(({minX}) => minX);
+    const edgeSpread =
+      Math.max(...leftEdges) - Math.min(...leftEdges);
+
+    expect(Math.min(...leftEdges)).toBeLessThan(70);
+    expect(edgeSpread).toBeLessThan(6);
+  }
+};
+
 const importSingleScene = async (page, {
   type,
   text,
@@ -398,6 +619,55 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
   expect(
     decomposedLines.every((line) => !/^\p{Mark}/u.test(line)),
   ).toBe(true);
+});
+
+test("encoded browser render preserves long natural and hard-wrap caption geometry", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  if (!(await waitForBrowserRenderAvailability(page))) {
+    test.skip(true, "Browser web rendering is unavailable in this runtime");
+  }
+
+  const natural =
+    "A long natural language caption keeps wrapping explicit and deterministic across the encoded browser renderer without relying on CSS word breaking.";
+  await importSingleScene(page, {
+    type: "intro",
+    text: natural,
+    duration: 1,
+  });
+  const naturalExpectation = await getCaptionExpectation(page);
+  expect(naturalExpectation.align).toBe("center");
+
+  const naturalPath = await renderCurrentStoryToPath(page);
+  const naturalFrame = await decodeMp4Frame(naturalPath, 0.5);
+  assertEncodedCaptionGeometry({
+    frame: naturalFrame,
+    expectation: naturalExpectation,
+    placement: "top",
+  });
+
+  const hardToken = "W".repeat(120);
+  await importSingleScene(page, {
+    type: "dialogue",
+    text: hardToken,
+    duration: 1,
+    pose: "confused",
+  });
+  const hardExpectation = await getCaptionExpectation(page);
+  expect(hardExpectation.align).toBe("left");
+
+  const hardPath = await renderCurrentStoryToPath(page);
+  const hardFrame = await decodeMp4Frame(hardPath, 0.5);
+  assertEncodedCaptionGeometry({
+    frame: hardFrame,
+    expectation: hardExpectation,
+    placement: "bottom",
+  });
 });
 
 test("browser render capability either explains fallback or renders canonical H.264 MP4", async ({
