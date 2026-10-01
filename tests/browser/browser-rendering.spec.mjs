@@ -183,6 +183,7 @@ test("browser render capability either explains fallback or renders canonical H.
       "ffprobe",
       "-v",
       "error",
+      "-count_frames",
       "-show_streams",
       "-show_format",
       "-of",
@@ -205,7 +206,9 @@ test("browser render capability either explains fallback or renders canonical H.
   expect(videoStreams[0].width).toBe(1080);
   expect(videoStreams[0].height).toBe(1920);
   expect(videoStreams[0].avg_frame_rate).toBe("30/1");
-  expect(Number(videoStreams[0].nb_frames)).toBe(360);
+  expect(
+    Number(videoStreams[0].nb_read_frames ?? videoStreams[0].nb_frames),
+  ).toBe(360);
   expect(Number(metadata.format.duration)).toBeCloseTo(12, 2);
 
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -216,4 +219,63 @@ test("browser render capability either explains fallback or renders canonical H.
     "data-authoring-locked",
     "false",
   );
+});
+
+
+test("Cancel Render aborts a supported browser render and unlocks authoring", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const banner = page.locator(".render-banner");
+  const renderButton = page.getByRole("button", {name: "Render MP4"});
+
+  await expect
+    .poll(async () => {
+      const text = (await banner.textContent()) ?? "";
+      const disabled = await renderButton.isDisabled();
+
+      return (
+        !text.includes("Checking browser render support") &&
+        (!disabled || /unavailable|requires|instead|local CLI/i.test(text))
+      );
+    }, {timeout: 15_000})
+    .toBe(true);
+
+  if (await renderButton.isDisabled()) {
+    return;
+  }
+
+  let downloaded = false;
+  page.on("download", () => {
+    downloaded = true;
+  });
+
+  await renderButton.click();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "true",
+  );
+
+  await page.getByRole("button", {name: "Cancel Render"}).click();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "cancelling",
+  );
+
+  await expect
+    .poll(() =>
+      page.locator(".app-shell").getAttribute("data-render-state"),
+      {timeout: 90_000},
+    )
+    .not.toMatch(/^(?:rendering|cancelling)$/);
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  expect(downloaded).toBe(false);
 });
