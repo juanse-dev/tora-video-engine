@@ -10,8 +10,17 @@ export const MAX_BROWSER_YAML_SOURCE_BYTES = 1_048_576;
 export const MAX_BROWSER_YAML_SOURCE_CODE_UNITS = 1_048_576;
 
 export type YamlValidation =
-  | {kind: "eligible"; story: Story; policy: Extract<BrowserStoryPolicyResult, {eligible: true}>}
-  | {kind: "policy-rejected"; story: Story; policy: Extract<BrowserStoryPolicyResult, {eligible: false}>}
+  | {kind: "pending"}
+  | {
+      kind: "eligible";
+      story: Story;
+      policy: Extract<BrowserStoryPolicyResult, {eligible: true}>;
+    }
+  | {
+      kind: "policy-rejected";
+      story: Story;
+      policy: Extract<BrowserStoryPolicyResult, {eligible: false}>;
+    }
   | {kind: "parse-invalid"; message: string}
   | {kind: "schema-invalid"; message: string}
   | {kind: "source-oversized"; message: string};
@@ -141,7 +150,6 @@ export const isYamlDirty = (state: YamlEditorState): boolean =>
 export const tryEditYamlBuffer = (
   state: YamlEditorState,
   nextBuffer: string,
-  dependencies: YamlEvaluationDependencies = {},
 ):
   | {accepted: true; state: YamlEditorState}
   | {accepted: false; state: YamlEditorState; message: string} => {
@@ -156,29 +164,12 @@ export const tryEditYamlBuffer = (
     };
   }
 
-  const validation = evaluateYamlSource(
-    nextBuffer,
-    "editor.yaml",
-    dependencies,
-  );
-
-  if (validation.kind === "source-oversized") {
-    return {
-      accepted: false,
-      state: {
-        ...state,
-        sourceGuardMessage: validation.message,
-      },
-      message: validation.message,
-    };
-  }
-
   return {
     accepted: true,
     state: {
       ...state,
       buffer: nextBuffer,
-      validation,
+      validation: {kind: "pending"},
       transferSnapshot:
         state.transferSnapshot?.buffer === nextBuffer
           ? state.transferSnapshot
@@ -187,6 +178,20 @@ export const tryEditYamlBuffer = (
     },
   };
 };
+
+export const validateYamlBuffer = (
+  state: YamlEditorState,
+  sourceName = "editor.yaml",
+  dependencies: YamlEvaluationDependencies = {},
+): YamlEditorState => ({
+  ...state,
+  validation: evaluateYamlSource(
+    state.buffer,
+    sourceName,
+    dependencies,
+  ),
+  sourceGuardMessage: null,
+});
 
 export const applyYamlState = (
   state: YamlEditorState,
