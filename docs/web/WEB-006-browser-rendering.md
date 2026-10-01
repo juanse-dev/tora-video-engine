@@ -66,7 +66,7 @@ For v0.2, browser MP4 export is supported only when:
 - `canRender === true`; and
 - `resolvedOutputTarget === "web-fs"`.
 
-The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 before `getBlob()`. Do not apply the full 300-second/1080×1920 render ceiling to that fallback. v0.2 deliberately **does not render when the resolved output target is `arraybuffer`** rather than inventing a second unvalidated encoded-memory threshold.
+The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 **during the entire render**. v0.2 deliberately does not use that fallback. The separate post-render materialization cap defined below is not equivalent: rendering still streams to OPFS first, and only the finalized output is copied into bounded memory after its exact encoded size is known.
 
 If capability fails or resolves only to `arraybuffer`:
 
@@ -161,8 +161,8 @@ Required behavior:
 - acquire the render lock **immediately before any OPFS cleanup / `renderMediaOnWeb()` call**;
 - if the lock is unavailable, do not start a second render. Show that another Tora tab is rendering and offer Retry/Cancel rather than relying on Remotion's module-local queue;
 - if `navigator.locks` is unavailable, disable v0.2 browser MP4 rendering because cross-tab safety for the required `web-fs` lifecycle cannot be guaranteed; preview/edit/YAML/CLI remain usable;
-- hold the lock across `renderMediaOnWeb()`, `getBlob()`, object-URL/download handoff, and Tora's OPFS cleanup;
-- release it only after the render's temporary OPFS state is cleaned, including failure/cancel paths.
+- hold the lock across `renderMediaOnWeb()`, `getBlob()`, final-output materialization, and Tora's OPFS cleanup;
+- release it only after the independent downloadable Blob exists (success path) and the render's temporary OPFS state is cleaned, including failure/cancel/materialization-failure paths.
 
 ### Tora-owned Remotion OPFS cleanup
 
@@ -172,10 +172,39 @@ While holding the render lock, Tora owns cleanup of this prefix for its origin:
 
 1. obtain the OPFS root via `navigator.storage.getDirectory()`;
 2. **before every render starts, call the same awaitable `cleanupRemotionOpfsUntilEmpty()` helper defined below and do not call `renderMediaOnWeb()` until it has positively observed an empty `__remotion_render:` prefix**;
-3. run the web render and call `getBlob()`;
-4. create the download object URL / hand the Blob to the download flow;
-5. in a `finally` path, call `cleanupRemotionOpfsUntilEmpty()` again to remove all entries created/left by the render, including partial files from failure/cancel;
-6. only release the render lock after the relevant cleanup phase has positively observed that no `__remotion_render:` entries remain.
+3. run the web render and call `getBlob()`; treat the returned object as potentially OPFS-backed and **not yet safe to outlive the render file**;
+4. validate/materialize the finalized output through the independent-download protocol below;
+5. only after independent materialization succeeds, call `cleanupRemotionOpfsUntilEmpty()` to delete the Remotion OPFS file(s);
+6. release the render lock after cleanup has positively observed an empty prefix;
+7. create the object URL and trigger the browser download from the **independent materialized Blob**, which may safely outlive OPFS cleanup and lock release.
+
+On render failure, cancellation, or materialization failure, there is no downloadable success Blob; run the same locked OPFS cleanup protocol and only then release the lock.
+
+### Independent final-output materialization
+
+In Remotion 4.0.529, the `web-fs` target obtains its result from `FileSystemFileHandle.getFile()`. A File System API `File` can become unreadable if its backing entry is changed or removed after `getFile()`. Therefore an object URL plus `<a download>.click()` is **not** an awaitable consumption boundary and must never be used as permission to delete the OPFS entry.
+
+Define:
+
+~~~ts
+MAX_BROWSER_DOWNLOAD_MATERIALIZATION_BYTES = 256 * 1024 * 1024
+~~~
+
+The value is a browser-output/RAM safety policy, not a StorySchema or authoring limit.
+
+Success path while the render Web Lock is still held:
+
+1. call the renderer's `getBlob()`;
+2. inspect `renderedBlob.size` **before** requesting an ArrayBuffer;
+3. if size exceeds 256 MiB, do not materialize or trigger a download. Surface **“Browser output too large for safe download”**, offer YAML/CLI rendering, clean the OPFS render files under the lock, and finish as a browser-export failure;
+4. if within the cap, execute `const bytes = await renderedBlob.arrayBuffer()`;
+5. construct a fresh independent `Blob` from those bytes using the expected MP4 MIME type;
+6. only after that copy succeeds may Tora delete `__remotion_render:` OPFS entries;
+7. after cleanup/release, create the object URL and download from the independent Blob.
+
+Do not replace the ArrayBuffer copy with `new Blob([renderedBlob])`, `URL.createObjectURL(renderedBlob)`, a timeout after `click()`, or any other operation that does not establish independent backing.
+
+The 256 MiB cap intentionally bounds the one-time finalized-output copy on supported desktop browsers. It does **not** enable the Remotion `arraybuffer` output target, because that target holds the encoded media in memory throughout rendering rather than only after a finalized OPFS-backed result exists.
 
 ### Awaitable cleanup before and after render
 
@@ -191,7 +220,7 @@ Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and use it for **bot
 6. provide **Retry cleanup**. Each retry reruns the bounded helper under the already-held lock. If a **pre-render** retry succeeds, **release the render Web Lock immediately**, clear the blocked state, and return to idle/render-ready **without starting or retaining the old render request**. The user's next Render click must reacquire the lock and rerun preflight from the beginning. If a **post-render** retry succeeds, clear the warning and release the lock as the final step of the already-completed render lifecycle;
 7. page unload may implicitly release the Web Lock, but the next session/new tab must reacquire the same unversioned lock and run this **same retry/backoff preflight helper** before rendering. It must never use a one-shot stale-file deletion. No idle/render-ready tab may retain the render lock merely while waiting for user input.
 
-A successfully obtained MP4 Blob may still be handed to the download flow before post-render cleanup finishes, but cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
+A successfully **materialized independent** MP4 Blob may be retained for download while post-render cleanup finishes. The original OPFS-backed Blob/File must not be handed to a download flow that outlives cleanup. Cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
 
 Tests must inject/delay target closure so the first removal attempt fails and prove that both post-render and **new-session pre-render** cleanup wait/retry rather than passing only on fast local writer shutdown.
 
@@ -237,13 +266,16 @@ Do not auto-download an output after authoring state has somehow diverged from t
 
 When rendering succeeds:
 
-- obtain the Blob from the web renderer;
-- create a temporary object URL;
+- obtain and independently materialize the finalized MP4 under the 256 MiB protocol above;
+- clean OPFS and release the global render lock;
+- create a temporary object URL **only from the independent Blob**;
 - name the file `${getDownloadBasename(renderSnapshot.title)}.mp4`, reusing the exact shared sanitizer specified by WEB-005;
 - trigger the browser download;
 - revoke temporary URLs when they are no longer needed.
 
-A failed render must not present an old Blob as the new successful result.
+A timer after `a.click()` is not a correctness boundary. OPFS cleanup must be safe **before** download handoff because the downloadable Blob no longer depends on OPFS.
+
+A failed render or output-too-large/materialization failure must not present an old Blob as the new successful result.
 
 ## Compatibility verification
 
@@ -303,10 +335,12 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup; no call to `renderMediaOnWeb()` occurs until the prefix is positively empty, and a tab that recovers from pre-render `cleanup-blocked` must release the lock before waiting for a fresh user Render action;
+- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, independent output materialization, and positively-completed final cleanup; the actual browser download may occur after lock release because it uses independent backing;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
-- repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
+- repeated success/failure/cancel/materialization-failure cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
+- successful downloads remain byte-readable after OPFS cleanup because they use the independently materialized Blob;
+- finalized outputs above 256 MiB fail browser download safely before ArrayBuffer allocation and direct the user to the CLI path;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
 - client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.
