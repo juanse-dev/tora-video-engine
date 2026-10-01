@@ -25,6 +25,9 @@ const replaceControlAndReservedCharacters = (value: string): string =>
 const utf8Length = (value: string): number =>
   new TextEncoder().encode(value).byteLength;
 
+const protectWindowsReservedName = (value: string): string =>
+  WINDOWS_RESERVED.test(value) ? `tora-${value}` : value;
+
 const truncateUtf8 = (value: string, maxBytes: number): string => {
   let output = "";
   let bytes = 0;
@@ -56,14 +59,15 @@ export const getDownloadBasename = (title: string): string => {
     return FALLBACK_BASENAME;
   }
 
-  if (WINDOWS_RESERVED.test(basename)) {
-    basename = `tora-${basename}`;
-  }
-
+  basename = protectWindowsReservedName(basename);
   basename = truncateUtf8(basename, MAX_DOWNLOAD_BASENAME_BYTES);
   basename = trimUnsafeEdges(basename);
 
-  return basename.length === 0 ? FALLBACK_BASENAME : basename;
+  if (basename.length === 0) {
+    return FALLBACK_BASENAME;
+  }
+
+  return protectWindowsReservedName(basename);
 };
 
 export const getYamlDownloadFilename = (title: string): string =>
