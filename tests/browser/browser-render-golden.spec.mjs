@@ -1,7 +1,4 @@
 import {execFile} from "node:child_process";
-import {mkdtemp, rm, writeFile} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
 import {promisify} from "node:util";
 import {expect, test} from "@playwright/test";
 
@@ -79,89 +76,41 @@ const importSingleScene = async (
     .toBe(text.replace(/\s+/gu, " ").trim());
 };
 
-const installMp4Capture = async (page) => {
-  await page.addInitScript(() => {
-    const originalCreateObjectURL = URL.createObjectURL.bind(URL);
-    const originalClick = HTMLAnchorElement.prototype.click;
+const downloadRenderedMp4 = async (page) => {
+  const renderButton = page.getByRole("button", {name: "Render MP4"});
+  await expect(renderButton).toBeEnabled({timeout: 20_000});
 
-    Object.defineProperty(window, "__toraCapturedMp4", {
-      configurable: true,
-      writable: true,
-      value: null,
-    });
-
-    URL.createObjectURL = (blob) => {
-      if (blob instanceof Blob && blob.size > 0) {
-        window.__toraCapturedMp4 = blob;
-      }
-
-      return originalCreateObjectURL(blob);
-    };
-
-    HTMLAnchorElement.prototype.click = function click() {
-      if (this.download.endsWith(".mp4")) {
-        return;
-      }
-
-      return originalClick.call(this);
-    };
+  const downloadPromise = page.waitForEvent("download", {
+    timeout: 120_000,
   });
-};
+  await renderButton.click();
 
-const captureRenderedMp4 = async (page) => {
-  await expect(
-    page.getByRole("button", {name: "Render MP4"}),
-  ).toBeEnabled({timeout: 20_000});
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "finalizing",
+    {timeout: 120_000},
+  );
 
-  await page.evaluate(() => {
-    window.__toraCapturedMp4 = null;
-  });
+  const download = await downloadPromise;
+  const path = await download.path();
 
-  await page.getByRole("button", {name: "Render MP4"}).click();
+  expect(path).not.toBeNull();
+
+  if (path === null) {
+    throw new Error("Expected browser MP4 download path");
+  }
 
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-render-state",
     "success",
-    {timeout: 120_000},
+    {timeout: 30_000},
   );
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-authoring-locked",
     "false",
   );
 
-  return page.evaluate(async () => {
-    const blob = window.__toraCapturedMp4;
-
-    if (!(blob instanceof Blob)) {
-      throw new Error("Browser render completed without an MP4 Blob");
-    }
-
-    if (blob.type !== "video/mp4") {
-      throw new Error(
-        `Expected video/mp4 Blob, received ${blob.type || "(empty type)"}`,
-      );
-    }
-
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-
-      reader.onerror = () => {
-        reject(reader.error ?? new Error("Could not read rendered MP4"));
-      };
-      reader.onload = () => {
-        const result = reader.result;
-
-        if (typeof result !== "string") {
-          reject(new Error("Expected rendered MP4 data URL"));
-          return;
-        }
-
-        const separator = result.indexOf(",");
-        resolve(result.slice(separator + 1));
-      };
-      reader.readAsDataURL(blob);
-    });
-  });
+  return path;
 };
 
 const getCaptionExpectation = async (page) => {
@@ -426,63 +375,49 @@ const assertMp4Metadata = async (path) => {
 test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
   page,
 }) => {
-  const tempDirectory = await mkdtemp(
-    join(tmpdir(), "tora-browser-render-golden-"),
-  );
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await requireBrowserRender(page);
 
-  try {
-    await installMp4Capture(page);
-    await page.goto("/", {waitUntil: "domcontentloaded"});
-    await waitForOwner(page);
-    await requireBrowserRender(page);
+  const fixtures = [
+    {
+      name: "natural",
+      title: "Natural browser golden",
+      type: "intro",
+      pose: "formal",
+      background: "office",
+      placement: "top",
+      align: "center",
+      text:
+        "A long natural language caption keeps wrapping explicit and deterministic across the encoded browser renderer without relying on CSS word breaking.",
+    },
+    {
+      name: "hard-wrap",
+      title: "Hard wrap browser golden",
+      type: "dialogue",
+      pose: "confused",
+      background: "office",
+      placement: "bottom",
+      align: "left",
+      text: "W".repeat(120),
+    },
+  ];
 
-    const fixtures = [
-      {
-        name: "natural",
-        title: "Natural browser golden",
-        type: "intro",
-        pose: "formal",
-        background: "office",
-        placement: "top",
-        align: "center",
-        text:
-          "A long natural language caption keeps wrapping explicit and deterministic across the encoded browser renderer without relying on CSS word breaking.",
-      },
-      {
-        name: "hard-wrap",
-        title: "Hard wrap browser golden",
-        type: "dialogue",
-        pose: "confused",
-        background: "office",
-        placement: "bottom",
-        align: "left",
-        text: "W".repeat(120),
-      },
-    ];
+  for (const fixture of fixtures) {
+    await importSingleScene(page, fixture);
+    const expectation = await getCaptionExpectation(page);
 
-    for (const fixture of fixtures) {
-      await importSingleScene(page, fixture);
-      const expectation = await getCaptionExpectation(page);
+    expect(expectation.align).toBe(fixture.align);
 
-      expect(expectation.align).toBe(fixture.align);
+    const path = await downloadRenderedMp4(page);
 
-      const encoded = await captureRenderedMp4(page);
-      const path = join(
-        tempDirectory,
-        `${fixture.name}.mp4`,
-      );
-      await writeFile(path, Buffer.from(encoded, "base64"));
+    await assertMp4Metadata(path);
+    const frame = await decodeFrame(path);
 
-      await assertMp4Metadata(path);
-      const frame = await decodeFrame(path);
-
-      assertEncodedCaption({
-        frame,
-        expectation,
-        placement: fixture.placement,
-      });
-    }
-  } finally {
-    await rm(tempDirectory, {recursive: true, force: true});
+    assertEncodedCaption({
+      frame,
+      expectation,
+      placement: fixture.placement,
+    });
   }
 });
