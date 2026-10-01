@@ -10,13 +10,14 @@ import {
   validateRawVisualCaption,
   validateRawVisualTitle,
   visualEditorOptions,
+  type VisualDraftEvaluation,
   type VisualSceneDraft,
   type VisualStoryDraft,
 } from "../visualDraft.ts";
 
 type VisualEditorProps = {
   activeStory: Story;
-  onActiveStoryChange: (story: Story) => void;
+  onEvaluationChange: (evaluation: VisualDraftEvaluation) => void;
 };
 
 const removeError = (
@@ -30,7 +31,7 @@ const removeError = (
 
 export const VisualEditor = ({
   activeStory,
-  onActiveStoryChange,
+  onEvaluationChange,
 }: VisualEditorProps) => {
   const [draft, setDraft] = useState<VisualStoryDraft>(() =>
     storyToVisualDraft(activeStory),
@@ -48,10 +49,8 @@ export const VisualEditor = ({
   const selected = draft.scenes[selectedScene] ?? draft.scenes[0];
 
   useEffect(() => {
-    if (evaluation.kind === "eligible") {
-      onActiveStoryChange(evaluation.story);
-    }
-  }, [evaluation, onActiveStoryChange]);
+    onEvaluationChange(evaluation);
+  }, [evaluation, onEvaluationChange]);
 
   const updateScene = (
     index: number,
