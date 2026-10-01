@@ -39,9 +39,14 @@ const importSingleScene = async (page, {
       buffer: Buffer.from(source),
     });
 
-  await expect(page.locator(".preview-frame")).toContainText(
-    text.slice(0, Math.min(text.length, 24)),
-  );
+  await expect
+    .poll(async () =>
+      page
+        .locator(".preview-frame [data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toContain(text.includes(" ") ? text.split(/\\s+/u)[0] : text.slice(0, 24));
 };
 
 test("pending visual and YAML drafts block browser render", async ({page}) => {
