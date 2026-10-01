@@ -77,7 +77,7 @@ export const useCaptionFont = (story: Story) => {
           environment.isRendering || environment.isClientSideRendering;
 
         if (!isRenderEnvironment) {
-          renderSettled = true;
+          continueRenderOnce();
           setPreviewError(normalizedError);
           return;
         }
@@ -112,7 +112,5 @@ export const useCaptionFont = (story: Story) => {
     environment.isRendering,
   ]);
 
-  if (previewError !== null) {
-    throw previewError;
-  }
+  return previewError;
 };
