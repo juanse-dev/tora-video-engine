@@ -245,11 +245,19 @@ export const App = () => {
     lossRisk,
     recovery,
   });
+  const livePersistenceStateRef = useRef({
+    activeStory,
+    durableStory,
+  });
 
   liveImportStateRef.current = {
     mode,
     lossRisk,
     recovery,
+  };
+  livePersistenceStateRef.current = {
+    activeStory,
+    durableStory,
   };
 
   const onVisualEvaluationChange = useCallback(
@@ -369,11 +377,13 @@ export const App = () => {
           return;
         }
 
+        const liveState = livePersistenceStateRef.current;
+
         if (
           hasPersistenceConflict(
-            durableStory,
+            liveState.durableStory,
             current.durableStory,
-            activeStory,
+            liveState.activeStory,
           )
         ) {
           setDurableStory(current.durableStory);
@@ -398,7 +408,7 @@ export const App = () => {
         );
       }
     },
-    [activeStory, durableStory],
+    [],
   );
 
   useEffect(() => {
