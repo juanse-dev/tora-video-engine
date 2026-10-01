@@ -55,7 +55,20 @@ const glyphAdvanceEm = (grapheme: string): number => {
       (character) => !COMBINING_MARK.test(character),
     ) ?? grapheme;
 
+  if (baseCharacter === "\u2007") {
+    // FIGURE SPACE is digit-width in Inter. Bound it like the digit class so
+    // retained no-break whitespace cannot make an explicit line clip.
+    return CONSERVATIVE_WIDE_ADVANCE_EM;
+  }
+
+  if (baseCharacter === "\uFEFF") {
+    // ZERO WIDTH NO-BREAK SPACE is retained semantically but has no advance.
+    return 0;
+  }
+
   if (/\s/u.test(baseCharacter)) {
+    // NBSP and NNBSP use the ordinary whitespace bound; FIGURE SPACE and
+    // ZWNBSP are handled above because their advances are materially different.
     return 0.33;
   }
 
@@ -64,7 +77,9 @@ const glyphAdvanceEm = (grapheme: string): number => {
   }
 
   if (/[mw]/u.test(baseCharacter)) {
-    return 0.82;
+    // Heavy Inter can render these close to a full em. Use the same
+    // conservative bound as other wide glyphs to prevent native clipping.
+    return CONSERVATIVE_WIDE_ADVANCE_EM;
   }
 
   if (/[ilIjtfr|]/u.test(baseCharacter)) {
