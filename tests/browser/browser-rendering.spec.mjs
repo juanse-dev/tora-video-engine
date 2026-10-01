@@ -534,6 +534,53 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
     ),
   ).toBe(true);
 
+  for (const text of [
+    `A${"\u2007".repeat(20)}A`,
+    "m".repeat(11),
+  ]) {
+    await importSingleScene(page, {
+      type: "chaos",
+      text,
+      pose: "panic",
+      background: "server-room",
+    });
+    caption = page.locator("[data-caption-align=center]").first();
+
+    const measured = await caption.evaluate((element) => {
+      const content = element.querySelector("[data-caption-content]");
+      const lines = [...element.querySelectorAll("[data-caption-line]")];
+
+      if (!(content instanceof HTMLElement)) {
+        throw new Error("Missing caption content element");
+      }
+
+      const style = getComputedStyle(content);
+      const available =
+        content.clientWidth -
+        Number.parseFloat(style.paddingLeft) -
+        Number.parseFloat(style.paddingRight);
+
+      return {
+        available,
+        lines: lines.map((line) => ({
+          text: line.textContent ?? "",
+          width:
+            line instanceof HTMLElement
+              ? line.scrollWidth
+              : Number.POSITIVE_INFINITY,
+        })),
+      };
+    });
+
+    expect(measured.lines.length).toBeGreaterThan(1);
+    expect(measured.lines.map(({text}) => text).join("")).toBe(text);
+    expect(
+      measured.lines.every(
+        ({width}) => width <= measured.available + 1,
+      ),
+    ).toBe(true);
+  }
+
   const decomposed = "e\u0301".repeat(90);
   await importSingleScene(page, {
     type: "chaos",
