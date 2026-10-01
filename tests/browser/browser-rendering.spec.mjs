@@ -344,6 +344,45 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
     clipping.every(({width, available}) => width <= available + 1),
   ).toBe(true);
 
+  const numericToken = "0".repeat(15);
+  await importSingleScene(page, {
+    type: "chaos",
+    text: numericToken,
+    pose: "panic",
+    background: "server-room",
+  });
+  caption = page.locator("[data-caption-align=center]").first();
+
+  const numericClipping = await caption.evaluate((element) => {
+    const content = element.querySelector("[data-caption-content]");
+    const lines = [...element.querySelectorAll("[data-caption-line]")];
+
+    if (!(content instanceof HTMLElement)) {
+      throw new Error("Missing caption content element");
+    }
+
+    const style = getComputedStyle(content);
+    const available =
+      content.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+
+    return lines.map((line) => ({
+      width:
+        line instanceof HTMLElement
+          ? line.scrollWidth
+          : Number.POSITIVE_INFINITY,
+      available,
+    }));
+  });
+
+  expect(numericClipping.length).toBeGreaterThan(1);
+  expect(
+    numericClipping.every(
+      ({width, available}) => width <= available + 1,
+    ),
+  ).toBe(true);
+
   const decomposed = "e\u0301".repeat(90);
   await importSingleScene(page, {
     type: "chaos",
