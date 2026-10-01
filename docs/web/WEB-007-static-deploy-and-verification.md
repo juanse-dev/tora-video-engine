@@ -24,7 +24,28 @@ user browser
 editing + preview + WebCodecs render + MP4 download
 ~~~
 
-No Tora backend is required.
+No Tora backend is required. This does **not** mean browser rendering is offline, telemetry-free, or automatically free of third-party licensing obligations.
+
+## Remotion license and telemetry prerequisite
+
+Before publishing a production URL, verify the then-current Remotion license terms and record the basis under which the deployment operates.
+
+As of **2026-09-30**, Remotion's published [License & Pricing](https://www.remotion.dev/docs/license/pricing) and [License FAQ](https://www.remotion.dev/docs/license/faq) state that:
+
+- individuals and organizations/teams of up to 3 people are eligible for the Free License, with additional categories such as non-profits/evaluation described upstream;
+- organizations not eligible for the Free License require a Company License;
+- programmatic `renderMediaOnWeb()` / `renderStillOnWeb()` and use of `<Player>` are classified as automation; video editors are explicitly listed as an Automators use case;
+- under the current Company License pricing, Remotion for Automators is priced per render with a monthly minimum; Player previews themselves are not counted as renders.
+
+Therefore static hosting/no Tora backend must never be documented as implying zero software-license cost.
+
+Release requirements:
+
+- re-check the official Remotion license/pricing pages immediately before production deployment because terms and pricing can change;
+- record whether the deployment is using verified Free License eligibility or an appropriate Company/Enterprise license;
+- configure only the appropriate **public/client-side** license key for web rendering, or `"free-license"` when eligible;
+- do not ship a private Remotion license key in browser assets;
+- include the mandatory client-render telemetry behavior in privacy/CSP/deployment documentation.
 
 ## Initial target
 
@@ -100,7 +121,10 @@ A useful automated smoke flow is:
 34. restore a policy-rejected stored recovery snapshot, edit the in-memory fallback Story, and verify autosave remains suppressed **but** the edit is marked unpersisted, activates `beforeunload`, and offers active-Story YAML export; release the recovery slot and verify persistence is attempted before the unload guard clears;
 35. with dirty YAML, a pending visual draft, and an unpersisted active Story in separate cases, validate an import candidate and verify it cannot commit without explicit **Discard current pending/recovery work and import** confirmation; Cancel import preserves the prior state;
 36. try an invalid import while current work is pending and verify the import error does not discard or alter the existing draft;
-37. simulate persistence failure after a valid Story becomes active with no dirty YAML/visual draft/recovery snapshot, invoke Reset, and verify Reset still requires explicit destructive confirmation and keeps **Export active Story YAML** available before discard.
+37. simulate persistence failure after a valid Story becomes active with no dirty YAML/visual draft/recovery snapshot, invoke Reset, and verify Reset still requires explicit destructive confirmation and keeps **Export active Story YAML** available before discard;
+38. render fixed frames for canonical centered captions, left-aligned captions, long natural text, and a long unbroken token; verify documented Player/CLI ↔ web-render semantic parity for alignment, line breaks, clipping, and font usage;
+39. verify YAML and MP4 filename generation share the same sanitizer across reserved separators/control characters, Windows device names, Unicode/emoji, whitespace-only-after-sanitization, and a 65,536-code-unit title; assert basename ≤96 UTF-8 bytes;
+40. verify the deployed render path is documented as emitting Remotion client telemetry, uses only a client-safe/free license-key configuration, and does not depend on telemetry success for render completion.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -124,6 +148,8 @@ For each tested browser record:
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
 - browser render capability result;
 - if supported, canonical Story renders and downloads successfully;
+- centered/left/long/unbroken caption fixtures match the documented shared-layout semantics under the normal web renderer without relying on experimental HTML-in-canvas;
+- downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
 - oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
@@ -132,7 +158,9 @@ For each tested browser record:
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
-- repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle.
+- repeated live caption edits continue rendering with the bundled font and never leave the Player stuck behind a stale render-delay handle;
+- Remotion telemetry/privacy/CSP behavior is documented and verified for the deployed origin;
+- the production release record states the current Remotion license basis and confirms that no private license key is shipped client-side.
 
 At minimum, complete the golden end-to-end render in one supported browser.
 
@@ -170,7 +198,8 @@ Update the root README when implementation reaches this spec so it documents:
 - web development workflow;
 - production web URL;
 - static deployment architecture;
-- browser rendering requirements/limitations;
+- browser rendering requirements/limitations, including mandatory Remotion client-render telemetry;
+- current Remotion licensing prerequisite and where the deployment's license basis is recorded;
 - link to \`docs/web/\` as the v0.2 source of truth.
 
 ## v0.2 completion checklist
@@ -208,6 +237,11 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] unload guard is removed promptly when no loss-risk state remains
 - [ ] import commit is gated by explicit destructive confirmation whenever pending/unpersisted/recovery state exists
 - [ ] invalid/cancelled imports preserve existing pending work
+- [ ] normal web-renderer compatibility pass covers all render-critical shared components
+- [ ] centered/left/long/unbroken caption golden parity passes without depending on experimental HTML-in-canvas
+- [ ] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, device-name, empty-result, and 65,536-code-unit boundary tests
+- [ ] Remotion client-render telemetry is disclosed in deployment/privacy/CSP docs
+- [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
 - [ ] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
