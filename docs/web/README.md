@@ -39,7 +39,7 @@ The first web version is intentionally single-user, local-first, and backend-fre
 7. **No speculative editor platform.** Build the smallest visual authoring experience for the current Story schema.
 8. **Browser authoring and rendering are resource-bounded and round-trippable.** A Story may be valid for the shared engine/CLI while still being too large to parse, mount, render, or re-import safely in the browser. v0.2 applies browser-only guards: visual title input is cheaply capped at **65,536 UTF-16 code units before Story construction**, incoming untrusted YAML source must be at most 1 MiB UTF-8 before parsing, and **every schema-valid candidate from every source** must then pass the centralized policy `title.length <= 65_536`, ≤200 scenes, ≤300 seconds / 9,000 frames, and canonical YAML ≤1 MiB before becoming active. This guarantees any Active Story exported by the web app can pass the same pre-parse import guard. A schema-valid visual candidate rejected only by browser policy may still be transferred/exported to YAML for CLI use using its already-validated in-memory provenance, without reparsing oversized source.
 9. **Production static hosting is root-path based.** v0.2 targets hosts such as Netlify and Cloudflare Pages where the app can be served from the origin root. Repository-subpath deployments such as a default GitHub Pages project site are outside the supported deployment target unless separately verified.
-10. **Local persistence is best-effort and recovery-safe.** A valid Story must remain usable in memory even if browser storage is unavailable or full. Storage failures are surfaced to the user and must never cause Apply/import to fail after validation succeeds. If a previously persisted Story is still schema-valid but no longer passes the current browser policy, preserve it as a recoverable stored snapshot and do not overwrite its storage slot until the user explicitly exports/discards that recovery state.
+10. **Local persistence is best-effort, recovery-safe, and single-writer.** A valid Story must remain usable in memory even if browser storage is unavailable or full. Exactly one same-origin tab may own writes to project/recovery `localStorage` keys at a time via an exclusive Web Locks API lock. Secondary tabs are session-only writers: they may edit/export but cannot autosave or overwrite protected recovery state. Storage failures or unavailable lock capability are surfaced without invalidating the in-memory Story.
 11. **A browser render freezes authoring.** From render start until success/failure/cancel, Story-changing and draft-changing controls are read-only. Preview playback may remain available, but the Story shown by the editor cannot diverge from the in-flight render snapshot.
 12. **Loss-risk state has one destructive-transition policy.** While dirty YAML, a pending visual draft, validated transfer state, or an active Story that differs from durable storage for **any** reason would be lost, treat it as loss-risk state. “Not durably persisted” includes both failed writes and writes intentionally suppressed to protect a rejected stored recovery snapshot. The same predicate must protect unload, Reset, and import commit: none may silently discard loss-risk state.
 13. **Web-render parity is proven, not assumed.** The Player/CLI composition remains shared, but browser MP4 export may only ship after every render-critical component uses primitives supported by the pinned `@remotion/web-renderer` path or has explicit equivalent coverage. Unsupported CSS must not silently define caption alignment/wrapping semantics.
@@ -58,7 +58,7 @@ flowchart LR
       UI --> G[Cheap visual input guard]
       G --> D[Editor draft]
       D --> V[Zod validation]
-      V -->|schema-valid| B[Central browser policy<br/>title + scenes + frames + canonical bytes]
+      V -->|schema-valid| B[Central browser policy<br/>title → scenes → frames → canonical bytes]
       V -->|invalid| E[Inline errors]
       B -->|title ≤65,536 code units + ≤200 scenes + ≤9,000 frames + canonical YAML ≤1 MiB| S[Active validated Story]
       B -->|too large for browser| W[Policy warning / CLI path]
@@ -99,7 +99,7 @@ sequenceDiagram
     UI->>Draft: Update bounded fields
     Draft->>Zod: Validate candidate
     alt schema valid
-        Zod->>Policy: Check title + scenes + derived frames + canonical YAML bytes
+        Zod->>Policy: Short-circuit title → scenes → frames → canonical YAML bytes
         alt within browser budget
             Policy->>Story: Commit active validated Story
             Story->>Preview: Compile timeline and refresh preview
@@ -181,16 +181,16 @@ v0.2 is complete only when all of the following are true:
 - any pending editor candidate that has not become the active Story—because it is schema-invalid, browser-policy-ineligible, or unapplied YAML—produces actionable feedback and disables MP4 export until resolved or discarded;
 - YAML can be imported, validated, edited, and exported without changing the Story contract; browser parsing refuses untrusted sources above 1 MiB before YAML parsing, while an unchanged YAML buffer originating from an already schema-validated visual candidate remains exportable for CLI use even when its serialization exceeds 1 MiB;
 - editor mode switches, Reset, and import never discard or fork work silently: dirty YAML requires Apply/Discard/Stay before visual mode; invalid visual drafts require Discard/Stay before YAML; browser-policy-rejected visual candidates may be transferred explicitly into YAML, discarded, or kept in visual mode; Reset and validated import cannot replace pending or unpersisted loss-risk work without explicit destructive confirmation;
-- when browser persistence succeeds, startup restores a stored project only after it passes both StorySchema and the current browser authoring policy; schema-valid but policy-rejected stored payloads are preserved as exportable recovery snapshots and cannot be silently overwritten by the fallback/default Story; quota/unavailable-storage failures are handled without losing the in-memory active Story and are clearly surfaced;
+- when browser persistence succeeds, startup restores a stored project only after it passes both StorySchema and the ordered browser authoring policy; schema-valid but policy-rejected stored payloads are preserved as exportable recovery snapshots and cannot be silently overwritten by the fallback/default Story; exactly one same-origin tab may write storage, while secondary tabs remain session-only until they safely acquire persistence ownership; quota/unavailable-storage failures are handled without losing the in-memory active Story and are clearly surfaced;
 - a supported browser can render the canonical story to an H.264 MP4 and download it;
 - authoring controls are locked for the lifetime of an in-flight browser render so the completed MP4 cannot become stale relative to the visible Story;
 - the web render matches the Story timing/dimensions used by the CLI, and caption alignment/wrapping parity is verified for canonical, long, and unbroken text fixtures rather than assumed from shared React code;
 - unsupported browser rendering capability is detected and explained before starting a render;
-- browser authoring rejects raw visual titles above 65,536 UTF-16 code units before Story construction, and the centralized post-schema policy rejects `Story.title.length > 65_536` for visual, YAML, import, and restored candidates before timeline/canonical serialization; Stories above the remaining browser authoring/preview budget never mount into the live visual editor/Player;
+- browser authoring rejects raw visual titles above 65,536 UTF-16 code units before Story construction, and every schema-valid source uses one centralized short-circuit policy in the order **title → scene count → derived frames → canonical YAML bytes**; a 201+ scene Story is rejected before timeline derivation/serialization and over-budget Stories never mount into the live visual editor/Player;
 - every Active Story exported as canonical YAML is ≤1 MiB UTF-8 and can therefore pass the browser's own pre-parse import guard;
 - browser MP4 export rechecks that the active Story is still within the same 300-second / 9,000-frame browser ceiling; over-budget candidates are rejected earlier by authoring policy and cannot become active/renderable;
 - reload/navigation/tab close warns before discarding session-only authoring state or any in-memory Story that is not durably persisted, including fallback edits whose autosave is suppressed while a recovery slot is protected;
-- YAML and MP4 downloads use one bounded deterministic basename sanitizer so Story titles cannot create invalid or platform-dependent filenames;
+- YAML and MP4 downloads use one bounded deterministic basename sanitizer so Story titles cannot create invalid or platform-dependent filenames, including Win32 `COM¹/²/³` and `LPT¹/²/³` device aliases;
 - production documentation discloses Remotion client-render telemetry and records the license basis/current client-safe license-key configuration;
 - no custom Tora backend is required to use the application, but browser rendering must not be described as fully offline because Remotion client renders emit upstream telemetry.
 
