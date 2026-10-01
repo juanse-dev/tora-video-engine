@@ -105,11 +105,11 @@ Apply the guard **before** calling `parseStorySource()` on raw/untrusted YAML:
 - show a browser source-size warning and offer the CLI path;
 - this limit is a browser safety policy, not a change to the shared Story/YAML contract or local CLI.
 
-The guard prevents parsing oversized text; it does **not** prohibit downloading bytes. The one exception to "oversized YAML cannot be treated as schema-valid in the editor" is an unchanged buffer with a validated transfer snapshot from the visual editor: its schema validity was established before serialization, so no parse is needed merely to export that exact candidate.
+The guard prevents parsing oversized text. For v0.2 there is **no special >1 MiB transfer/export exception**: transferred visual candidates are expected to remain below the same 1 MiB ceiling under the current title/scene/caption bounds. If future schema/serializer changes make a transferred canonical candidate exceed 1 MiB, the browser must fail closed and the policy must be revisited rather than relying on an unparseable editor buffer.
 
 ### Apply valid YAML
 
-Source-size, schema validation, and browser authoring eligibility are separate checks. Browser authoring eligibility includes the candidate title and canonical `serializeStorySource()` size, even when the incoming YAML buffer itself is under 1 MiB.
+Source-size, schema validation, and browser authoring eligibility are separate checks. Browser authoring eligibility includes the candidate title and a final defensive canonical `serializeStorySource()` size check, even though current v0.2 structural bounds are expected to keep canonical output below 1 MiB.
 
 After the source passes the 1 MiB guard, YAML parses, and passes `StorySchema`:
 
@@ -235,18 +235,18 @@ Because canonical YAML size ≤1 MiB is part of browser authoring eligibility, t
 
 ### Export current YAML candidate
 
-Allow downloading the **exact current buffer** through either of two evidence paths:
+Allow downloading the **exact current buffer** through either of two evidence paths, both requiring the buffer to be ≤1 MiB:
 
-1. **Parsed candidate** — the buffer is ≤1 MiB, has been parsed, and passes `StorySchema`; or
-2. **Validated transferred candidate** — the buffer exactly matches the unchanged validated transfer snapshot created by **Open candidate in YAML**. This path may exceed 1 MiB because it does not call `parseStorySource()`; schema validity came from the visual candidate before serialization.
+1. **Parsed candidate** — the buffer is within the source-size limit, has been parsed, and passes `StorySchema`; or
+2. **Validated transferred candidate** — the buffer is within the source-size limit and exactly matches the unchanged validated transfer snapshot created by **Open candidate in YAML**. This path may skip redundant reparsing because schema validity came from the visual candidate before serialization, but it does not bypass the source-size ceiling.
 
 This action:
 
-- is available for schema-valid policy-ineligible YAML, including a visual candidate rejected because its canonical YAML exceeds 1 MiB;
+- is available for schema-valid policy-ineligible YAML whose source buffer remains within the 1 MiB browser source ceiling;
 - preserves the user's current YAML bytes/text exactly as represented by the buffer;
 - does not make the candidate active, mount it in Player, persist it, or enable MP4 browser render;
-- clears the validated-transfer evidence immediately if the user edits the buffer; an edited >1 MiB buffer is therefore not exportable as a validated candidate until it is reduced below the source guard and successfully parsed;
-- remains disabled for parse-invalid/schema-invalid YAML, and for oversized raw/edited YAML that has no matching validated transfer snapshot;
+- clears the validated-transfer evidence immediately if the user edits the buffer; the edited buffer must then pass the normal source-size/parse/schema checks;
+- remains disabled for source-oversized, parse-invalid, or schema-invalid YAML;
 - uses the validated transferred Story title or parsed candidate title through the same `getDownloadBasename()` function; if no title is available, the sanitizer fallback applies.
 
 Label the actions so it is clear whether the download represents the **active Story** or the **current YAML candidate**.
@@ -363,12 +363,12 @@ Cover:
 - imported schema-valid YAML with 201+ scenes is retained/reported as over-budget without replacing or mounting the active Story;
 - imported schema-valid YAML above 9,000 derived frames is retained/reported as over-budget without replacing or mounting the active Story;
 - schema-valid browser-policy-ineligible YAML can be exported verbatim as the current candidate for CLI use without exporting the older active Story;
-- a visual candidate rejected because canonical YAML exceeds 1 MiB can be transferred and exported without reparsing while the buffer remains unchanged;
-- editing that oversized transferred buffer invalidates its transfer snapshot and disables validated-candidate export until it is ≤1 MiB and parses successfully;
+- a schema-valid visual candidate rejected for reachable browser-policy reasons (for example scene count or duration) can be transferred/exported while its resulting YAML remains ≤1 MiB;
+- editing a transferred buffer invalidates its transfer snapshot and returns the candidate to the normal source-size/parse/schema validation path;
 - corrupt localStorage falls back safely;
 - schema-valid but browser-policy-rejected storage is retained as a recovery snapshot, is exportable for CLI use, and is not overwritten by fallback autosave;
 - exporting a rejected stored recovery snapshot does not clear it; explicit discard/reset acknowledgement is required before its storage slot can be replaced;
-- schema-valid, browser-eligible localStorage restores using the same ordered browser policy, including a recheck that canonical YAML is ≤1 MiB;
+- schema-valid, browser-eligible localStorage restores using the same ordered browser policy, including the final defensive canonical-YAML ≤1 MiB invariant;
 - schema-invalid stored data is rejected;
 - schema-valid but browser-over-budget stored data is rejected before Player mount, falls back safely, and shows a policy warning;
 - reset restores the default Story directly only when no loss-risk or protected recovery state exists;
@@ -393,7 +393,7 @@ Cover:
 - YAML can be imported and exported entirely in-browser;
 - every YAML download uses the shared bounded deterministic basename sanitizer rather than raw `Story.title`;
 - an eligible import cannot replace dirty/pending/unpersisted/recovery state without explicit destructive confirmation, while invalid imports leave existing work untouched;
-- browser YAML parsing is never attempted for raw/edited source text above 1 MiB UTF-8; unchanged oversized text originating from a validated visual transfer may be exported without parsing;
+- browser YAML parsing is never attempted for source text above 1 MiB UTF-8, and no validated-transfer exception bypasses that ceiling;
 - invalid YAML never reaches preview/render/persistence;
 - dirty state is relative to the YAML baseline buffer, and a successful Apply makes the exact applied buffer clean even when it is noncanonical;
 - any dirty/unapplied YAML buffer disables MP4 rendering until it is applied or explicitly discarded, preventing stale-video export;
@@ -402,8 +402,8 @@ Cover:
 - a schema-invalid visual draft cannot be silently replaced when entering YAML: the user must Discard it or Stay in visual mode;
 - a browser-policy-rejected visual candidate can only leave visual mode through explicit candidate→YAML transfer, Discard, or Stay;
 - browser-eligible valid YAML round-trips without semantic loss;
-- every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow;
-- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate; this includes unchanged >1 MiB buffers carrying validated visual-transfer provenance;
+- every active Story's canonical YAML export is ≤1 MiB and can be re-imported by the same browser workflow; a maximum-boundary v0.2 fixture demonstrates this without requiring an unreachable canonical-size rejection case;
+- schema-valid but browser-over-budget YAML remains distinguishable from schema-invalid YAML, never reaches the live Player/persistence as the active Story, and can still be exported verbatim as a CLI candidate when its buffer is within the source-size ceiling;
 - when persistence succeeds, page reload restores the last persisted Story only if it still passes StorySchema and all current browser authoring checks, including title ≤65,536 and canonical YAML ≤1 MiB; a schema-valid policy-rejected stored Story remains protected/exportable until explicit discard rather than being overwritten by fallback persistence;
 - localStorage quota/access failures are caught, do not undo a valid in-memory Story, surface that reload recovery is not guaranteed, and keep unload protection active while the in-memory Story is not durably stored;
 - only the exclusive persistence-owner tab may write project/recovery localStorage keys; secondary tabs cannot overwrite the durable baseline or protected recovery slot;
