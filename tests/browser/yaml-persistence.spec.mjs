@@ -179,6 +179,64 @@ test("malformed stored project is protected and fallback edits cannot overwrite 
     .toContain("Fallback edit");
 });
 
+test("storage reread failure releases ownership and falls back to session-only", async ({
+  context,
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const originalGetItem = Storage.prototype.getItem;
+    let projectReads = 0;
+
+    Object.defineProperty(Storage.prototype, "getItem", {
+      configurable: true,
+      value(key) {
+        if (
+          this === window.localStorage &&
+          key === "tora-video-engine:project"
+        ) {
+          projectReads += 1;
+
+          if (projectReads >= 2) {
+            throw new DOMException("storage blocked", "SecurityError");
+          }
+        }
+
+        return originalGetItem.call(this, key);
+      },
+    });
+  });
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "session-only",
+    {timeout: 10_000},
+  );
+  await expect(
+    page.getByText(/Persistence ownership was released because storage could not be reread/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {name: "Export active Story YAML"}),
+  ).toBeVisible();
+
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const snapshot = await navigator.locks.query();
+        return snapshot.held.some(
+          (lock) =>
+            lock.name === "tora-video-engine:persistence-writer",
+        );
+      }),
+    )
+    .toBe(false);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(secondary);
+});
+
 test("oversized import is rejected before File.text", async ({page}) => {
   await page.addInitScript(() => {
     window.__toraFileTextCalls = 0;
