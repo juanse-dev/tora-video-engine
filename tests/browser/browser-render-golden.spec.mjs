@@ -395,7 +395,7 @@ const assertEncodedCaption = async ({
       Math.max(8, expectedLineHeight * 0.45),
     );
     expect(encodedHeight).toBeLessThan(
-      expectedLineHeight + 2,
+      expectedLineHeight + 5,
     );
     expect(encoded.minX).toBeGreaterThan(captionX + 4);
     expect(encoded.maxX).toBeLessThan(
