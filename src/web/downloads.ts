@@ -73,17 +73,29 @@ export const getDownloadBasename = (title: string): string => {
 export const getYamlDownloadFilename = (title: string): string =>
   `${getDownloadBasename(title)}.yaml`;
 
+export const getMp4DownloadFilename = (title: string): string =>
+  `${getDownloadBasename(title)}.mp4`;
+
+export const downloadBlob = (
+  blob: Blob,
+  filename: string,
+  documentRef: Document = document,
+  urlRef: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+): void => {
+  const url = urlRef.createObjectURL(blob);
+  const anchor = documentRef.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  urlRef.revokeObjectURL(url);
+};
+
 export const downloadText = (
   source: string,
   filename: string,
   documentRef: Document = document,
 ): void => {
   const blob = new Blob([source], {type: "text/plain;charset=utf-8"});
-  const url = URL.createObjectURL(blob);
-  const anchor = documentRef.createElement("a");
-
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, filename, documentRef);
 };
