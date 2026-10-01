@@ -7,10 +7,14 @@ on:
       - "mvp-*"
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -22,7 +26,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Unit tests
         run: npm test
@@ -44,19 +48,21 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
-      - name: Install browser test runtime
-        run: npx playwright install --with-deps chromium
-
       - name: Verify Player resource buffering
+        env:
+          TORA_PLAYWRIGHT_CHANNEL: chrome
         run: npm run test:browser
 
       - name: Render reference story
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: npm run video -- stories/friday-deploy.yaml
 
       - name: Verify artifact
         run: test -s output/friday-deploy.mp4
 
       - name: Upload reference render
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: mvp-reference-render
