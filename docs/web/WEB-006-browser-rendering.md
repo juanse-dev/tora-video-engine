@@ -149,10 +149,12 @@ The pinned Remotion renderer serializes media renders only inside one JavaScript
 v0.2 must therefore acquire a second, dedicated exclusive Web Lock before invoking `renderMediaOnWeb()`:
 
 ~~~ts
-tora-video-engine:web-fs-render:v0.2
+tora-video-engine:web-fs-render
 ~~~
 
-This lock is independent from the WEB-005 persistence-writer lock.
+This lock is independent from the WEB-005 persistence-writer lock and is intentionally **unversioned**.
+
+The lock protects Remotion's unversioned, same-origin OPFS namespace `__remotion_render:`, not a v0.2 data schema. Therefore every current and future Tora bundle that uses that shared prefix must acquire this exact same lock name. Do not append a release/schema version while the protected Remotion namespace remains global. An old tab left open across a deploy and a newly loaded tab must still mutually exclude each other. If a future renderer moves to a different isolated OPFS namespace, changing the lock name requires an explicit migration/design decision.
 
 Required behavior:
 
@@ -301,7 +303,7 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs from pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup;
+- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from pre-render OPFS cleanup through Blob/download handoff and positively-completed final cleanup;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
