@@ -1,0 +1,9 @@
+title: "CI Smoke"
+
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    animation: fade
+    text: "Tora CI smoke."
+    duration: 1
