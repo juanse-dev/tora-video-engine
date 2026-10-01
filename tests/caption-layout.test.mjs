@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {
+  CAPTION_CONTENT_WIDTH,
   CAPTION_MIN_FONT_SIZE,
   CAPTION_TEXT_MAX_HEIGHT,
   estimateCaptionHeight,
@@ -74,7 +75,7 @@ describe("caption layout", () => {
       first.every(
         (line) =>
           estimateCaptionLineWidth(line, "dialogue", fontSize) <=
-          868,
+          CAPTION_CONTENT_WIDTH,
       ),
     );
   });
@@ -90,7 +91,7 @@ describe("caption layout", () => {
       lines.every(
         (line) =>
           estimateCaptionLineWidth(line, "impact", fontSize) <=
-          868,
+          CAPTION_CONTENT_WIDTH,
       ),
     );
   });
