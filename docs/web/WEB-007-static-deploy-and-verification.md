@@ -108,7 +108,7 @@ A useful automated smoke flow is:
 21. transfer an over-budget visual candidate to YAML and verify **Export current YAML candidate** downloads that candidate rather than the older active Story;
 22. verify the render-time budget check is a defensive recheck of the same authoring policy, not a separate reachable over-budget render path;
 23. attempt a visual title update of 65,537 UTF-16 code units and verify it is rejected before `StorySchema.safeParse()` / `serializeStorySource()`; verify 65,536 proceeds to normal policy checks;
-24. feed a ≤1 MiB YAML source whose parsed Story serializes canonically above 1 MiB and verify browser authoring rejects it before activation while CLI candidate export remains available through the parsed-candidate path;
+24. build a maximum-boundary v0.2 fixture (65,536-code-unit title, 200 schema-valid scenes, captions at their current schema limit while staying ≤9,000 frames) and verify its canonical serialization remains ≤1 MiB; keep the canonical-size policy branch as a defensive invariant rather than requiring an unreachable canonical-only rejection;
 25. verify every accepted Active Story exports to canonical YAML ≤1 MiB and that exporting then re-importing that file succeeds through the same source-size guard;
 26. transfer a schema-valid visual candidate rejected for a non-source-size browser policy reason, verify its validated-transfer snapshot permits candidate export without reparsing, then edit the buffer and verify that provenance is cleared;
 27. apply noncanonical YAML A, leave YAML cleanly, commit visual Story B, then transfer rejected candidate C; verify the YAML baseline is freshly generated from B, not retained from A;
@@ -128,7 +128,9 @@ A useful automated smoke flow is:
 41. feed a schema-valid 201-scene candidate through visual policy, YAML Apply/import, localStorage restore, and WEB-006's defensive recheck; in every path assert the centralized policy rejects on scene count **without calling timeline derivation or `serializeStorySource()`**;
 42. open two same-origin tabs simultaneously and verify exactly one acquires the persistence-writer lock; edits in the secondary tab remain session-only/unpersisted and cannot overwrite the primary tab's durable Story;
 43. with the primary tab protecting a rejected stored recovery snapshot, edit/import/reset from the secondary tab and verify no project/recovery `localStorage` key is mutated; after the primary closes, use **Retry persistence ownership**, re-read durable state, and require explicit conflict resolution before any overwrite;
-44. verify the shared filename sanitizer rejects/prefixes Win32 Unicode device aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`, including aliases followed by extensions.
+44. verify the shared filename sanitizer rejects/prefixes Win32 Unicode device aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, and `LPT³`, including aliases followed by extensions;
+45. mock/force capability detection to resolve `web-fs` and verify both `canRenderMediaOnWeb()` and `renderMediaOnWeb()` receive `muted: true`, the render call receives `outputTarget: "web-fs"`, and the canonical MP4 has no audio track, exactly 360 video frames, and 12.0-second container duration;
+46. mock/force capability detection to return `canRender: true` with `resolvedOutputTarget: "arraybuffer"`; verify Render MP4 remains disabled, `renderMediaOnWeb()` is not called, and editing/preview/YAML export/CLI guidance remain available.
 
 A full MP4 render in every CI run is optional if browser/WebCodecs constraints make it flaky or expensive; the final release must still include a documented real-browser render verification.
 
@@ -151,15 +153,16 @@ For each tested browser record:
 - storage quota/access failure is handled without crashing or rolling back the active Story, with a visible recovery warning and unload protection while that active Story is not durably stored;
 - opening a second same-origin tab never creates a second storage writer: only the persistence-owner tab may mutate project/recovery localStorage keys, and secondary-tab edits are visibly session-only;
 - edits made while a rejected recovery snapshot suppresses autosave are also visibly unpersisted and unload-protected;
-- browser render capability result;
-- if supported, canonical Story renders and downloads successfully;
+- browser render capability result including `resolvedOutputTarget`;
+- browser MP4 export is offered only for `web-fs`; an `arraybuffer`-only result is explained and does not start rendering;
+- if supported, canonical Story renders and downloads successfully with `muted: true`, contains no audio track, and measures exactly 360 video frames / 12.0 seconds;
 - centered/left/long/unbroken caption fixtures match the documented shared-layout semantics under the normal web renderer without relying on experimental HTML-in-canvas;
 - downloaded YAML and MP4 names remain deterministic, portable, and bounded for hostile/very long titles, including Win32 superscript device aliases;
 - while rendering, authoring controls cannot mutate the Story or create a new draft;
 - oversized visual title input is rejected before Story construction, and oversized titles from YAML/import/storage are rejected by the centralized post-schema policy before timeline/canonical serialization;
 - an over-budget visual candidate remains pending and blocks render rather than allowing export of the previous active Story;
 - raw/edited YAML sources above 1 MiB are refused before synchronous parsing;
-- an unchanged >1 MiB YAML buffer transferred from an already schema-validated visual candidate remains exportable for CLI use without parsing, while editing it clears that privilege;
+- a schema-valid browser-policy-rejected visual candidate can transfer to YAML within the normal 1 MiB source ceiling; unchanged transfer provenance may skip redundant parsing, while editing clears that provenance and returns to normal validation;
 - an over-budget Story from YAML/import/storage is refused by browser authoring/preview before Player mount without being reported as schema-invalid;
 - YAML Apply is disabled while the parsed Story exceeds browser authoring policy;
 - schema-valid over-budget YAML remains exportable as the current YAML candidate for CLI use;
@@ -203,7 +206,7 @@ Update the root README when implementation reaches this spec so it documents:
 - web development workflow;
 - production web URL;
 - static deployment architecture;
-- browser rendering requirements/limitations, including mandatory Remotion client-render telemetry;
+- browser rendering requirements/limitations, including mandatory Remotion client-render telemetry, the required `web-fs` output target, and the lack of an `arraybuffer` fallback in v0.2;
 - current Remotion licensing prerequisite and where the deployment's license basis is recorded;
 - link to \`docs/web/\` as the v0.2 source of truth.
 
@@ -222,7 +225,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML/import/restore title >65,536 is rejected by centralized post-schema policy before timeline/serialization
 - [ ] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
 - [ ] 201+ scene candidates never invoke timeline derivation or canonical serialization in visual/YAML/import/restore/render-recheck paths
-- [ ] browser authoring/preview budget blocks >200 scenes, >9,000 frames, or >1 MiB canonical YAML before Player mount
+- [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount, with a final defensive canonical-YAML ≤1 MiB invariant
+- [ ] maximum-boundary v0.2 fixture remains ≤1 MiB canonical YAML, so no unreachable canonical-only rejection test is required
 - [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
 - [ ] policy-rejected visual candidates remain pending and disable stale render/export
 - [ ] persisted Stories are rechecked against browser policy before restore
@@ -230,8 +234,8 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] YAML Apply requires both schema validity and browser eligibility
 - [ ] successful Apply resets YAML dirty baseline even for noncanonical source
 - [ ] >1 MiB raw/edited YAML is rejected before parse
-- [ ] validated visual candidates rejected solely by >1 MiB canonical YAML can still transfer/export for CLI use without reparsing
-- [ ] editing an oversized transferred buffer clears validated-transfer provenance
+- [ ] transferred visual candidates remain within the 1 MiB source ceiling under current v0.2 structural bounds
+- [ ] editing a transferred buffer clears validated-transfer provenance and requires normal validation again
 - [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
 - [ ] live caption-font reload is safe across sequential and overlapping Story updates
 - [ ] asset catalog flow passes
@@ -251,6 +255,9 @@ Update the root README when implementation reaches this spec so it documents:
 - [ ] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, ASCII and superscript Win32 device-name, empty-result, and 65,536-code-unit boundary tests
 - [ ] Remotion client-render telemetry is disclosed in deployment/privacy/CSP docs
 - [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
+- [ ] capability and render calls both use `muted: true`
+- [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
+- [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
 - [ ] canonical browser MP4 render passes on a supported browser
 - [ ] in-flight render authoring lock prevents stale-result downloads
 - [ ] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
