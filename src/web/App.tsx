@@ -92,6 +92,7 @@ type RenderPhase =
   | "idle"
   | "rendering"
   | "cancelling"
+  | "finalizing"
   | "success"
   | "failure"
   | "cleanup-blocked";
@@ -281,7 +282,8 @@ export const App = () => {
     transition !== null;
   const authoringLocked =
     renderUi.phase === "rendering" ||
-    renderUi.phase === "cancelling";
+    renderUi.phase === "cancelling" ||
+    renderUi.phase === "finalizing";
   const renderNeedsUnloadWarning =
     authoringLocked || renderUi.phase === "cleanup-blocked";
 
@@ -361,6 +363,7 @@ export const App = () => {
       renderCapability?.kind !== "ready" ||
       renderUi.phase === "rendering" ||
       renderUi.phase === "cancelling" ||
+      renderUi.phase === "finalizing" ||
       renderUi.phase === "cleanup-blocked"
     ) {
       return;
@@ -671,6 +674,15 @@ export const App = () => {
       return;
     }
 
+    if (outcome.consumed) {
+      setRenderUi({
+        phase: "success",
+        message: "MP4 rendered and downloaded successfully.",
+        progress: 1,
+      });
+      return;
+    }
+
     const live = liveRenderStateRef.current;
 
     if (
@@ -757,6 +769,33 @@ export const App = () => {
           };
         });
       },
+      consumeBlob: (blob) => {
+        const live = liveRenderStateRef.current;
+
+        if (
+          !canDownloadBrowserRenderSnapshot(
+            snapshot,
+            live.activeStory,
+            live.renderInputBlocked,
+          )
+        ) {
+          throw new Error(
+            "Render completed, but authoring state diverged from the frozen Story snapshot. The MP4 was not downloaded.",
+          );
+        }
+
+        renderAbortRef.current = null;
+        setRenderUi({
+          phase: "finalizing",
+          message:
+            "MP4 rendered. Starting download and cleaning temporary storage…",
+          progress: 1,
+        });
+        downloadBlob(
+          blob,
+          getMp4DownloadFilename(snapshot.title),
+        );
+      },
     });
 
     renderAbortRef.current = null;
@@ -769,7 +808,10 @@ export const App = () => {
         message:
           outcome.stage === "pre"
             ? "Browser render storage is still being released. Render did not start; retry cleanup before rendering again."
-            : "Render settled, but browser render storage is still being released. Retry cleanup to finish safely.",
+            : outcome.pending?.kind === "success" &&
+                outcome.pending.consumed
+              ? "MP4 download started, but browser render storage is still being released. Retry cleanup to finish safely."
+              : "Render settled, but browser render storage is still being released. Retry cleanup to finish safely.",
         progress: null,
       });
       return;
