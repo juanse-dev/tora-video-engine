@@ -29,10 +29,12 @@ const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
     .poll(() => delayedRequests.length, {timeout: 10_000})
     .toBeGreaterThan(0);
 
+  const frameProbe = page.locator("html");
+
   await expect
     .poll(
-      () =>
-        page.evaluate(() => window.__toraPlayer?.getCurrentFrame() ?? null),
+      async () =>
+        Number(await frameProbe.getAttribute("data-tora-frame")),
       {timeout: 10_000},
     )
     .toBe(0);
@@ -40,9 +42,7 @@ const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
   await page.waitForTimeout(500);
 
   expect(
-    await page.evaluate(
-      () => window.__toraPlayer?.getCurrentFrame() ?? null,
-    ),
+    Number(await frameProbe.getAttribute("data-tora-frame")),
   ).toBe(0);
 
   for (const request of delayedRequests) {
@@ -51,8 +51,8 @@ const runBlockedPlaybackCase = async ({page, shouldDelay}) => {
 
   await expect
     .poll(
-      () =>
-        page.evaluate(() => window.__toraPlayer?.getCurrentFrame() ?? 0),
+      async () =>
+        Number(await frameProbe.getAttribute("data-tora-frame")),
       {timeout: 10_000},
     )
     .toBeGreaterThan(0);
