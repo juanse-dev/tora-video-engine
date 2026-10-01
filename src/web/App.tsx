@@ -1,13 +1,26 @@
 import {useState} from "react";
 import {exampleStory} from "../story/exampleStory.ts";
 import type {Story} from "../story/types.ts";
+import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
 import {getWebPlayerConfig} from "./previewConfig.ts";
 
+const getInitialActiveStory = (): Story => {
+  const policy = evaluateBrowserStoryPolicy(exampleStory);
+
+  if (!policy.eligible) {
+    throw new Error(
+      `Canonical example Story is not browser-eligible: ${policy.message}`,
+    );
+  }
+
+  return structuredClone(exampleStory);
+};
+
 export const App = () => {
-  const [activeStory, setActiveStory] = useState<Story>(() =>
-    structuredClone(exampleStory),
+  const [activeStory, setActiveStory] = useState<Story>(
+    getInitialActiveStory,
   );
   const previewConfig = getWebPlayerConfig(activeStory);
 
