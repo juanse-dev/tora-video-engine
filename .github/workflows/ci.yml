@@ -56,6 +56,9 @@ jobs:
       - name: Verify Player resource buffering
         run: npm run test:browser
 
+      - name: Verify required browser render golden
+        run: npx playwright test --config=playwright.browser-render.config.mjs
+
       - name: Render PR smoke story
         if: github.event_name == 'pull_request'
         env:
