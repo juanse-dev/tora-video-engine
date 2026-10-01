@@ -67,7 +67,10 @@ const glyphAdvanceEm = (grapheme: string): number => {
   }
 
   if (/[a-z]/u.test(baseCharacter)) {
-    return 0.58;
+    // Inter's ordinary lowercase advances can exceed the previous 0.58em
+    // estimate at the supported weights. Keep an explicit safety margin so
+    // a deterministic line never falls back to native browser wrapping.
+    return 0.62;
   }
 
   if (`.,:;!'"-()[]{}`.includes(baseCharacter)) {
