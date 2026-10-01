@@ -171,7 +171,9 @@ export const restorePersistedProject = (
     );
   }
 
-  const storyParse = dependencies.storyParse ?? StorySchema.safeParse;
+  const storyParse =
+    dependencies.storyParse ??
+    ((candidate: unknown) => StorySchema.safeParse(candidate));
   const parsedStory = storyParse(envelope.story);
 
   if (!parsedStory.success) {
