@@ -9,7 +9,10 @@
     "render:smoke": "remotion render src/index.ts ToraVideo output/smoke.mp4 --codec=h264",
     "video": "node --experimental-strip-types scripts/render.ts",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "lint": "eslint src scripts && tsc"
+    "lint": "eslint src scripts && tsc",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "web:preview": "vite preview"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
@@ -18,7 +21,8 @@
     "react-dom": "19.2.3",
     "remotion": "4.0.529",
     "yaml": "2.9.1",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@remotion/player": "4.0.529"
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.529",
@@ -27,7 +31,9 @@
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
     "prettier": "3.8.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@types/react-dom": "19.2.3",
+    "vite": "6.4.3"
   },
   "engines": {
     "node": ">=22.6.0"
