@@ -345,6 +345,8 @@ On startup:
 15. after explicit release, if the current active Story differs from durable storage, immediately attempt to persist it; unload protection remains until persistence succeeds or the in-memory change is explicitly discarded/reset;
 16. if bounded/parsible data is schema-invalid/corrupt, or storage is unavailable, fall back safely and surface the appropriate warning.
 
+For the remainder of WEB-005, **protected stored recovery snapshot** is the umbrella term for all three protected forms: oversized raw envelope, preflight-rejected raw envelope, and validated browser-policy-rejected Story. Destructive Reset/Import and autosave suppression rules apply equally to all three; only their export format differs (raw JSON vs validated Story YAML).
+
 ## Reset
 
 Provide a clear way to reset the local project to the canonical/default Story, but treat reset as a destructive state transition.
