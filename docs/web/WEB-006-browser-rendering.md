@@ -100,6 +100,8 @@ Target output:
 
 Both capability detection and the actual render must explicitly pass `muted: true`. Do not rely on the pinned renderer's default, which is `false`.
 
+Remotion 4.0.529 creates browser-rendered `VideoFrame` objects with timestamps but without an explicit frame duration. For Tora's fixed 30 FPS output, pass an `onFrame` hook that returns an equivalent frame with the original timestamp and an explicit duration of `Math.round(1_000_000 / VIDEO_FPS)` microseconds. Without this, MP4 metadata can terminate at the timestamp of the final frame (for example 30 frames reporting 0.966667 seconds) instead of covering the final frame's duration.
+
 When starting `renderMediaOnWeb()`, also pass `outputTarget: "web-fs"` after capability detection has confirmed that `resolvedOutputTarget` is `"web-fs"`. The capability result and render call must therefore agree on the media/output assumptions used for eligibility.
 
 Any other web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
