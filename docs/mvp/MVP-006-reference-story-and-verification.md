@@ -18,20 +18,20 @@ scenes:
     pose: formal
     background: office
     animation: fade
-    text: "Tora tiene una regla."
+    text: "Tora tiene una regla: Nunca desplegar en viernes."
     duration: 3
 
   - type: dialogue
     pose: confused
     background: office
     animation: float
-    text: "Pero es solo un cambio pequeño..."
+    text: Pero es solo un cambio pequeño... qué es lo peor que podría pasar?
     duration: 3
 
   - type: chaos
     pose: panic
     background: server-room
-    text: "Production is down."
+    text: Se cayó el sistema!
     duration: 3
 
   - type: punchline
@@ -116,7 +116,9 @@ Update the root README so that:
 
 ## Verification evidence
 
-The reference artifact produced by CI was inspected after the automated checks passed:
+The original v0.1 reference artifact was inspected after the automated checks passed. The canonical copy was intentionally refreshed during WEB-007; the updated Story preserves the same scene/timeline/asset contract, and its longer captions were manually exercised on the Netlify Deploy Preview without clipping. CI now also renders the canonical reference Story on pull requests so the CLI path is revalidated before such copy changes merge.
+
+Current reference evidence:
 
 - codec: H.264;
 - dimensions: 1080 × 1920;
