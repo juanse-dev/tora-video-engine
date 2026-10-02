@@ -133,9 +133,10 @@ Fill this in when the first production deployment is verified:
 
 | Field | Value |
 | --- | --- |
-| Deployment commit | Pending |
-| Production URL | Pending |
-| Host | Netlify (planned) |
+| Deployment commit | Pending first live deploy |
+| Netlify project | https://app.netlify.com/projects/tora-video-engine |
+| Production URL | Pending first live deploy |
+| Host | Netlify project created |
 | Browser golden | Pending |
 | Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
 | License terms last checked | 2026-10-01 |
