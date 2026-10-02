@@ -1,6 +1,6 @@
 # WEB-005 — YAML workflow and local persistence
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 
