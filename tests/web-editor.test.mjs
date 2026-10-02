@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
+import {resolveCaptionLayout} from "../src/captionLayout.ts";
 import {
   animations,
   backgrounds,
@@ -305,6 +306,49 @@ describe("WEB-003 visual draft transformations", () => {
     draft = deleteVisualScene(draft, 200);
     assert.equal(draft.scenes.length, 200);
     assert.equal(canAddVisualScene(draft), true);
+  });
+
+  it("reuses cached layouts for unchanged scenes in a 200-scene draft", () => {
+    const story = {
+      title: "Cached layout benchmark",
+      scenes: Array.from({length: 200}, (_, index) => ({
+        type: "intro",
+        pose: "formal",
+        background: "office",
+        text:
+          String(index).padStart(3, "0") +
+          "W".repeat(177),
+        duration: 1,
+      })),
+    };
+    const draft = storyToVisualDraft(story);
+    const warm = evaluateVisualDraft(draft);
+
+    assert.equal(warm.kind, "eligible");
+
+    const before = draft.scenes.map((scene) =>
+      resolveCaptionLayout("hero", scene.text),
+    );
+
+    draft.scenes[0].text =
+      draft.scenes[0].text.slice(0, -1) + "X";
+
+    const updated = evaluateVisualDraft(draft);
+
+    assert.equal(updated.kind, "eligible");
+
+    const after = draft.scenes.map((scene) =>
+      resolveCaptionLayout("hero", scene.text),
+    );
+
+    assert.notEqual(after[0], before[0]);
+    for (let index = 1; index < after.length; index += 1) {
+      assert.equal(
+        after[index],
+        before[index],
+        `scene ${index} should reuse its cached caption layout`,
+      );
+    }
   });
 
   it("never deletes the final scene and reorders without timeline data", () => {

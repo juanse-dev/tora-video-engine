@@ -100,6 +100,8 @@ Target output:
 
 Both capability detection and the actual render must explicitly pass `muted: true`. Do not rely on the pinned renderer's default, which is `false`.
 
+Remotion 4.0.529 creates browser-rendered `VideoFrame` objects with timestamps but without an explicit frame duration. For Tora's fixed 30 FPS output, pass an `onFrame` hook that returns an equivalent frame with the original timestamp and an explicit duration of `Math.round(1_000_000 / VIDEO_FPS)` microseconds. Without this, MP4 metadata can terminate at the timestamp of the final frame (for example 30 frames reporting 0.966667 seconds) instead of covering the final frame's duration.
+
 When starting `renderMediaOnWeb()`, also pass `outputTarget: "web-fs"` after capability detection has confirmed that `resolvedOutputTarget` is `"web-fs"`. The capability result and render call must therefore agree on the media/output assumptions used for eligibility.
 
 Any other web-renderer API options required for the installed Remotion version should be implemented according to that exact version.
@@ -161,8 +163,8 @@ Required behavior:
 - acquire the render lock **immediately before any OPFS cleanup / `renderMediaOnWeb()` call**;
 - if the lock is unavailable, do not start a second render. Show that another Tora tab is rendering and offer Retry/Cancel rather than relying on Remotion's module-local queue;
 - if `navigator.locks` is unavailable, disable v0.2 browser MP4 rendering because cross-tab safety for the required `web-fs` lifecycle cannot be guaranteed; preview/edit/YAML/CLI remain usable;
-- hold the lock across `renderMediaOnWeb()`, the public `getBlob()` call, and Tora's OPFS cleanup;
-- release it only after the public downloadable Blob exists (success path) and the render's temporary OPFS state is cleaned, including failure/cancel paths.
+- hold the lock across `renderMediaOnWeb()`, the public `getBlob()` call, download handoff on the success path, and Tora's OPFS cleanup;
+- release it only after a successful Blob has been handed to the browser download flow and the render's temporary OPFS state is cleaned, including failure/cancel paths.
 
 ### Tora-owned Remotion OPFS cleanup
 
@@ -173,12 +175,13 @@ While holding the render lock, Tora owns cleanup of this prefix for its origin:
 1. obtain the OPFS root via `navigator.storage.getDirectory()`;
 2. **before every render starts, call the same awaitable `cleanupRemotionOpfsUntilEmpty()` helper defined below and do not call `renderMediaOnWeb()` until it has positively observed an empty `__remotion_render:` prefix**;
 3. run the web render and call the **public** Remotion `getBlob()`;
-4. keep that returned Blob as the successful downloadable result;
-5. call `cleanupRemotionOpfsUntilEmpty()` to delete the Remotion OPFS file(s);
-6. release the render lock after cleanup has positively observed an empty prefix;
-7. create the object URL and trigger the browser download from the public Remotion Blob.
+4. while the OPFS backing file still exists, materialize one independent post-render Blob snapshot from the public Blob's bytes;
+5. defensively recheck that the frozen Story snapshot still matches the live authoring state;
+6. hand the independent snapshot to the browser download flow and transition the UI to a non-cancellable finalizing state;
+7. call `cleanupRemotionOpfsUntilEmpty()` to delete the Remotion OPFS file(s);
+8. release the render lock after cleanup has positively observed an empty prefix.
 
-The distinction between Remotion's internal `webFsTarget.getBlob()` and the public `renderMediaOnWeb().getBlob()` is normative for this pinned version. Remotion 4.0.529 wraps the internal OPFS `File` with `new Blob([file], {type: ...})` before returning it publicly. Under the File API Blob-constructor semantics, that public Blob represents its own immutable byte sequence; Tora therefore must **not** add another `arrayBuffer() → new Blob()` materialization layer or an artificial encoded-output size limit merely to survive OPFS deletion.
+The distinction between Remotion's internal `webFsTarget.getBlob()` and the public `renderMediaOnWeb().getBlob()` remains normative. Chrome's current `web-fs` behavior can keep the returned public Blob lazily dependent on the OPFS-backed file: deleting the file can make later reads or an in-progress automatic download fail with `NotFoundError` / cancellation. Tora therefore performs exactly one full-payload **post-render** materialization into an independent Blob before cleanup. This does not replace the required `web-fs` streaming render path with the `arraybuffer` target: encoded bytes are still streamed to OPFS throughout rendering, and the extra memory is incurred only after the final MP4 already exists. Do not add another payload copy or an artificial encoded-output size limit.
 
 On render failure or cancellation, there is no downloadable success Blob; run the same locked OPFS cleanup protocol and only then release the lock.
 
@@ -196,7 +199,7 @@ Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and use it for **bot
 6. provide **Retry cleanup**. Each retry reruns the bounded helper under the already-held lock. If a **pre-render** retry succeeds, **release the render Web Lock immediately**, clear the blocked state, and return to idle/render-ready **without starting or retaining the old render request**. The user's next Render click must reacquire the lock and rerun preflight from the beginning. If a **post-render** retry succeeds, clear the warning and release the lock as the final step of the already-completed render lifecycle;
 7. page unload may implicitly release the Web Lock, but the next session/new tab must reacquire the same unversioned lock and run this **same retry/backoff preflight helper** before rendering. It must never use a one-shot stale-file deletion. No idle/render-ready tab may retain the render lock merely while waiting for user input.
 
-A successfully returned **public Remotion Blob** may be retained for download while post-render cleanup finishes. Tora must not reach around the public API and hand the internal OPFS File to the download flow. Cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
+A successfully returned **public Remotion Blob** must be materialized into one independent download Blob before post-render cleanup deletes its OPFS backing file. Tora must not reach around the public API and hand the internal OPFS File to the download flow. Once the independent Blob has been handed to the download flow, cancellation is no longer offered; cleanup failure transitions to `cleanup-blocked` while retaining the render lock. Cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
 
 Tests must inject/delay target closure so the first removal attempt fails and prove that both post-render and **new-session pre-render** cleanup wait/retry rather than passing only on fast local writer shutdown.
 
@@ -209,6 +212,7 @@ At minimum expose:
 - idle;
 - rendering;
 - **cancelling**;
+- **finalizing**;
 - success;
 - failure;
 - **cleanup-blocked**.
@@ -243,13 +247,15 @@ Do not auto-download an output after authoring state has somehow diverged from t
 When rendering succeeds:
 
 - obtain the finalized MP4 from the **public** Remotion `getBlob()`;
-- clean OPFS and release the global render lock;
-- create a temporary object URL from that returned Blob;
+- before OPFS cleanup, materialize one independent Blob snapshot from the returned Blob;
+- recheck the frozen Story snapshot before any download handoff;
+- create a temporary object URL from the independent Blob;
 - name the file `${getDownloadBasename(renderSnapshot.title)}.mp4`, reusing the exact shared sanitizer specified by WEB-005;
-- trigger the browser download;
+- trigger the browser download and transition to non-cancellable `finalizing`;
+- clean OPFS and only then release the global render lock;
 - revoke temporary URLs when they are no longer needed.
 
-No timeout after `a.click()` is needed as an OPFS-lifetime heuristic because cleanup occurs only after the public Remotion Blob snapshot already exists.
+The one post-render snapshot is required by verified Chrome `web-fs` behavior. Do not add further full-payload copies or switch rendering itself to the in-memory `arraybuffer` target.
 
 A failed render must not present an old Blob as the new successful result.
 
@@ -311,12 +317,12 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, public `getBlob()`, and positively-completed final cleanup; the actual browser download may occur after lock release because the public Remotion Blob is already an immutable snapshot;
+- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, public `getBlob()`, browser download handoff, and positively-completed final cleanup;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
-- the public Remotion `getBlob()` result remains byte-readable after OPFS cleanup and can be downloaded afterward;
-- Tora adds no second full-payload materialization copy and no artificial browser MP4 artifact-size rejection beyond the existing Story/render policies;
+- the public Remotion `getBlob()` result is materialized once after rendering into an independent download Blob before OPFS cleanup, and Chrome can complete the resulting real MP4 download after cleanup removes the render files;
+- Tora retains `web-fs` streaming during rendering, adds only that single required post-render snapshot, and adds no artificial browser MP4 artifact-size rejection beyond the existing Story/render policies;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
 - client-render telemetry is documented as mandatory upstream behavior and deployment/privacy/CSP documentation reflects it.

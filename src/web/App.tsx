@@ -16,9 +16,21 @@ import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
 import {YamlEditor} from "./components/YamlEditor.tsx";
 import {
+  downloadBlob,
   downloadText,
+  getMp4DownloadFilename,
   getYamlDownloadFilename,
 } from "./downloads.ts";
+import {
+  canDownloadBrowserRenderSnapshot,
+  checkBrowserRenderCapability,
+  getBrowserRenderLockStatus,
+  retryBrowserRenderCleanup,
+  startBrowserRenderTransaction,
+  type BrowserRenderCapability,
+  type BrowserRenderCleanupBlocked,
+  type BrowserRenderPendingOutcome,
+} from "./browserRender.ts";
 import {hasLossRisk} from "./lossRisk.ts";
 import {
   acquirePersistenceOwnership,
@@ -74,6 +86,21 @@ type InitialProject = {
   durableStory: Story | null;
   recovery: ProtectedRecovery | null;
   storageWarning: string | null;
+};
+
+type RenderPhase =
+  | "idle"
+  | "rendering"
+  | "cancelling"
+  | "finalizing"
+  | "success"
+  | "failure"
+  | "cleanup-blocked";
+
+type RenderUiState = {
+  phase: RenderPhase;
+  message: string;
+  progress: number | null;
 };
 
 const getFallbackStory = (): Story => {
@@ -202,6 +229,17 @@ export const App = () => {
   const [policyRejectedImport, setPolicyRejectedImport] =
     useState<PolicyRejectedImport | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [renderCapability, setRenderCapability] =
+    useState<BrowserRenderCapability | null>(null);
+  const [renderLockStatus, setRenderLockStatus] = useState<
+    "checking" | "available" | "busy" | "unavailable"
+  >("checking");
+  const [renderUi, setRenderUi] = useState<RenderUiState>({
+    phase: "idle",
+    message: "Checking browser render support…",
+    progress: null,
+  });
+  const [cleanupRetrying, setCleanupRetrying] = useState(false);
 
   const {activeStory, visual} = authoringState;
   const previewConfig = getWebPlayerConfig(activeStory);
@@ -238,9 +276,25 @@ export const App = () => {
     (yamlState !== null &&
       (isYamlDirty(yamlState) ||
         yamlState.transferSnapshot !== null));
+  const renderInputBlocked =
+    renderBlocked ||
+    policyRejectedImport !== null ||
+    transition !== null;
+  const authoringLocked =
+    renderUi.phase === "rendering" ||
+    renderUi.phase === "cancelling" ||
+    renderUi.phase === "finalizing";
+  const renderNeedsUnloadWarning =
+    authoringLocked || renderUi.phase === "cleanup-blocked";
 
   const importRequestRef = useRef(0);
   const retryOwnershipInFlightRef = useRef(false);
+  const renderInFlightRef = useRef(false);
+  const cleanupRetryInFlightRef = useRef(false);
+  const renderAbortRef = useRef<AbortController | null>(null);
+  const renderCleanupBlockedRef =
+    useRef<BrowserRenderCleanupBlocked | null>(null);
+  const renderSnapshotRef = useRef<Story | null>(null);
   const liveImportStateRef = useRef({
     mode,
     lossRisk,
@@ -249,6 +303,10 @@ export const App = () => {
   const livePersistenceStateRef = useRef({
     activeStory,
     durableStory,
+  });
+  const liveRenderStateRef = useRef({
+    activeStory,
+    renderInputBlocked,
   });
 
   liveImportStateRef.current = {
@@ -260,6 +318,77 @@ export const App = () => {
     activeStory,
     durableStory,
   };
+  liveRenderStateRef.current = {
+    activeStory,
+    renderInputBlocked,
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void checkBrowserRenderCapability().then((capability) => {
+      if (cancelled) {
+        return;
+      }
+
+      setRenderCapability(capability);
+      setRenderUi((current) => {
+        if (current.phase !== "idle") {
+          return current;
+        }
+
+        return {
+          phase: "idle",
+          message:
+            capability.kind === "ready"
+              ? "Browser MP4 rendering is ready."
+              : capability.message,
+          progress: null,
+        };
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const refreshRenderLockStatus = useCallback(async () => {
+    const status = await getBrowserRenderLockStatus();
+    setRenderLockStatus(status);
+  }, []);
+
+  useEffect(() => {
+    if (
+      renderCapability?.kind !== "ready" ||
+      renderUi.phase === "rendering" ||
+      renderUi.phase === "cancelling" ||
+      renderUi.phase === "finalizing" ||
+      renderUi.phase === "cleanup-blocked"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      const status = await getBrowserRenderLockStatus();
+
+      if (!cancelled) {
+        setRenderLockStatus(status);
+      }
+    };
+
+    void refresh();
+    const interval = window.setInterval(() => {
+      void refresh();
+    }, 1_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [renderCapability, renderUi.phase]);
 
   const onVisualEvaluationChange = useCallback(
     (evaluation: VisualDraftEvaluation) => {
@@ -325,7 +454,7 @@ export const App = () => {
   ]);
 
   useEffect(() => {
-    if (!lossRisk) {
+    if (!lossRisk && !renderNeedsUnloadWarning) {
       return;
     }
 
@@ -339,7 +468,7 @@ export const App = () => {
     return () => {
       window.removeEventListener("beforeunload", handler);
     };
-  }, [lossRisk]);
+  }, [lossRisk, renderNeedsUnloadWarning]);
 
   const adoptOwnership = useCallback(
     async (lease: PersistenceOwnership) => {
@@ -521,6 +650,274 @@ export const App = () => {
 
     const lease = await acquirePersistenceOwnership(navigator.locks);
     await adoptOwnership(lease);
+  };
+
+  const completeRenderOutcome = (
+    outcome: BrowserRenderPendingOutcome,
+    snapshot: Story,
+  ) => {
+    if (outcome.kind === "cancelled") {
+      setRenderUi({
+        phase: "idle",
+        message: "Browser render cancelled.",
+        progress: null,
+      });
+      return;
+    }
+
+    if (outcome.kind === "failure") {
+      setRenderUi({
+        phase: "failure",
+        message: `Browser render failed: ${outcome.error.message}`,
+        progress: null,
+      });
+      return;
+    }
+
+    if (outcome.consumed) {
+      setRenderUi({
+        phase: "success",
+        message: "MP4 rendered and downloaded successfully.",
+        progress: 1,
+      });
+      return;
+    }
+
+    const live = liveRenderStateRef.current;
+
+    if (
+      !canDownloadBrowserRenderSnapshot(
+        snapshot,
+        live.activeStory,
+        live.renderInputBlocked,
+      )
+    ) {
+      setRenderUi({
+        phase: "failure",
+        message:
+          "Render completed, but authoring state diverged from the frozen Story snapshot. The MP4 was not downloaded.",
+        progress: null,
+      });
+      return;
+    }
+
+    downloadBlob(
+      outcome.blob,
+      getMp4DownloadFilename(snapshot.title),
+    );
+    setRenderUi({
+      phase: "success",
+      message: "MP4 rendered and downloaded successfully.",
+      progress: 1,
+    });
+  };
+
+  const startBrowserRender = async () => {
+    if (
+      renderInFlightRef.current ||
+      renderCapability?.kind !== "ready" ||
+      renderLockStatus !== "available" ||
+      renderInputBlocked ||
+      renderUi.phase === "cleanup-blocked"
+    ) {
+      return;
+    }
+
+    const policy = evaluateBrowserStoryPolicy(activeStory);
+
+    if (!policy.eligible) {
+      setRenderUi({
+        phase: "failure",
+        message: `Active Story failed the browser render policy recheck: ${policy.message}`,
+        progress: null,
+      });
+      return;
+    }
+
+    renderInFlightRef.current = true;
+    importRequestRef.current += 1;
+
+    const snapshot = structuredClone(activeStory);
+    const controller = new AbortController();
+    renderAbortRef.current = controller;
+    renderSnapshotRef.current = snapshot;
+    setRenderUi({
+      phase: "rendering",
+      message: "Preparing browser render and cleaning temporary storage…",
+      progress: 0,
+    });
+
+    const outcome = await startBrowserRenderTransaction(snapshot, {
+      signal: controller.signal,
+      licenseKey: import.meta.env.VITE_REMOTION_LICENSE_KEY || null,
+      onProgress: ({progress}) => {
+        setRenderUi((current) => {
+          if (
+            current.phase !== "rendering" &&
+            current.phase !== "cancelling"
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            message:
+              current.phase === "cancelling"
+                ? "Cancelling render and waiting for cleanup…"
+                : `Rendering MP4… ${Math.round(progress * 100)}%`,
+            progress,
+          };
+        });
+      },
+      consumeBlob: (blob) => {
+        const live = liveRenderStateRef.current;
+
+        if (
+          !canDownloadBrowserRenderSnapshot(
+            snapshot,
+            live.activeStory,
+            live.renderInputBlocked,
+          )
+        ) {
+          throw new Error(
+            "Render completed, but authoring state diverged from the frozen Story snapshot. The MP4 was not downloaded.",
+          );
+        }
+
+        renderAbortRef.current = null;
+        setRenderUi({
+          phase: "finalizing",
+          message:
+            "MP4 rendered. Starting download and cleaning temporary storage…",
+          progress: 1,
+        });
+        downloadBlob(
+          blob,
+          getMp4DownloadFilename(snapshot.title),
+        );
+      },
+    });
+
+    renderAbortRef.current = null;
+    renderInFlightRef.current = false;
+
+    if (outcome.kind === "cleanup-blocked") {
+      renderCleanupBlockedRef.current = outcome;
+      setRenderUi({
+        phase: "cleanup-blocked",
+        message:
+          outcome.stage === "pre"
+            ? "Browser render storage is still being released. Render did not start; retry cleanup before rendering again."
+            : outcome.pending?.kind === "success" &&
+                outcome.pending.consumed
+              ? "MP4 download started, but browser render storage is still being released. Retry cleanup to finish safely."
+              : "Render settled, but browser render storage is still being released. Retry cleanup to finish safely.",
+        progress: null,
+      });
+      return;
+    }
+
+    renderCleanupBlockedRef.current = null;
+
+    if (outcome.kind === "busy") {
+      setRenderLockStatus("busy");
+      setRenderUi({
+        phase: "idle",
+        message:
+          "Another Tora tab is rendering. Retry when that render finishes.",
+        progress: null,
+      });
+      return;
+    }
+
+    if (outcome.kind === "unsupported") {
+      setRenderCapability({
+        kind: "unsupported",
+        message: outcome.message,
+      });
+      setRenderUi({
+        phase: "failure",
+        message: outcome.message,
+        progress: null,
+      });
+      return;
+    }
+
+    completeRenderOutcome(outcome, snapshot);
+  };
+
+  const cancelBrowserRender = () => {
+    if (
+      renderUi.phase !== "rendering" ||
+      renderAbortRef.current === null
+    ) {
+      return;
+    }
+
+    setRenderUi((current) => ({
+      ...current,
+      phase: "cancelling",
+      message: "Cancelling render and waiting for cleanup…",
+    }));
+    renderAbortRef.current.abort();
+  };
+
+  const retryRenderCleanup = async () => {
+    const blocked = renderCleanupBlockedRef.current;
+
+    if (
+      blocked === null ||
+      cleanupRetrying ||
+      cleanupRetryInFlightRef.current
+    ) {
+      return;
+    }
+
+    cleanupRetryInFlightRef.current = true;
+    setCleanupRetrying(true);
+    const outcome = await retryBrowserRenderCleanup(blocked);
+    cleanupRetryInFlightRef.current = false;
+    setCleanupRetrying(false);
+
+    if (outcome.kind === "cleanup-blocked") {
+      renderCleanupBlockedRef.current = outcome;
+      setRenderUi({
+        phase: "cleanup-blocked",
+        message:
+          "Browser render storage is still busy. Cleanup remains blocked; retry again after the writer finishes releasing.",
+        progress: null,
+      });
+      return;
+    }
+
+    renderCleanupBlockedRef.current = null;
+
+    if (outcome.kind === "pre-cleanup-cleared") {
+      renderSnapshotRef.current = null;
+      setRenderLockStatus("checking");
+      setRenderUi({
+        phase: "idle",
+        message:
+          "Render storage cleanup completed. Start a new render when ready.",
+        progress: null,
+      });
+      return;
+    }
+
+    const snapshot = renderSnapshotRef.current;
+    renderSnapshotRef.current = null;
+
+    if (snapshot === null) {
+      setRenderUi({
+        phase: "failure",
+        message:
+          "Render cleanup completed, but the frozen Story snapshot was unavailable.",
+        progress: null,
+      });
+      return;
+    }
+
+    completeRenderOutcome(outcome, snapshot);
   };
 
   const exportActiveStory = () => {
@@ -1009,7 +1406,9 @@ export const App = () => {
       data-editor-mode={mode}
       data-visual-state={visual.kind}
       data-visual-pending={String(visual.pending)}
-      data-render-blocked={String(renderBlocked)}
+      data-render-blocked={String(renderInputBlocked)}
+      data-render-state={renderUi.phase}
+      data-authoring-locked={String(authoringLocked)}
       data-loss-risk={String(lossRisk)}
       data-persistence-mode={ownership.mode}
     >
@@ -1027,6 +1426,7 @@ export const App = () => {
           <button
             type="button"
             onClick={mode === "visual" ? requestYamlMode : requestVisualMode}
+            disabled={authoringLocked}
           >
             {mode === "visual" ? "Open YAML" : "Open visual editor"}
           </button>
@@ -1043,6 +1443,7 @@ export const App = () => {
             <input
               type="file"
               accept=".yaml,.yml,application/x-yaml,text/yaml,text/plain"
+              disabled={authoringLocked}
               onChange={(event) => {
                 const file = event.target.files?.[0];
 
@@ -1054,8 +1455,25 @@ export const App = () => {
               }}
             />
           </label>
-          <button type="button" onClick={requestReset}>
+          <button
+            type="button"
+            onClick={requestReset}
+            disabled={authoringLocked}
+          >
             Reset project
+          </button>
+          <button
+            type="button"
+            onClick={() => void startBrowserRender()}
+            disabled={
+              authoringLocked ||
+              renderCapability?.kind !== "ready" ||
+              renderLockStatus !== "available" ||
+              renderInputBlocked ||
+              renderUi.phase === "cleanup-blocked"
+            }
+          >
+            Render MP4
           </button>
         </div>
       </header>
@@ -1090,7 +1508,11 @@ export const App = () => {
               ? "Export stored raw data"
               : "Export stored project YAML"}
           </button>
-          <button type="button" onClick={releaseRecovery}>
+          <button
+            type="button"
+            onClick={releaseRecovery}
+            disabled={authoringLocked}
+          >
             Discard stored project and continue
           </button>
         </div>
@@ -1104,10 +1526,18 @@ export const App = () => {
               ? "Durable storage was cleared while this tab was secondary."
               : "Durable storage changed while this tab was secondary."}
           </span>
-          <button type="button" onClick={reloadDurableConflict}>
+          <button
+            type="button"
+            onClick={reloadDurableConflict}
+            disabled={authoringLocked}
+          >
             Reload durable state
           </button>
-          <button type="button" onClick={overwriteDurableConflict}>
+          <button
+            type="button"
+            onClick={overwriteDurableConflict}
+            disabled={authoringLocked}
+          >
             Keep current in memory and overwrite
           </button>
           <button type="button" onClick={exportActiveStory}>
@@ -1132,6 +1562,7 @@ export const App = () => {
           <button
             type="button"
             onClick={() => setPolicyRejectedImport(null)}
+            disabled={authoringLocked}
           >
             Dismiss imported candidate
           </button>
@@ -1144,9 +1575,76 @@ export const App = () => {
         </div>
       ) : null}
 
+      <div
+        className="app-banner render-banner"
+        role="status"
+        data-render-state={renderUi.phase}
+      >
+        <strong>Browser MP4</strong>
+        <span>
+          {renderCapability === null
+            ? "Checking browser render support…"
+            : renderCapability.kind === "unsupported"
+              ? renderCapability.message
+              : renderInputBlocked
+                ? "Resolve or discard pending editor/import work before rendering the active Story."
+                : renderLockStatus === "busy"
+                  ? "Another Tora tab owns the browser render lock."
+                  : renderLockStatus === "unavailable"
+                    ? "Browser render lock status is unavailable. Preview, YAML export, and the local CLI remain available."
+                    : renderUi.message}
+        </span>
+        {renderUi.progress !== null &&
+        (renderUi.phase === "rendering" ||
+          renderUi.phase === "cancelling") ? (
+          <progress
+            max={1}
+            value={renderUi.progress}
+            aria-label="Browser render progress"
+          />
+        ) : null}
+        {renderCapability?.kind === "ready" &&
+        (renderLockStatus === "busy" ||
+          renderLockStatus === "unavailable") &&
+        renderUi.phase !== "rendering" &&
+        renderUi.phase !== "cancelling" &&
+        renderUi.phase !== "cleanup-blocked" ? (
+          <button
+            type="button"
+            onClick={() => void refreshRenderLockStatus()}
+          >
+            Retry render availability
+          </button>
+        ) : null}
+        {renderUi.phase === "rendering" ? (
+          <button type="button" onClick={cancelBrowserRender}>
+            Cancel Render
+          </button>
+        ) : null}
+        {renderUi.phase === "cancelling" ? (
+          <button type="button" disabled>
+            Cancelling…
+          </button>
+        ) : null}
+        {renderUi.phase === "cleanup-blocked" ? (
+          <button
+            type="button"
+            onClick={() => void retryRenderCleanup()}
+            disabled={cleanupRetrying}
+          >
+            {cleanupRetrying ? "Retrying cleanup…" : "Retry cleanup"}
+          </button>
+        ) : null}
+      </div>
+
       {renderTransitionPanel()}
 
       <main className="app-main editor-workspace">
+        <fieldset
+          className="authoring-fieldset"
+          disabled={authoringLocked}
+          aria-label="Story authoring"
+        >
         {mode === "visual" ? (
           <VisualEditor
             key={visualRevision}
@@ -1165,6 +1663,7 @@ export const App = () => {
             onImportFile={importFile}
           />
         ) : null}
+        </fieldset>
 
         <section
           className="preview-card preview-sticky"

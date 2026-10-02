@@ -1,5 +1,14 @@
 const MAX_DOWNLOAD_BASENAME_BYTES = 96;
 const FALLBACK_BASENAME = "tora-video";
+const OBJECT_URL_REVOKE_GRACE_MS = 60_000;
+
+type ScheduleObjectUrlRevocation = (callback: () => void) => void;
+
+const scheduleObjectUrlRevocation: ScheduleObjectUrlRevocation = (
+  callback,
+) => {
+  globalThis.setTimeout(callback, OBJECT_URL_REVOKE_GRACE_MS);
+};
 
 const WINDOWS_RESERVED =
   /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/iu;
@@ -73,17 +82,33 @@ export const getDownloadBasename = (title: string): string => {
 export const getYamlDownloadFilename = (title: string): string =>
   `${getDownloadBasename(title)}.yaml`;
 
+export const getMp4DownloadFilename = (title: string): string =>
+  `${getDownloadBasename(title)}.mp4`;
+
+export const downloadBlob = (
+  blob: Blob,
+  filename: string,
+  documentRef: Document = document,
+  urlRef: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+  scheduleRevoke: ScheduleObjectUrlRevocation =
+    scheduleObjectUrlRevocation,
+): void => {
+  const url = urlRef.createObjectURL(blob);
+  const anchor = documentRef.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  scheduleRevoke(() => {
+    urlRef.revokeObjectURL(url);
+  });
+};
+
 export const downloadText = (
   source: string,
   filename: string,
   documentRef: Document = document,
 ): void => {
   const blob = new Blob([source], {type: "text/plain;charset=utf-8"});
-  const url = URL.createObjectURL(blob);
-  const anchor = documentRef.createElement("a");
-
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, filename, documentRef);
 };

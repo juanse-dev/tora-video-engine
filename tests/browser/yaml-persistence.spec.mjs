@@ -17,6 +17,17 @@ const waitForOwner = async (page) => {
   );
 };
 
+const expectPreviewCaption = async (page, text) => {
+  await expect
+    .poll(async () =>
+      page
+        .locator(".preview-frame [data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe(text);
+};
+
 test("YAML apply uses exact baseline and dirty YAML cannot silently enter visual mode", async ({
   page,
 }) => {
@@ -38,9 +49,7 @@ test("YAML apply uses exact baseline and dirty YAML cannot silently enter visual
   await page.getByRole("button", {name: "Apply YAML"}).click();
 
   await expect(page.locator("[data-yaml-dirty=false]")).toBeVisible();
-  await expect(
-    page.locator(".preview-frame").getByText("Applied from YAML"),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Applied from YAML");
 
   await source.fill("title: [broken");
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -61,9 +70,7 @@ test("YAML apply uses exact baseline and dirty YAML cannot silently enter visual
     "data-editor-mode",
     "visual",
   );
-  await expect(
-    page.locator(".preview-frame").getByText("Applied from YAML"),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Applied from YAML");
 });
 
 test("policy-rejected visual candidate transfers explicitly to YAML and exports current buffer", async ({
@@ -120,9 +127,7 @@ test("eligible visual edits autosave and restore after reload", async ({page}) =
   await waitForOwner(page);
 
   await expect(page.getByLabel("Caption")).toHaveValue("Persist me");
-  await expect(
-    page.locator(".preview-frame").getByText("Persist me"),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Persist me");
 });
 
 test("malformed stored project is protected and fallback edits cannot overwrite it", async ({
@@ -351,9 +356,7 @@ test("persistence write failure keeps the new Story active and loss-risk protect
 
   await page.getByLabel("Caption").fill("Memory-only edit");
 
-  await expect(
-    page.locator(".preview-frame").getByText("Memory-only edit"),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Memory-only edit");
   await expect(page.getByText(/Autosave failed:/)).toBeVisible();
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-loss-risk",
@@ -426,9 +429,7 @@ test("import rechecks live editor state after asynchronous File.text", async ({
     "data-visual-state",
     "schema-invalid",
   );
-  await expect(
-    page.locator(".preview-frame").getByText("Tora tiene una regla."),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Tora tiene una regla.");
 
   await dialog.getByRole("button", {name: "Cancel import"}).click();
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -742,9 +743,7 @@ test("policy-rejected import stays non-active and exports the original source ve
     "data-loss-risk",
     "true",
   );
-  await expect(
-    page.locator(".preview-frame").getByText("Tora tiene una regla."),
-  ).toBeVisible();
+  await expectPreviewCaption(page, "Tora tiene una regla.");
 
   const downloadPromise = page.waitForEvent("download");
   await candidateBanner
@@ -864,9 +863,14 @@ test("a newer rejected import invalidates an older staged import", async ({
 
   await expect(page.getByText(/Import rejected before reading/)).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    page.locator(".preview-frame").getByText("Must never commit"),
-  ).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      page
+        .locator(".preview-frame [data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .not.toContain("Must never commit");
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-visual-state",
     "schema-invalid",
@@ -1067,9 +1071,14 @@ test("confirmed eligible import clears an existing persistence conflict", async 
     .click();
 
   await expect(secondary.getByText("Persistence conflict")).toHaveCount(0);
-  await expect(
-    secondary.locator(".preview-frame").getByText("Imported after conflict"),
-  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      secondary
+        .locator(".preview-frame [data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toContain("Imported after conflict");
   await expect
     .poll(() =>
       secondary.evaluate(() =>

@@ -1,5 +1,16 @@
 import {expect, test} from "@playwright/test";
 
+const expectPreviewCaption = async (preview, text) => {
+  await expect
+    .poll(async () =>
+      preview
+        .locator("[data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe(text);
+};
+
 test("valid visual edits commit while invalid drafts keep the last active preview", async ({
   page,
 }) => {
@@ -24,7 +35,7 @@ test("valid visual edits commit while invalid drafts keep the last active previe
     "data-visual-pending",
     "true",
   );
-  await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
+  await expectPreviewCaption(preview, "Tora tiene una regla.");
 
   await caption.fill("WEB-003 live caption");
 
@@ -37,7 +48,14 @@ test("valid visual edits commit while invalid drafts keep the last active previe
     "data-visual-pending",
     "false",
   );
-  await expect(preview.getByText("WEB-003 live caption")).toBeVisible();
+  await expect
+    .poll(async () =>
+      preview
+        .locator("[data-caption-line]")
+        .allTextContents()
+        .then((lines) => lines.join(" ")),
+    )
+    .toBe("WEB-003 live caption");
 });
 
 test("scene add/delete/reorder operations stay inside the visual draft", async ({
@@ -165,7 +183,7 @@ test("policy-rejected visual candidate is observable while Active Story stays mo
   const preview = page.locator(".preview-frame");
   const duration = page.getByLabel("Duration (seconds)");
 
-  await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
+  await expectPreviewCaption(preview, "Tora tiene una regla.");
   await duration.fill("301");
 
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -176,7 +194,7 @@ test("policy-rejected visual candidate is observable while Active Story stays mo
     "data-visual-pending",
     "true",
   );
-  await expect(preview.getByText("Tora tiene una regla.")).toBeVisible();
+  await expectPreviewCaption(preview, "Tora tiene una regla.");
 });
 
 

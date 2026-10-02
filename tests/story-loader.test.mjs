@@ -182,6 +182,22 @@ scenes:
     );
   });
 
+  it("rejects a caption whose no-break run cannot fit at the minimum font size", async () => {
+    const text = ("A\u00A0").repeat(20) + "A";
+
+    await expectInvalidStory(
+      `title: Test
+scenes:
+  - type: chaos
+    pose: panic
+    background: server-room
+    text: "${text}"
+    duration: 1
+`,
+      "scenes.0.text",
+    );
+  });
+
   it("rejects zero duration", async () => {
     await expectInvalidStory(
       `title: Test

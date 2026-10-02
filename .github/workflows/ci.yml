@@ -7,6 +7,10 @@ on:
       - "mvp-*"
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -20,9 +24,11 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Unit tests
         run: npm test
@@ -44,19 +50,37 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
-      - name: Install browser test runtime
+      - name: Verify required browser render golden
+        run: npx playwright test --config=playwright.browser-render.config.mjs
+
+      - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
       - name: Verify Player resource buffering
         run: npm run test:browser
 
+      - name: Render PR smoke story
+        if: github.event_name == 'pull_request'
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+        run: npm run video -- stories/ci-smoke.yaml
+
+      - name: Verify PR smoke artifact
+        if: github.event_name == 'pull_request'
+        run: test -s output/ci-smoke.mp4
+
       - name: Render reference story
+        if: github.event_name == 'push'
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: npm run video -- stories/friday-deploy.yaml
 
-      - name: Verify artifact
+      - name: Verify reference artifact
+        if: github.event_name == 'push'
         run: test -s output/friday-deploy.mp4
 
       - name: Upload reference render
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: mvp-reference-render
@@ -67,6 +91,8 @@ jobs:
       - name: Reject stale output after validation failure
         shell: bash
         run: |
+          mkdir -p output
+          printf 'stale' > output/friday-deploy.mp4
           printf 'title: Broken\nscenes: []\n' > /tmp/friday-deploy.yaml
           if npm run video -- /tmp/friday-deploy.yaml; then
             echo "Expected invalid story render to fail"
