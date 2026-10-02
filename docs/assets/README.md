@@ -8,9 +8,9 @@ v0.2 established a browser-first, local-first authoring and rendering flow using
 
 ## Product promise
 
-A user can import a PNG, JPEG, or WebP image as a pose/character image or background, reuse it across Stories in the same browser, preview and render with it, and keep the image entirely local to that browser/computer.
+A user can import a static PNG, JPEG, or static WebP image as a pose/character image or background, reuse it across Stories in the same browser/origin, preview and render with it, and keep the image entirely local to that browser/computer.
 
-The local library is intentionally **not synchronized**. Changing computer, browser, browser profile, or clearing site data may make those assets unavailable. The Story remains readable and preserves its references so the user can re-import the exact files or choose replacements.
+The local library is intentionally **not synchronized**. Changing computer, browser, browser profile, origin, or clearing site data may make those assets unavailable. Production, Deploy Previews, and localhost are different origins and therefore different libraries. The Story remains readable and preserves its references so the user can re-import the exact same-category files or choose replacements.
 
 ## Core invariants
 
@@ -22,10 +22,12 @@ The local library is intentionally **not synchronized**. Changing computer, brow
 6. **Availability is not schema validity.** A Story with a syntactically valid local reference may be unavailable in the current environment; this is an explicit asset-readiness state, not a schema error.
 7. **Missing assets never silently fall back.** Preview surfaces an explicit placeholder/status and MP4 rendering is blocked until required references resolve.
 8. **Original bytes are preserved.** v0.3 does not recompress or resize imported source images.
-9. **Each source image is bounded to 25 MiB before hashing/decoding/storage.**
-10. **Browser custom assets remain browser-local.** No Netlify upload, backend, cloud sync, remote URL fetch, or account is introduced.
-11. **CLI custom assets remain checkout-local.** Users copy supported files into gitignored local asset folders; Tora resolves the same content-addressed references.
+9. **Each source image is bounded before expensive work.** Source bytes must be >0 and ≤25 MiB, dimensions ≤8192 px per side, and decoded pixels ≤50 MP; animated PNG/WebP is rejected.
+10. **Browser custom assets remain browser-local.** IndexedDB is the v0.3 durable store; no Netlify upload, backend, cloud sync, remote URL fetch, or account is introduced.
+11. **CLI custom assets remain checkout-local.** Users copy supported files into gitignored local asset folders; Tora resolves the same content-addressed references and exposes a required helper command to print complete copy/pasteable refs.
 12. **Pose/background rendering semantics stay unchanged.** Pose images use contain behavior; backgrounds use cover behavior.
+13. **Project persistence has an explicit v0.3 boundary.** v1 bundled projects migrate deterministically to persistence envelope v2 before local refs can be durably written; the existing persistence Web Lock remains unversioned.
+14. **Browser render transport is gated early.** ASSET-001 must prove the pinned Remotion web renderer can render the chosen local runtime source transport before ASSET-002/003 proceed.
 
 ## Stable reference grammar
 
@@ -78,7 +80,7 @@ The Story is shared. Asset bytes are environment-specific.
 
 v0.3 uses a browser-local binary store separate from the existing Story `localStorage` envelope.
 
-The planned implementation uses IndexedDB because it can atomically store structured metadata and Blob values without mixing custom assets into Remotion's OPFS render namespace.
+v0.3 uses IndexedDB because it can atomically store structured metadata and Blob values without mixing custom assets into Remotion's OPFS render namespace.
 
 At minimum the library records:
 
@@ -106,7 +108,7 @@ local-assets/
   backgrounds/
 ~~~
 
-A user can copy supported images there. The CLI hashes files, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets.
+A user can copy supported static images there. The CLI validates size/format/dimensions, hashes files, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
 
 This deliberately mirrors the browser model:
 
@@ -120,12 +122,12 @@ same YAML ref
 
 | Spec | Deliverable | Depends on |
 | --- | --- | --- |
-| [ASSET-001](./ASSET-001-asset-references-and-resolver.md) | Backward-compatible local asset references and shared readiness boundary | v0.2 |
-| [ASSET-002](./ASSET-002-browser-local-asset-storage.md) | Persistent browser-local binary library, hashing, dedup, validation | ASSET-001 |
+| [ASSET-001](./ASSET-001-asset-references-and-resolver.md) | Backward-compatible refs, persistence v2 boundary, readiness, browser transport gate | v0.2 |
+| [ASSET-002](./ASSET-002-browser-local-asset-storage.md) | IndexedDB library, hashing, dedup, static-image/resource validation | ASSET-001 gate accepted |
 | [ASSET-003](./ASSET-003-import-and-library-ui.md) | Bundled/My assets UI, import, rename, delete, missing-state UX | ASSET-002 |
 | [ASSET-004](./ASSET-004-preview-and-browser-rendering.md) | Player/browser-render resolution of local images | ASSET-001, ASSET-002 |
-| [ASSET-005](./ASSET-005-cli-local-assets.md) | Gitignored local folders and CLI resolution/staging | ASSET-001 |
-| [ASSET-006](./ASSET-006-persistence-and-production-verification.md) | Backward compatibility, lifecycle coverage, production golden | ASSET-003, ASSET-004, ASSET-005 |
+| [ASSET-005](./ASSET-005-cli-local-assets.md) | Gitignored local folders, ref discovery helper, CLI resolution/staging | ASSET-001 |
+| [ASSET-006](./ASSET-006-persistence-and-production-verification.md) | Verify migration/cross-version behavior, lifecycle coverage, production golden | ASSET-003, ASSET-004, ASSET-005 |
 
 ## v0.3 UX target
 
@@ -158,7 +160,7 @@ A local asset card supports:
 - apply to selected scene;
 - delete.
 
-Deletion of an asset used by the current Story requires explicit confirmation and may intentionally leave unresolved references.
+Deletion of an asset used by the current Story requires explicit confirmation and may intentionally leave unresolved references. `Reset project` and importing/replacing a Story do not delete My assets; library deletion is always an explicit asset action.
 
 ## Missing-reference behavior
 
@@ -172,7 +174,7 @@ The application must:
 - allow YAML editing/export;
 - disable MP4 rendering while any required asset is unresolved;
 - offer re-import/replacement;
-- automatically resolve when the exact original file is imported again.
+- automatically resolve when the exact original file is imported again in the same category.
 
 No fallback to a bundled pose/background is allowed.
 
@@ -180,19 +182,20 @@ No fallback to a bundled pose/background is allowed.
 
 v0.3 is complete when:
 
-- existing v0.2 bundled Stories require no migration;
-- PNG/JPEG/WebP pose/background imports up to 25 MiB work;
+- existing v0.2 bundled YAML/Story content remains unchanged, while persisted v1 projects migrate safely to envelope v2;
+- static PNG/JPEG/WebP pose/background imports reject APNG/animated WebP and enforce ≤25 MiB, ≤8192 px per side, and ≤50 MP;
 - user assets remain visually separated from bundled assets;
 - original bytes persist in the same browser/origin across reloads;
 - exact duplicate bytes do not create duplicate binary storage;
 - renaming a local asset does not change YAML references;
 - YAML exports contain local references but no image bytes/blob URLs;
 - missing references are explicit and block render rather than changing output silently;
-- exact-file re-import resolves a missing reference by SHA-256;
+- exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
 - Player and browser MP4 rendering work with local pose/background assets;
-- the CLI resolves the same refs from `local-assets/`;
+- the CLI resolves the same refs from `local-assets/` and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
+- the pinned Remotion browser-render transport is proven before full browser library rollout;
 - production remains static-hosted and backend-free.
 
 ## Explicitly out of scope
@@ -203,7 +206,7 @@ v0.3 is complete when:
 - remote asset URLs;
 - project ZIP/bundle export with image bytes;
 - SVG;
-- GIF/animated images;
+- GIF/animated images, including APNG/animated WebP;
 - video assets;
 - audio/TTS/music;
 - custom fonts;
