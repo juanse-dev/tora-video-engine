@@ -186,7 +186,7 @@ That state:
 
 Do not add local-asset byte sizes to the existing canonical-YAML 1 MiB policy because the bytes are not part of YAML.
 
-The 25 MiB limit applies per imported/source local asset, not to Story source size.
+The local-image resource limits (≤25 MiB source bytes, ≤8192 px per side, ≤50 MP, static PNG/JPEG/WebP only) apply per imported/source asset, not to Story source size.
 
 ## Loss-risk semantics
 
