@@ -129,7 +129,11 @@ The automated WEB-001…006 tests remain the regression suite; this checklist is
 
 ### Deploy Preview verification — 2026-10-01
 
-Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story. This is valid deployed-origin smoke/golden evidence for WEB-007, but the final production URL must still be rechecked after the PR is merged to `main`.
+Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story.
+
+### Production verification — 2026-10-01
+
+After PR #16 merged, Netlify deployed merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` from `main` as production deploy `6abf2894da2c7f0008e5496b`. The deployment reached `ready` with no Functions or Edge Functions. The user then confirmed that the production URL loaded successfully and completed browser-side MP4 rendering successfully. Post-merge GitHub Actions run `36961473266` also completed successfully, including the browser-render golden and canonical CLI reference render.
 
 ## Production release record
 
@@ -137,12 +141,13 @@ Fill this in when the first production deployment is verified:
 
 | Field | Value |
 | --- | --- |
-| Deployment commit | Pending WEB-007 production deploy after merge |
+| Deployment commit | `ac8fb3db18ddc7b322538f6006728db045880e89` |
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Deploy Preview #16 passed: preview and browser MP4 render confirmed by user; production post-merge confirmation pending |
-| Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
+| Browser golden | Production passed: app load and browser MP4 render confirmed after merge; Deploy Preview #16 also passed |
+| Browser | Chrome 154 on Windows desktop |
+| Remotion license basis | Free License — individual |
 | License terms last checked | 2026-10-01 |
-| Telemetry/privacy review | Pending deployed-origin verification |
-| WEB-007 status | In progress |
+| Telemetry/privacy review | Completed for v0.2; mandatory Remotion client-render telemetry documented |
+| WEB-007 status | Accepted / v0.2 complete |
