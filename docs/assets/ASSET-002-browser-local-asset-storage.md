@@ -67,10 +67,12 @@ The binary payload is keyed only by digest so the same bytes can back both a pos
 
 ## File-size boundary
 
-Define one shared constant:
+Define shared resource limits:
 
 ~~~ts
 MAX_LOCAL_ASSET_BYTES = 25 * 1024 * 1024
+MAX_LOCAL_ASSET_DIMENSION = 8192
+MAX_LOCAL_ASSET_PIXELS = 50_000_000
 ~~~
 
 A candidate file must be rejected **before** `arrayBuffer()`, hashing, decoding, or IndexedDB write when:
@@ -78,21 +80,23 @@ A candidate file must be rejected **before** `arrayBuffer()`, hashing, decoding,
 - `file.size === 0`; or
 - `file.size > MAX_LOCAL_ASSET_BYTES`.
 
-The UI must report the 25 MiB limit explicitly.
+The UI must report the source limits explicitly: >0 and ≤25 MiB, ≤8192 px per side, and ≤50 MP.
 
 There is no artificial total-library byte cap in v0.3 beyond browser quota. Browser quota is dynamic and implementation-specific.
 
 ## Accepted formats
 
-Only original raster files in these formats are accepted:
+Only original **static** raster files in these formats are accepted:
 
-- PNG;
+- PNG (non-animated);
 - JPEG;
-- WebP.
+- WebP (non-animated).
+
+APNG and animated WebP are rejected.
 
 Do not trust filename extension or `File.type` alone.
 
-The import path must inspect the actual byte signature and reject any payload that is not one of the allowed formats.
+The import path must inspect the actual file structure/signature and reject any payload that is not one of the allowed static formats. Filename extension and `File.type` are hints only.
 
 SVG, GIF, AVIF, TIFF, video, audio, and arbitrary binary files are rejected in v0.3 even if a browser could display them.
 
@@ -102,14 +106,15 @@ For a selected category + file:
 
 1. reject zero/over-25-MiB size before reading;
 2. read the bounded original bytes;
-3. identify PNG/JPEG/WebP from content;
-4. compute SHA-256 over those exact original bytes;
-5. decode the image with a browser image decoder and require positive finite dimensions;
-6. build the category-scoped ref from ASSET-001;
-7. atomically store/reuse binary + metadata;
-8. return the existing or newly created local asset entry.
+3. identify PNG/JPEG/static-WebP from content and reject APNG/animated WebP;
+4. inspect trusted format metadata/header to reject width/height >8192 or total pixels >50 MP before full-resolution decode where practical;
+5. compute SHA-256 over those exact original bytes;
+6. decode the image successfully and verify positive finite dimensions consistent with the accepted limits;
+7. build the category-scoped ref from ASSET-001;
+8. atomically store/reuse binary + metadata;
+9. return the existing or newly created local asset entry.
 
-If decoding fails, the asset is rejected and no partial database record remains.
+If format/animation/dimension validation or decode fails, the asset is rejected and no partial database record remains.
 
 ## Hashing and identity
 
@@ -187,6 +192,8 @@ If IndexedDB rejects a write because storage is full/unavailable:
 - no Story reference is committed automatically;
 - no partial asset entry should be presented as available;
 - the prior library remains usable;
+- bundled-only Stories remain previewable/renderable even if the custom-asset DB is unavailable;
+- Stories requiring local refs become explicit asset-unready state;
 - show an actionable local-storage warning.
 
 `navigator.storage.estimate()` may be shown as informational preflight but must not be treated as a guarantee.
@@ -222,7 +229,9 @@ A same-origin `BroadcastChannel` is the preferred invalidation signal. If a tab 
 
 ## Runtime object URLs
 
-Blob URLs are runtime transport only.
+ASSET-001 must already have proven the pinned Remotion browser-render transport gate before this spec is implemented.
+
+Blob URLs are runtime transport only when that ASSET-001 gate accepted `blob:` as the proven transport. If ASSET-001 chose another ephemeral transport, use that transport while preserving every persistence invariant below.
 
 A browser asset source manager may cache:
 
@@ -258,7 +267,9 @@ Minimum coverage:
 
 - rejects zero-byte asset before hash/decode;
 - rejects >25 MiB before hash/decode/storage;
-- PNG/JPEG/WebP content signatures accepted;
+- rejects width/height >8192 and total pixels >50 MP before full decode where practical;
+- static PNG/JPEG/WebP accepted;
+- APNG and animated WebP rejected;
 - disallowed/mislabeled content rejected;
 - failed image decode leaves no durable entry;
 - SHA-256 is over original bytes;
@@ -274,7 +285,7 @@ Minimum coverage:
 
 ## Acceptance criteria
 
-- a valid ≤25 MiB PNG/JPEG/WebP can become a durable local library entry;
+- a valid static PNG/JPEG/WebP satisfying ≤25 MiB, ≤8192 px per side, and ≤50 MP can become a durable local library entry;
 - exact duplicate bytes are deduplicated;
 - original source Blob is preserved byte-for-byte;
 - labels are safely mutable;
@@ -293,4 +304,4 @@ Minimum coverage:
 
 ## Done when
 
-The browser can persist, list, rename, deduplicate, resolve, and delete local raster assets reliably without changing the Story schema or storing image bytes in Story persistence.
+The browser can persist, list, rename, deduplicate, resolve, and delete bounded static local raster assets reliably without changing the Story schema or storing image bytes in Story persistence.
