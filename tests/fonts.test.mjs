@@ -21,6 +21,31 @@ describe("caption font coverage", () => {
     assert.equal(isCaptionTextSupported("Tora 😀"), false);
   });
 
+  it("rejects Unicode format controls the deterministic layout does not model", () => {
+    const unsupported = [
+      ["ZWNJ", "\u200C"],
+      ["ZWJ", "\u200D"],
+      ["LRM", "\u200E"],
+      ["RLM", "\u200F"],
+      ["LRI", "\u2066"],
+      ["RLI", "\u2067"],
+      ["FSI", "\u2068"],
+      ["PDI", "\u2069"],
+    ];
+
+    for (const [label, control] of unsupported) {
+      assert.equal(
+        isCaptionTextSupported(`A${control}B`),
+        false,
+        `${label} must be rejected before deterministic caption layout`,
+      );
+    }
+
+    for (const supported of ["\u200B", "\u2060", "\uFEFF"]) {
+      assert.equal(isCaptionTextSupported(`A${supported}B`), true);
+    }
+  });
+
   it("loads the full caption text once per required weight", async () => {
     const calls = [];
 
