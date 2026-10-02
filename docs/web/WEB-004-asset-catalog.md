@@ -1,6 +1,6 @@
 # WEB-004 — Discoverable asset catalog
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 
