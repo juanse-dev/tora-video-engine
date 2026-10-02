@@ -3,8 +3,7 @@ import {CAPTION_FONT_FAMILY} from "../fontCoverage.ts";
 import {
   CAPTION_BOX_MAX_HEIGHT,
   CAPTION_FRAME_WIDTH,
-  getCaptionFontSize,
-  layoutCaptionLines,
+  resolveCaptionLayout,
 } from "../captionLayout.ts";
 import type {
   CaptionPlacement,
@@ -49,12 +48,15 @@ export const Caption = ({
   align,
 }: CaptionProps) => {
   const {fontSize, lines} = useMemo(() => {
-    const resolvedFontSize = getCaptionFontSize(variant, text);
+    const layout = resolveCaptionLayout(variant, text);
 
-    return {
-      fontSize: resolvedFontSize,
-      lines: layoutCaptionLines(text, variant, resolvedFontSize),
-    };
+    if (layout === null) {
+      throw new RangeError(
+        "Caption reached rendering without a valid deterministic layout",
+      );
+    }
+
+    return layout;
   }, [text, variant]);
 
   return (
