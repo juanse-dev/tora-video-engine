@@ -85,11 +85,31 @@ const isSupportedCodePoint = (codePoint: number): boolean =>
     ([start, end]) => codePoint >= start && codePoint <= end,
   );
 
+// Inter's unicode ranges include several Unicode format controls, but the
+// deterministic caption layout only models these explicitly:
+// - U+200B ZERO WIDTH SPACE: zero-width break opportunity
+// - U+2060 WORD JOINER: zero-width no-break joiner
+// - U+FEFF ZERO WIDTH NO-BREAK SPACE: zero-width no-break joiner
+// Reject other Cf controls at the schema boundary instead of assigning them
+// fictional glyph advances or incomplete line-breaking semantics.
+const SUPPORTED_FORMAT_CONTROLS = new Set([0x200b, 0x2060, 0xfeff]);
+const FORMAT_CONTROL = /^\p{Cf}$/u;
+
+const isSupportedCaptionCharacter = (character: string): boolean => {
+  const codePoint = character.codePointAt(0);
+
+  if (codePoint === undefined || !isSupportedCodePoint(codePoint)) {
+    return false;
+  }
+
+  return (
+    !FORMAT_CONTROL.test(character) ||
+    SUPPORTED_FORMAT_CONTROLS.has(codePoint)
+  );
+};
+
 export const isCaptionTextSupported = (text: string): boolean =>
-  Array.from(text).every((character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint !== undefined && isSupportedCodePoint(codePoint);
-  });
+  Array.from(text).every(isSupportedCaptionCharacter);
 
 const formatCodePoint = (character: string): string =>
   `U+${character.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`;
@@ -98,14 +118,13 @@ export const loadCaptionFontForText = async (
   captionText: string,
   loadFont: FontLoader,
 ): Promise<void> => {
-  const unsupportedCharacter = Array.from(captionText).find((character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint === undefined || !isSupportedCodePoint(codePoint);
-  });
+  const unsupportedCharacter = Array.from(captionText).find(
+    (character) => !isSupportedCaptionCharacter(character),
+  );
 
   if (unsupportedCharacter) {
     throw new Error(
-      `Bundled caption font does not support ${formatCodePoint(unsupportedCharacter)} ("${unsupportedCharacter}")`,
+      `Bundled caption renderer does not support ${formatCodePoint(unsupportedCharacter)} ("${unsupportedCharacter}")`,
     );
   }
 
