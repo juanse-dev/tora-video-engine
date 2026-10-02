@@ -1,5 +1,7 @@
 import {z} from "zod";
+import {isCaptionLayoutSupported} from "../captionLayout.ts";
 import {isCaptionTextSupported} from "../fontCoverage.ts";
+import {scenePresets} from "../scenePresets.ts";
 import {VIDEO_FPS} from "../videoConfig.ts";
 import {
   captionCodePointLength,
@@ -52,7 +54,26 @@ export const StorySceneSchema = z
       ),
     animation: AnimationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((scene, context) => {
+    if (
+      captionCodePointLength(scene.text) > MAX_CAPTION_LENGTH ||
+      !isCaptionTextSupported(scene.text)
+    ) {
+      return;
+    }
+
+    const variant = scenePresets[scene.type].captionVariant;
+
+    if (!isCaptionLayoutSupported(variant, scene.text)) {
+      context.addIssue({
+        code: "custom",
+        path: ["text"],
+        message:
+          "Text cannot fit within the deterministic caption layout at the minimum font size",
+      });
+    }
+  });
 
 export const StorySchema = z
   .object({
