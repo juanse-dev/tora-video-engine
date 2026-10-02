@@ -113,7 +113,8 @@ ASSET-001 owns the migration/version boundary:
 - malformed/unsupported v1 recovery behavior remains protected;
 - an old v0.2 tab encountering a v2 envelope treats it as unsupported-version/recovery rather than claiming to understand and then schema-rejecting a local ref;
 - the existing physical Story/recovery storage slots remain shared;
-- the persistence Web Lock name remains **unversioned** while those physical slots are shared across old/new bundles.
+- the persistence Web Lock name remains **unversioned** while those physical slots are shared across old/new bundles;
+- only the tab that owns the existing persistence-writer lock may durably migrate/write the v2 envelope; secondary/session-only tabs must not perform a migration write and must follow the existing ownership/retry/conflict rules.
 
 The custom asset IndexedDB introduced by ASSET-002 has its own independent database schema version.
 
@@ -272,6 +273,7 @@ Minimum automated coverage:
 - v1 bundled persisted project migrates deterministically to v2 with identical Story content;
 - a v2 project containing local refs is not written using the v1 envelope version;
 - cross-version persistence keeps the existing unversioned writer lock;
+- only the persistence owner performs the v1 → v2 durable migration; secondary tabs do not rewrite the shared envelope;
 - valid local pose ref parses;
 - valid local background ref parses;
 - pose rejects background-local ref;
