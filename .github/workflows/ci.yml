@@ -54,7 +54,7 @@ jobs:
         run: npx playwright test --config=playwright.browser-render.config.mjs
 
       - name: Install Playwright Chromium
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Verify Player resource buffering
         run: npm run test:browser
