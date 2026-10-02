@@ -137,6 +137,13 @@ sequenceDiagram
 
 Specs are sequential where a dependency is listed. Do not pull cloud infrastructure, AI features, or generic editing abstractions into an earlier spec.
 
+## Implementation status
+
+- WEB-001 through WEB-006 are accepted and merged into `main`.
+- WEB-007 is in progress.
+- The repository now contains the root-hosted static deployment contract and production runbook.
+- v0.2 is not complete until the production URL and at least one real-browser deployed golden are recorded in [production-deployment.md](./production-deployment.md).
+
 ## v0.2 UX target
 
 The editor should expose the current engine vocabulary directly:
