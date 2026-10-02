@@ -6,6 +6,7 @@ export const CAPTION_MIN_FONT_SIZE = 32;
 export const CAPTION_CONTENT_WIDTH = 864;
 export const CAPTION_LINE_HEIGHT = 1.12;
 export const CAPTION_FRAME_WIDTH = 936;
+export const CAPTION_LAYOUT_CACHE_MAX_ENTRIES = 512;
 
 const baseFontSizes: Record<CaptionVariant, number> = {
   hero: 86,
@@ -342,10 +343,50 @@ export type ResolvedCaptionLayout = {
   lines: string[];
 };
 
+const captionLayoutCache = new Map<
+  string,
+  ResolvedCaptionLayout | null
+>();
+
+const getCaptionLayoutCacheKey = (
+  variant: CaptionVariant,
+  text: string,
+): string => `${variant}\u0000${text}`;
+
+const writeCaptionLayoutCache = (
+  key: string,
+  layout: ResolvedCaptionLayout | null,
+): void => {
+  if (captionLayoutCache.has(key)) {
+    captionLayoutCache.delete(key);
+  }
+
+  captionLayoutCache.set(key, layout);
+
+  if (captionLayoutCache.size > CAPTION_LAYOUT_CACHE_MAX_ENTRIES) {
+    const oldestKey = captionLayoutCache.keys().next().value;
+
+    if (oldestKey !== undefined) {
+      captionLayoutCache.delete(oldestKey);
+    }
+  }
+};
+
 export const resolveCaptionLayout = (
   variant: CaptionVariant,
   text: string,
 ): ResolvedCaptionLayout | null => {
+  const cacheKey = getCaptionLayoutCacheKey(variant, text);
+
+  if (captionLayoutCache.has(cacheKey)) {
+    const cached = captionLayoutCache.get(cacheKey) ?? null;
+
+    // Refresh the entry so frequently reused editor captions remain resident
+    // while stale keystroke variants naturally fall out of the bounded cache.
+    writeCaptionLayoutCache(cacheKey, cached);
+    return cached;
+  }
+
   const baseFontSize = baseFontSizes[variant];
 
   for (
@@ -364,13 +405,17 @@ export const resolveCaptionLayout = (
     );
 
     if (fitsHeight && fitsWidth) {
-      return {
+      const layout = {
         fontSize,
         lines,
       };
+
+      writeCaptionLayoutCache(cacheKey, layout);
+      return layout;
     }
   }
 
+  writeCaptionLayoutCache(cacheKey, null);
   return null;
 };
 
