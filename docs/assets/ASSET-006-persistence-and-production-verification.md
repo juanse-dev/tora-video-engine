@@ -1,25 +1,36 @@
-# ASSET-006 — Persistence, migration and production verification
+# ASSET-006 — Persistence and production verification
 
 > Status: **Proposed**
 
 ## Goal
 
-Close v0.3 by proving that local custom assets coexist safely with v0.2 Story persistence, survive normal browser reload/deploy cycles, fail explicitly when unavailable, and render consistently in browser and CLI.
+Close v0.3 by proving that local custom assets coexist safely with the ASSET-001 project-persistence v2 boundary, survive normal same-origin browser reload/deploy cycles, fail explicitly when unavailable, and render consistently in browser and CLI.
 
 ## Compatibility principle
 
 v0.3 must be additive.
 
-Existing v0.2 Stories containing only bundled refs must:
+Existing v0.2 **Story/YAML content** containing only bundled refs must:
 
 - parse unchanged;
-- persist unchanged;
+- serialize with identical Story semantics;
 - preview unchanged;
 - render unchanged in browser;
-- render unchanged in CLI;
-- require no migration.
+- render unchanged in CLI.
 
-The existing Story persistence version must only change if the serialized Story envelope shape actually changes incompatibly. Adding newly valid string values to `pose` / `background` does not by itself justify rewriting durable bundled-only Stories.
+Browser durable project state does have an explicit compatibility migration defined in ASSET-001:
+
+~~~text
+persistence envelope v1
+        ↓
+deterministic migration
+        ↓
+persistence envelope v2
+~~~
+
+The migrated bundled Story content remains semantically identical. ASSET-006 verifies that migration and cross-version safety; it does not redefine them.
+
+An old v0.2 tab must see a v2 envelope as unsupported-version/recovery, while the existing unversioned persistence Web Lock continues to protect the shared physical Story/recovery slots.
 
 ## Persistence separation
 
@@ -60,7 +71,7 @@ If a future “Clear local asset library” action is added, it is a separate de
 
 Startup order after ASSET-002:
 
-1. restore/validate the existing Story envelope using v0.2 safeguards;
+1. restore/validate/migrate the Story envelope using the ASSET-001 v1 → v2 compatibility boundary and existing recovery safeguards;
 2. open the local asset database independently;
 3. resolve local refs used by the restored/fallback Active Story;
 4. derive asset readiness;
@@ -96,6 +107,8 @@ Because browser storage is origin-scoped, local assets are expected to remain av
 - the user changes browser/profile/device/origin.
 
 This persistence is best-effort browser storage, not sync or backup.
+
+Production, Deploy Previews, and localhost are intentionally different asset-library origins. A library created at `deploy-preview-N--tora-video-engine.netlify.app` is not expected to appear at `tora-video-engine.netlify.app`, and localhost does not share either library.
 
 ## Asset database versioning
 
@@ -140,8 +153,8 @@ The main portability/recovery invariant is:
 
 ~~~text
 same original bytes
-→ same SHA-256
-→ same local ref
++ same category
+→ same SHA-256/category ref
 → Story resolves without mutation
 ~~~
 
@@ -232,7 +245,7 @@ Automate:
 7. verify explicit missing state;
 8. verify Render MP4 disabled;
 9. reload and verify missing state persists;
-10. re-import exact fixture;
+10. re-import exact fixture in the same category;
 11. verify Story resolves automatically with no Story mutation;
 12. verify render eligibility returns.
 
@@ -243,8 +256,8 @@ Using a fresh browser context/origin storage:
 1. import/export YAML from context A;
 2. load YAML in context B without asset library;
 3. verify Story parses and missing ref is explicit;
-4. import the exact file in B;
-5. verify hash resolves automatically;
+4. import the exact file in B using the same category;
+5. verify hash/category ref resolves automatically;
 6. verify preview/render eligibility recovers.
 
 No bytes are transferred through YAML.
@@ -283,7 +296,9 @@ Verify two same-origin tabs converge on local-library state:
 - import in tab A appears in/refetches into tab B;
 - rename in A updates label in B without Story ref changes;
 - delete in A makes a referenced asset missing in B on refresh/invalidation;
-- concurrent duplicate imports do not create duplicate binary storage.
+- concurrent duplicate imports do not create duplicate binary storage;
+- while tab A renders, its local asset mutation controls remain disabled;
+- a cross-tab deletion during A's in-flight render does not alter A's frozen Story/runtime-source snapshot, but becomes missing on A's post-render readiness refresh.
 
 Existing Story single-writer rules remain unchanged and separate.
 
@@ -291,7 +306,7 @@ Existing Story single-writer rules remain unchanged and separate.
 
 Before marking v0.3 complete, verify on the production origin:
 
-1. app opens with existing bundled Story;
+1. app opens with existing bundled Story after verifying any persisted v1 project migrates safely to v2;
 2. import one custom pose and one custom background;
 3. both appear under **My assets**, separate from Bundled;
 4. apply them and verify Player;
@@ -299,7 +314,7 @@ Before marking v0.3 complete, verify on the production origin:
 6. export YAML and inspect that refs are present but bytes/blob URLs are absent;
 7. render/download MP4 successfully;
 8. delete one in-use asset and confirm warning + missing state;
-9. re-import exact file and confirm automatic resolution;
+9. re-import exact file in the same category and confirm automatic resolution;
 10. render again successfully;
 11. confirm no custom asset was uploaded to Netlify/server infrastructure.
 
@@ -319,42 +334,44 @@ Record:
 - [ ] ASSET-003 accepted
 - [ ] ASSET-004 accepted
 - [ ] ASSET-005 accepted
-- [ ] existing bundled Stories require no migration
+- [ ] existing bundled YAML/Story content remains unchanged while persisted v1 projects migrate safely to v2
 - [ ] browser local library persists across reload on same origin
 - [ ] bundled and My assets are separate in UI
-- [ ] PNG/JPEG/WebP imports enforce 25 MiB pre-read limit
+- [ ] static PNG/JPEG/WebP imports reject APNG/animated WebP and enforce 25 MiB pre-read, ≤8192 px/side, and ≤50 MP limits
 - [ ] SHA-256 dedup works
 - [ ] labels rename without changing refs
 - [ ] YAML contains refs only, no bytes/blob URLs/paths
 - [ ] delete-in-use warning passes
 - [ ] missing refs preserve Story and block render
-- [ ] exact-file re-import resolves missing ref automatically
+- [ ] exact-file same-category re-import resolves missing ref automatically
+- [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
 - [ ] custom pose/background Player flow passes
 - [ ] custom pose/background browser MP4 golden passes
 - [ ] fresh-browser YAML portability flow passes
 - [ ] CLI resolves same refs from local asset folders
+- [ ] required local asset helper prints full canonical copy/pasteable refs
 - [ ] CLI missing-asset diagnostics pass
 - [ ] CLI/browser custom-asset parity golden passes
-- [ ] cross-tab library convergence passes
+- [ ] cross-tab library convergence and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
 - [ ] production custom-asset golden passes
 
 ## Acceptance criteria
 
-- v0.2 bundled behavior remains stable;
+- v0.2 bundled Story/render behavior remains stable and persistence v1 → v2 migration is verified;
 - v0.3 local assets survive ordinary same-origin reload/deploy use;
 - loss of local bytes never corrupts or silently changes Story meaning;
 - browser and CLI resolve the same content identity from different local stores;
-- production proves the complete import → persist → preview → render → delete/missing → re-import flow.
+- production proves the complete import → persist → preview → render → delete/missing → same-category re-import → render flow.
 
 ## Out of scope
 
 - backup/sync guarantees;
-- migration across origins/domains;
+- automatic asset-library migration across origins/domains;
 - project archive containing bytes;
 - server-side asset persistence;
 - non-image media.
 
 ## Done when
 
-A production user can build and render a Story with their own local images, lose/recover those images predictably, and export a byte-free YAML that can be resolved in another environment by supplying the exact same files.
+A production user can build and render a Story with their own bounded static local images, survive the v1 → v2 project-persistence transition, lose/recover assets predictably, and export a byte-free YAML that can be resolved in another environment by supplying the exact same files in the same categories.
