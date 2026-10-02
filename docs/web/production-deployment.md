@@ -71,6 +71,8 @@ Official references:
 - https://www.remotion.dev/docs/license/pricing
 - https://www.remotion.dev/docs/license/faq
 
+For the current Tora Video Engine deployment, the applicable basis is **Remotion Free License because the project is operated by an individual**. The Company License / Automators pricing above is retained only as a future-change reference if ownership or operation moves to an organization that no longer qualifies for the Free License.
+
 This verification is a release record, not a permanent pricing guarantee. Re-check the official terms immediately before every production launch or material licensing change.
 
 ### License key
@@ -135,7 +137,7 @@ Fill this in when the first production deployment is verified:
 | Production URL | Pending |
 | Host | Netlify (planned) |
 | Browser golden | Pending |
-| Remotion license basis | Pending final deployment confirmation |
+| Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
 | License terms last checked | 2026-10-01 |
 | Telemetry/privacy review | Pending deployed-origin verification |
 | WEB-007 status | In progress |
