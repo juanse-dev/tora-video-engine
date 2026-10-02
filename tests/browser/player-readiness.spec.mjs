@@ -165,7 +165,7 @@ test("built Player recovers when a later caption generation loads after a font f
     Object.defineProperty(document.fonts, "load", {
       configurable: true,
       value: (_font, text) => {
-        if (text.includes("Tora tiene una regla.")) {
+        if (text.includes("Tora tiene una regla: Nunca desplegar en viernes.")) {
           return Promise.reject(new Error("forced initial font failure"));
         }
 
