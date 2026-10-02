@@ -216,6 +216,44 @@ describe("caption layout", () => {
     assert.ok(lines[0].endsWith("\u200B"));
   });
 
+  it("keeps supported no-break separators attached during hard wrapping", () => {
+    const fixtures = [
+      ["U+00A0", "\u00A0"],
+      ["U+2007", "\u2007"],
+      ["U+202F", "\u202F"],
+      ["U+FEFF", "\uFEFF"],
+    ];
+
+    for (const [label, separator] of fixtures) {
+      const joined = `A${separator}B`;
+      const text = `${"A".repeat(8)}${separator}B`;
+      const lines = layoutCaptionLines(text, "impact", 92);
+
+      assert.ok(lines.length > 1, `${label} fixture must force a hard wrap`);
+      assert.equal(lines.join(""), text);
+      assert.ok(
+        lines.some((line) => line.includes(joined)),
+        `${label} must keep both adjacent glyphs in one hard-wrap unit`,
+      );
+      assert.ok(
+        lines.every(
+          (line) =>
+            !line.startsWith(separator) &&
+            !line.endsWith(separator),
+        ),
+        `${label} must never become an explicit line boundary`,
+      );
+      assert.ok(
+        lines.every(
+          (line) =>
+            estimateCaptionLineWidth(line, "impact", 92) <=
+            CAPTION_CONTENT_WIDTH,
+        ),
+        `${label} hard-wrap result must still fit the caption content width`,
+      );
+    }
+  });
+
   it("never splits a supported combining sequence across explicit lines", () => {
     const grapheme = "e\u0301";
     const text = grapheme.repeat(MAX_CAPTION_LENGTH / 2);
