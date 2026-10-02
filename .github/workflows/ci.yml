@@ -50,6 +50,14 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
+      - name: Upload static web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-static-build
+          path: dist/web
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify required browser render golden
         run: npx playwright test --config=playwright.browser-render.config.mjs
 
