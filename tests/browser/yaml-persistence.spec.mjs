@@ -41,7 +41,7 @@ test("YAML apply uses exact baseline and dirty YAML cannot silently enter visual
 
   const noncanonical = (await source.inputValue())
     .replace("title: Deploy Friday", "title: 'Deploy Friday'")
-    .replace("Tora tiene una regla.", "Applied from YAML");
+    .replace("Tora tiene una regla: Nunca desplegar en viernes.", "Applied from YAML");
 
   await source.fill(noncanonical);
   await expect(page.locator("[data-yaml-dirty=true]")).toBeVisible();
@@ -429,7 +429,7 @@ test("import rechecks live editor state after asynchronous File.text", async ({
     "data-visual-state",
     "schema-invalid",
   );
-  await expectPreviewCaption(page, "Tora tiene una regla.");
+  await expectPreviewCaption(page, "Tora tiene una regla: Nunca desplegar en viernes.");
 
   await dialog.getByRole("button", {name: "Cancel import"}).click();
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -743,7 +743,7 @@ test("policy-rejected import stays non-active and exports the original source ve
     "data-loss-risk",
     "true",
   );
-  await expectPreviewCaption(page, "Tora tiene una regla.");
+  await expectPreviewCaption(page, "Tora tiene una regla: Nunca desplegar en viernes.");
 
   const downloadPromise = page.waitForEvent("download");
   await candidateBanner
@@ -1004,7 +1004,7 @@ test("autosave failure warning clears when active Story returns to durable state
   await caption.fill("Temporary memory-only edit");
   await expect(page.getByText(/Autosave failed:/)).toBeVisible();
 
-  await caption.fill("Tora tiene una regla.");
+  await caption.fill("Tora tiene una regla: Nunca desplegar en viernes.");
 
   await expect(page.getByText(/Autosave failed:/)).toHaveCount(0);
   await expect(page.locator(".app-shell")).toHaveAttribute(
