@@ -1,6 +1,6 @@
 # WEB-007 — Static deployment and Web MVP verification
 
-> Status: **Proposed**
+> Status: **In progress**
 
 ## Goal
 
