@@ -62,7 +62,7 @@ flowchart LR
 
     subgraph Browser
       L --> DB[Browser local asset DB]
-      DB --> U[Object URLs]
+      DB --> U[Ephemeral runtime source<br/>blob: if ASSET-001 gate passes]
       U --> Player[Remotion Player]
       U --> WebRender[Browser MP4 render]
     end
@@ -96,7 +96,7 @@ decoded width/height
 original Blob
 ~~~
 
-Blob/object URLs are runtime-only and must never be persisted in Story/YAML/localStorage.
+Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
 
 ## Local CLI model
 
