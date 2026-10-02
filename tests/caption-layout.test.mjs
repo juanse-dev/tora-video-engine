@@ -9,6 +9,7 @@ import {
   estimateCaptionLineWidth,
   getCaptionFontSize,
   layoutCaptionLines,
+  resolveCaptionLayout,
 } from "../src/captionLayout.ts";
 import {MAX_CAPTION_LENGTH} from "../src/story/constraints.ts";
 
@@ -156,6 +157,29 @@ describe("caption layout", () => {
     assert.ok(
       estimateCaptionLineWidth(lines[0], "impact", fontSize) <=
         CAPTION_CONTENT_WIDTH,
+    );
+  });
+
+  it("reports no valid layout when an indivisible no-break run cannot fit at 32px", () => {
+    const text = `${"A\u00A0".repeat(20)}A`;
+    const minimumLines = layoutCaptionLines(
+      text,
+      "impact",
+      CAPTION_MIN_FONT_SIZE,
+    );
+
+    assert.equal(minimumLines.length, 1);
+    assert.ok(
+      estimateCaptionLineWidth(
+        minimumLines[0],
+        "impact",
+        CAPTION_MIN_FONT_SIZE,
+      ) > CAPTION_CONTENT_WIDTH,
+    );
+    assert.equal(resolveCaptionLayout("impact", text), null);
+    assert.throws(
+      () => getCaptionFontSize("impact", text),
+      /cannot fit within the deterministic layout/,
     );
   });
 
