@@ -543,52 +543,93 @@ test("shared caption layout exposes centered, left, natural wrap, and hard wrap 
     ),
   ).toBe(true);
 
-  for (const text of [
-    `A${"\u2007".repeat(20)}A`,
-    "m".repeat(11),
-  ]) {
-    await importSingleScene(page, {
-      type: "chaos",
-      text,
-      pose: "panic",
-      background: "server-room",
-    });
-    caption = page.locator("[data-caption-align=center]").first();
+  const figureSpaceText = `A${"\u2007".repeat(20)}A`;
+  await importSingleScene(page, {
+    type: "chaos",
+    text: figureSpaceText,
+    pose: "panic",
+    background: "server-room",
+  });
+  caption = page.locator("[data-caption-align=center]").first();
 
-    const measured = await caption.evaluate((element) => {
-      const content = element.querySelector("[data-caption-content]");
-      const lines = [...element.querySelectorAll("[data-caption-line]")];
+  const figureSpaceMeasured = await caption.evaluate((element) => {
+    const content = element.querySelector("[data-caption-content]");
+    const lines = [...element.querySelectorAll("[data-caption-line]")];
 
-      if (!(content instanceof HTMLElement)) {
-        throw new Error("Missing caption content element");
-      }
+    if (!(content instanceof HTMLElement)) {
+      throw new Error("Missing caption content element");
+    }
 
-      const style = getComputedStyle(content);
-      const available =
-        content.clientWidth -
-        Number.parseFloat(style.paddingLeft) -
-        Number.parseFloat(style.paddingRight);
+    const style = getComputedStyle(content);
+    const available =
+      content.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
 
-      return {
-        available,
-        lines: lines.map((line) => ({
-          text: line.textContent ?? "",
-          width:
-            line instanceof HTMLElement
-              ? line.scrollWidth
-              : Number.POSITIVE_INFINITY,
-        })),
-      };
-    });
+    return {
+      available,
+      fontSize: Number.parseFloat(getComputedStyle(lines[0]).fontSize),
+      lines: lines.map((line) => ({
+        text: line.textContent ?? "",
+        width:
+          line instanceof HTMLElement
+            ? line.scrollWidth
+            : Number.POSITIVE_INFINITY,
+      })),
+    };
+  });
 
-    expect(measured.lines.length).toBeGreaterThan(1);
-    expect(measured.lines.map(({text}) => text).join("")).toBe(text);
-    expect(
-      measured.lines.every(
-        ({width}) => width <= measured.available + 1,
-      ),
-    ).toBe(true);
-  }
+  expect(figureSpaceMeasured.lines).toHaveLength(1);
+  expect(figureSpaceMeasured.lines[0].text).toBe(figureSpaceText);
+  expect(figureSpaceMeasured.fontSize).toBeLessThan(92);
+  expect(figureSpaceMeasured.lines[0].width).toBeLessThanOrEqual(
+    figureSpaceMeasured.available + 1,
+  );
+
+  const lowercaseText = "m".repeat(11);
+  await importSingleScene(page, {
+    type: "chaos",
+    text: lowercaseText,
+    pose: "panic",
+    background: "server-room",
+  });
+  caption = page.locator("[data-caption-align=center]").first();
+
+  const lowercaseMeasured = await caption.evaluate((element) => {
+    const content = element.querySelector("[data-caption-content]");
+    const lines = [...element.querySelectorAll("[data-caption-line]")];
+
+    if (!(content instanceof HTMLElement)) {
+      throw new Error("Missing caption content element");
+    }
+
+    const style = getComputedStyle(content);
+    const available =
+      content.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+
+    return {
+      available,
+      lines: lines.map((line) => ({
+        text: line.textContent ?? "",
+        width:
+          line instanceof HTMLElement
+            ? line.scrollWidth
+            : Number.POSITIVE_INFINITY,
+      })),
+    };
+  });
+
+  expect(lowercaseMeasured.lines.length).toBeGreaterThan(1);
+  expect(
+    lowercaseMeasured.lines.map(({text}) => text).join(""),
+  ).toBe(lowercaseText);
+  expect(
+    lowercaseMeasured.lines.every(
+      ({width}) => width <= lowercaseMeasured.available + 1,
+    ),
+  ).toBe(true);
 
   const decomposed = "e\u0301".repeat(90);
   await importSingleScene(page, {
