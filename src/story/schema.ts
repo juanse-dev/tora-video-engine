@@ -37,7 +37,7 @@ export const StorySceneSchema = z
       )
       .refine(isCaptionTextSupported, {
         message:
-          "Text contains characters unsupported by the bundled caption font",
+          "Text contains characters unsupported by the bundled caption renderer",
       }),
     duration: z
       .number()
