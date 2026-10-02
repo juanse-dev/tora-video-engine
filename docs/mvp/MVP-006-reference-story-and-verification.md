@@ -1,6 +1,6 @@
 # MVP-006 — Reference story and verification
 
-> Status: **Verified / MVP complete**. Automated checks cover the canonical story, exact timeline, YAML-only mutation behavior, render command, and reference artifact generation. The CI reference MP4 was inspected and passed the visual checklist.
+> Status: **Verified / MVP complete**. Automated checks cover the canonical story, exact timeline, YAML-only mutation behavior, render command, and reference artifact generation. The canonical copy was intentionally rebaselined during WEB-007 and the updated CI reference MP4 was re-rendered and visually inspected without caption clipping.
 
 ## Goal
 
@@ -116,10 +116,12 @@ Update the root README so that:
 
 ## Verification evidence
 
-The original v0.1 reference artifact was inspected after the automated checks passed. The canonical copy was intentionally refreshed during WEB-007; the updated Story preserves the same scene/timeline/asset contract, and its longer captions were manually exercised on the Netlify Deploy Preview without clipping. CI now also renders the canonical reference Story on pull requests so the CLI path is revalidated before such copy changes merge.
+The original v0.1 reference artifact was inspected after the automated checks passed. The canonical copy was intentionally refreshed during WEB-007 while preserving the same scene/timeline/asset contract.
 
-Current reference evidence:
+The refreshed golden was revalidated on PR #16 before merge:
 
+- GitHub Actions run: `36959581582`, head `3488207286d5418fdc4d742712c3c4e9a00f5739`;
+- reference artifact: `mvp-reference-render` (artifact `11207104308`);
 - codec: H.264;
 - dimensions: 1080 × 1920;
 - frame rate: 30 FPS;
@@ -128,9 +130,12 @@ Current reference evidence:
 - scene order: intro → dialogue → chaos → punchline;
 - Tora poses: formal → confused → panic → coffee;
 - backgrounds: office → office → server-room → office;
-- fade, float, and slowZoom are visibly active;
-- captions remain visible with no unexpected clipping;
-- sampled scene boundaries contain no blank frames.
+- representative CLI-render frames at 1.5s, 4.5s, 7.5s, and 10.5s were inspected and all four captions are visible and readable with no clipping, including the longer intro and dialogue copy;
+- the Netlify Deploy Preview was also exercised in a real browser and browser-side MP4 rendering completed successfully with the refreshed Story;
+- fade, float, and slowZoom remain unchanged from the previously accepted visual contract;
+- sampled scene boundaries remain covered by the automated/browser golden checks.
+
+CI now renders and uploads the canonical reference Story on pull requests as well as pushes, so future changes to the golden are revalidated before merge.
 
 ## MVP completion checklist
 
