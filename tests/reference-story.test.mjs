@@ -36,7 +36,7 @@ const withMutatedStory = async (mutate, callback) => {
 };
 
 describe("MVP reference story", () => {
-  it("matches the canonical v0.1 story exactly", async () => {
+  it("matches the current canonical reference story exactly", async () => {
     const story = await loadStory(referencePath);
 
     assert.deepEqual(story, {
@@ -47,7 +47,7 @@ describe("MVP reference story", () => {
           pose: "formal",
           background: "office",
           animation: "fade",
-          text: "Tora tiene una regla.",
+          text: "Tora tiene una regla: Nunca desplegar en viernes.",
           duration: 3,
         },
         {
@@ -55,14 +55,14 @@ describe("MVP reference story", () => {
           pose: "confused",
           background: "office",
           animation: "float",
-          text: "Pero es solo un cambio pequeño...",
+          text: "Pero es solo un cambio pequeño... qué es lo peor que podría pasar?",
           duration: 3,
         },
         {
           type: "chaos",
           pose: "panic",
           background: "server-room",
-          text: "Production is down.",
+          text: "Se cayó el sistema!",
           duration: 3,
         },
         {
