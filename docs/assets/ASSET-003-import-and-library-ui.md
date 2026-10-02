@@ -68,7 +68,7 @@ Provide category-aware import actions:
 
 The category is selected by the entry point rather than inferred from image dimensions or filename.
 
-The file picker accepts PNG/JPEG/WebP only as a hint, but ASSET-002 content validation remains authoritative.
+The file picker accepts static PNG/JPEG/WebP only as a hint, but ASSET-002 content validation remains authoritative. APNG and animated WebP are rejected even if the picker accepts their container family.
 
 One import action may process one file in v0.3. Batch import is optional and must not complicate error recovery.
 
@@ -93,7 +93,7 @@ On success:
 - make it selectable immediately;
 - if the same bytes/category already exist, focus/select the existing card and explain that the duplicate was reused.
 
-On failure, keep the previous Story/library state intact and show an actionable error.
+On failure, keep the previous Story/library state intact and show an actionable error, including resource-limit failures (25 MiB, 8192 px per side, 50 MP) and animated-image rejection.
 
 ## Initial labels
 
@@ -177,7 +177,7 @@ Offer at least:
 
 The user selects a local image.
 
-If its SHA-256 + category produces the exact missing ref:
+If its SHA-256 + **same category** produces the exact missing ref:
 
 - durable library entry is created/reused;
 - every scene referencing that ref resolves automatically;
@@ -225,6 +225,21 @@ Near My assets include concise product copy equivalent to:
 
 Do not claim permanence: browser/site data may be cleared or evicted.
 
+Also make origin-local behavior discoverable: production, Deploy Previews, and localhost have separate My assets libraries because browser storage is same-origin.
+
+## Story lifecycle does not clear the library
+
+My assets is a reusable browser library, not Story-owned state.
+
+Therefore:
+
+- **Reset project** does not delete local assets;
+- importing/replacing the current Story does not delete local assets;
+- switching editor modes does not delete local assets;
+- deleting an asset happens only through an explicit asset-library action.
+
+A one-click **Clear entire asset library** operation is out of scope for v0.3.
+
 ## Storage errors
 
 If browser storage is unavailable/full:
@@ -270,12 +285,14 @@ Minimum browser-level coverage:
 - delete-in-use warns with affected current-scene count;
 - confirmed delete leaves exact Story refs intact and creates missing state;
 - Cancel delete preserves asset and Story;
-- exact-file re-import repairs missing ref without Story mutation;
+- exact-file same-category re-import repairs missing ref without Story mutation;
 - different-file import cannot masquerade as matching repair;
 - choose replacement intentionally changes the selected scene ref;
 - storage failure does not commit imported ref;
 - asset mutation controls are disabled during browser render;
-- local-only disclosure is visible.
+- local-only disclosure is visible;
+- production/Deploy Preview/localhost origin separation is communicated;
+- Reset project and Story import do not delete My assets.
 
 ## Acceptance criteria
 
@@ -293,7 +310,8 @@ Minimum browser-level coverage:
 - drag-and-drop reordering of asset library;
 - cloud sync;
 - sharing library entries;
-- global replacement across arbitrary exported Stories.
+- global replacement across arbitrary exported Stories;
+- bulk/one-click clearing of the entire asset library.
 
 ## Done when
 
