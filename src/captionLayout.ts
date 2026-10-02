@@ -348,10 +348,17 @@ export const getCaptionFontSize = (
     fontSize >= CAPTION_MIN_FONT_SIZE;
     fontSize -= 1
   ) {
-    if (
-      estimateCaptionHeight(text, variant, fontSize) <=
-      CAPTION_TEXT_MAX_HEIGHT
-    ) {
+    const lines = layoutCaptionLines(text, variant, fontSize);
+    const fitsHeight =
+      lines.length * fontSize * CAPTION_LINE_HEIGHT <=
+      CAPTION_TEXT_MAX_HEIGHT;
+    const fitsWidth = lines.every(
+      (line) =>
+        estimateCaptionLineWidth(line, variant, fontSize) <=
+        CAPTION_CONTENT_WIDTH,
+    );
+
+    if (fitsHeight && fitsWidth) {
       return fontSize;
     }
   }
