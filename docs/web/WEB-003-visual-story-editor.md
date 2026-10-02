@@ -1,6 +1,6 @@
 # WEB-003 — Visual Story editor
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 
