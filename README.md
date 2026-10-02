@@ -2,7 +2,7 @@
 
 Tora Video Engine is a small declarative video renderer and local-first browser authoring tool built with Remotion. The same validated `Story` drives the local CLI, Remotion Player preview, and browser-side H.264 MP4 rendering.
 
-> Status: **v0.1 renderer complete; v0.2 Web Authoring implementation complete through WEB-006; WEB-007 production deployment verification in progress.** The v0.1 reference render is accepted in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md), and the web roadmap lives in [docs/web/](docs/web/README.md).
+> Status: **v0.1 renderer complete; v0.2 Web Authoring MVP complete and deployed.** Production: `https://tora-video-engine.netlify.app`. The v0.1 reference render is accepted in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md), and the v0.2 acceptance record lives in [docs/web/](docs/web/README.md).
 
 ## MVP flow
 
@@ -227,6 +227,6 @@ The v0.2 Web Authoring sequence is:
 4. Discoverable asset catalog.
 5. YAML workflow and local persistence.
 6. Browser-side H.264 MP4 rendering.
-7. Static deployment and production verification — **in progress**.
+7. Static deployment and production verification — **complete**.
 
 See [docs/web/README.md](docs/web/README.md) for the source-of-truth architecture and acceptance criteria.
