@@ -337,10 +337,15 @@ export const estimateCaptionHeight = (
   fontSize *
   CAPTION_LINE_HEIGHT;
 
-export const getCaptionFontSize = (
+export type ResolvedCaptionLayout = {
+  fontSize: number;
+  lines: string[];
+};
+
+export const resolveCaptionLayout = (
   variant: CaptionVariant,
   text: string,
-): number => {
+): ResolvedCaptionLayout | null => {
   const baseFontSize = baseFontSizes[variant];
 
   for (
@@ -359,9 +364,32 @@ export const getCaptionFontSize = (
     );
 
     if (fitsHeight && fitsWidth) {
-      return fontSize;
+      return {
+        fontSize,
+        lines,
+      };
     }
   }
 
-  return CAPTION_MIN_FONT_SIZE;
+  return null;
+};
+
+export const isCaptionLayoutSupported = (
+  variant: CaptionVariant,
+  text: string,
+): boolean => resolveCaptionLayout(variant, text) !== null;
+
+export const getCaptionFontSize = (
+  variant: CaptionVariant,
+  text: string,
+): number => {
+  const layout = resolveCaptionLayout(variant, text);
+
+  if (layout === null) {
+    throw new RangeError(
+      "Caption cannot fit within the deterministic layout at the minimum font size",
+    );
+  }
+
+  return layout.fontSize;
 };
