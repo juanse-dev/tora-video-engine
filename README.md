@@ -1,8 +1,8 @@
 # Tora Video Engine
 
-Tora Video Engine is a small declarative video renderer built with Remotion. The v0.1 MVP turns a validated YAML story into a deterministic vertical H.264 MP4.
+Tora Video Engine is a small declarative video renderer and local-first browser authoring tool built with Remotion. The same validated `Story` drives the local CLI, Remotion Player preview, and browser-side H.264 MP4 rendering.
 
-> Status: **v0.1 MVP complete**. The canonical reference render passes automated verification and the final visual checklist in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md).
+> Status: **v0.1 renderer complete; v0.2 Web Authoring implementation complete through WEB-006; WEB-007 production deployment verification in progress.** The v0.1 reference render is accepted in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md), and the web roadmap lives in [docs/web/](docs/web/README.md).
 
 ## MVP flow
 
@@ -28,6 +28,22 @@ MP4
 
 The implementation roadmap and acceptance criteria live in [docs/mvp/](docs/mvp/README.md). Those specs are the source of truth for v0.1.
 
+## Web authoring flow
+
+```text
+bundled assets + visual/YAML editor
+                ↓
+        validated Story
+                ↓
+       Remotion Player
+                ↓
+ browser H.264 MP4 render
+                ↓
+           download
+```
+
+The v0.2 web app is intentionally single-user, local-first, backend-free, and root-path hosted. Local persistence uses browser storage; browser rendering uses the same Story/timeline/components as the CLI.
+
 ## Install
 
 ```bash
@@ -50,6 +66,32 @@ output/friday-deploy.mp4
 
 The output filename is derived deterministically from the input filename. Re-running the command replaces that same output. A failed validation or render does not leave a stale MP4 behind.
 
+## Web app
+
+Run the local Vite authoring app:
+
+```bash
+npm run web:dev
+```
+
+Build the deployable static site:
+
+```bash
+npm run web:build
+```
+
+Preview the production build locally:
+
+```bash
+npm run web:preview
+```
+
+The static output is written to `dist/web`. The repository includes `netlify.toml` for a root-hosted Netlify deployment using `npm run web:build`; no Netlify Functions are required.
+
+Browser MP4 export is enabled only when runtime capability detection confirms the Web Locks API, H.264 client rendering, and Remotion's `web-fs` output target. If browser rendering is unavailable, visual/YAML authoring, Player preview, YAML export, and the local CLI remain usable.
+
+Client-side Remotion rendering emits mandatory licensing telemetry and must not be described as fully offline. Production licensing/privacy details and the release checklist are documented in [docs/web/production-deployment.md](docs/web/production-deployment.md).
+
 ## Remotion Studio
 
 ```bash
@@ -63,9 +105,11 @@ Studio opens the same canonical reference story used by the MVP tests.
 ```bash
 npm test
 npm run lint
+npm run web:build
+npm run test:browser
 ```
 
-CI additionally renders the canonical story with the real `npm run video` command, verifies the MP4 exists and is non-empty, uploads the reference render as an artifact, and verifies that invalid input cannot leave a stale output.
+CI also verifies the static web artifact, runs the browser-render golden, exercises the production Player/browser flow, renders the CLI smoke/reference Story, and verifies that invalid input cannot leave a stale MP4 behind.
 
 ## v0.1 story format
 
@@ -79,20 +123,20 @@ scenes:
     pose: formal
     background: office
     animation: fade
-    text: "Tora tiene una regla."
+    text: "Tora tiene una regla: Nunca desplegar en viernes."
     duration: 3
 
   - type: dialogue
     pose: confused
     background: office
     animation: float
-    text: "Pero es solo un cambio pequeño..."
+    text: Pero es solo un cambio pequeño... qué es lo peor que podría pasar?
     duration: 3
 
   - type: chaos
     pose: panic
     background: server-room
-    text: "Production is down."
+    text: Se cayó el sistema!
     duration: 3
 
   - type: punchline
@@ -175,4 +219,14 @@ The completed v0.1 sequence is:
 5. One-command YAML → MP4 rendering.
 6. Reference story and verification.
 
-Future work can build on this renderer with richer assets, audio, content-generation tooling, and eventually AI-assisted Writer/Director workflows without changing the v0.1 contract.
+The v0.2 Web Authoring sequence is:
+
+1. Browser-safe Story boundary.
+2. Static web shell and Remotion Player.
+3. Visual Story editor.
+4. Discoverable asset catalog.
+5. YAML workflow and local persistence.
+6. Browser-side H.264 MP4 rendering.
+7. Static deployment and production verification — **in progress**.
+
+See [docs/web/README.md](docs/web/README.md) for the source-of-truth architecture and acceptance criteria.

@@ -1,6 +1,6 @@
 # WEB-002 — Static web shell and Remotion Player
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 

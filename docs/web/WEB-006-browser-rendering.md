@@ -1,6 +1,6 @@
 # WEB-006 — Browser-side MP4 rendering
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 

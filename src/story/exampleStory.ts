@@ -8,7 +8,7 @@ export const exampleStory: Story = {
       pose: "formal",
       background: "office",
       animation: "fade",
-      text: "Tora tiene una regla.",
+      text: "Tora tiene una regla: Nunca desplegar en viernes.",
       duration: 3,
     },
     {
@@ -16,14 +16,14 @@ export const exampleStory: Story = {
       pose: "confused",
       background: "office",
       animation: "float",
-      text: "Pero es solo un cambio pequeño...",
+      text: "Pero es solo un cambio pequeño... qué es lo peor que podría pasar?",
       duration: 3,
     },
     {
       type: "chaos",
       pose: "panic",
       background: "server-room",
-      text: "Production is down.",
+      text: "Se cayó el sistema!",
       duration: 3,
     },
     {

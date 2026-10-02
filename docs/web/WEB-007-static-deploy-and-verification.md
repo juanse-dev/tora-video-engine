@@ -1,6 +1,6 @@
 # WEB-007 — Static deployment and Web MVP verification
 
-> Status: **Proposed**
+> Status: **In progress**
 
 ## Goal
 
@@ -30,12 +30,14 @@ No Tora backend is required. This does **not** mean browser rendering is offline
 
 Before publishing a production URL, verify the then-current Remotion license terms and record the basis under which the deployment operates.
 
-As of **2026-09-30**, Remotion's published [License & Pricing](https://www.remotion.dev/docs/license/pricing) and [License FAQ](https://www.remotion.dev/docs/license/faq) state that:
+As of **2026-10-01**, Remotion's published [License & Pricing](https://www.remotion.dev/docs/license/pricing) and [License FAQ](https://www.remotion.dev/docs/license/faq) state that:
 
 - individuals and organizations/teams of up to 3 people are eligible for the Free License, with additional categories such as non-profits/evaluation described upstream;
 - organizations not eligible for the Free License require a Company License;
 - programmatic `renderMediaOnWeb()` / `renderStillOnWeb()` and use of `<Player>` are classified as automation; video editors are explicitly listed as an Automators use case;
 - under the current Company License pricing, Remotion for Automators is **$0.01 per render with a $100/month minimum**; Player previews themselves are not counted as renders.
+
+For the current Tora Video Engine deployment, the project is operated by an individual and therefore records **Free License** as its applicable license basis. The Company License / Automators pricing above is only a future-change reference if the project later becomes operated by an organization that no longer qualifies for the Free License.
 
 Therefore static hosting/no Tora backend must never be documented as implying zero software-license cost.
 
@@ -232,13 +234,13 @@ Update the root README when implementation reaches this spec so it documents:
 
 ## v0.2 completion checklist
 
-- [ ] WEB-001 accepted
-- [ ] WEB-002 accepted
-- [ ] WEB-003 accepted
-- [ ] WEB-004 accepted
-- [ ] WEB-005 accepted
-- [ ] WEB-006 accepted
-- [ ] production static build succeeds
+- [x] WEB-001 accepted
+- [x] WEB-002 accepted
+- [x] WEB-003 accepted
+- [x] WEB-004 accepted
+- [x] WEB-005 accepted
+- [x] WEB-006 accepted
+- [x] production static build succeeds
 - [ ] deployed site loads without application backend
 - [ ] visual editor flow passes
 - [ ] visual title >65,536 UTF-16 code units and visual caption >360 UTF-16 code units are rejected before Story validation

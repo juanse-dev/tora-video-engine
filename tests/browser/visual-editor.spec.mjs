@@ -20,7 +20,7 @@ test("valid visual edits commit while invalid drafts keep the last active previe
   const status = page.locator("[data-editor-status]");
   const preview = page.locator(".preview-frame");
 
-  await expect(caption).toHaveValue("Tora tiene una regla.");
+  await expect(caption).toHaveValue("Tora tiene una regla: Nunca desplegar en viernes.");
   await caption.fill("");
 
   await expect(status).toHaveAttribute(
@@ -35,7 +35,7 @@ test("valid visual edits commit while invalid drafts keep the last active previe
     "data-visual-pending",
     "true",
   );
-  await expectPreviewCaption(preview, "Tora tiene una regla.");
+  await expectPreviewCaption(preview, "Tora tiene una regla: Nunca desplegar en viernes.");
 
   await caption.fill("WEB-003 live caption");
 
@@ -183,7 +183,7 @@ test("policy-rejected visual candidate is observable while Active Story stays mo
   const preview = page.locator(".preview-frame");
   const duration = page.getByLabel("Duration (seconds)");
 
-  await expectPreviewCaption(preview, "Tora tiene una regla.");
+  await expectPreviewCaption(preview, "Tora tiene una regla: Nunca desplegar en viernes.");
   await duration.fill("301");
 
   await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -194,7 +194,7 @@ test("policy-rejected visual candidate is observable while Active Story stays mo
     "data-visual-pending",
     "true",
   );
-  await expectPreviewCaption(preview, "Tora tiene una regla.");
+  await expectPreviewCaption(preview, "Tora tiene una regla: Nunca desplegar en viernes.");
 });
 
 

@@ -50,6 +50,14 @@ jobs:
           test -s dist/web/backgrounds/office.png
           test -s dist/web/backgrounds/server-room.png
 
+      - name: Upload static web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-static-build
+          path: dist/web
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify required browser render golden
         run: npx playwright test --config=playwright.browser-render.config.mjs
 
@@ -70,17 +78,14 @@ jobs:
         run: test -s output/ci-smoke.mp4
 
       - name: Render reference story
-        if: github.event_name == 'push'
         env:
           TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: npm run video -- stories/friday-deploy.yaml
 
       - name: Verify reference artifact
-        if: github.event_name == 'push'
         run: test -s output/friday-deploy.mp4
 
       - name: Upload reference render
-        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: mvp-reference-render
