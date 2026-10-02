@@ -78,17 +78,14 @@ jobs:
         run: test -s output/ci-smoke.mp4
 
       - name: Render reference story
-        if: github.event_name == 'push'
         env:
           TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: npm run video -- stories/friday-deploy.yaml
 
       - name: Verify reference artifact
-        if: github.event_name == 'push'
         run: test -s output/friday-deploy.mp4
 
       - name: Upload reference render
-        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: mvp-reference-render
