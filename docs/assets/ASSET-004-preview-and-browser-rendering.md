@@ -4,7 +4,7 @@
 
 ## Goal
 
-Render browser-local pose/background images through the same shared Remotion composition used by Player and browser MP4 export, while keeping asset bytes/runtime URLs outside Story data.
+Render browser-local pose/background images through the same shared Remotion composition used by Player and browser MP4 export, using the runtime source transport already proven by ASSET-001 while keeping asset bytes/runtime sources outside Story data.
 
 ## Shared composition contract
 
@@ -76,11 +76,11 @@ Before mounting/rendering an Active Story, the web app:
 1. collects distinct local refs used by the Story;
 2. resolves them against ASSET-002;
 3. obtains original Blobs;
-4. creates/reuses object URLs;
+4. creates/reuses the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
 5. builds the runtime local-source map;
 6. exposes readiness/missing refs separately from Story state.
 
-Only refs used by the Active Story need runtime object URLs.
+Only refs used by the Active Story need runtime sources.
 
 Do not load the entire My assets library into render props.
 
@@ -131,14 +131,14 @@ Production MP4 rendering with any missing required asset is prohibited.
 
 The existing Player blocks frame advancement while render-critical images/fonts are loading.
 
-Local object-URL images must participate in the same readiness guarantee.
+Local runtime-source images must participate in the same readiness guarantee.
 
 Requirements:
 
 - first playback frame does not advance before required local images decode/load;
 - changing a local reference invalidates readiness for the new generation;
 - stale completion from an older local-asset generation cannot unblock a newer Story;
-- duplicate scenes using one local ref do not create unbounded duplicate storage reads/object URLs.
+- duplicate scenes using one local ref do not create unbounded duplicate storage reads/runtime sources.
 
 Use Remotion's supported image primitives where possible.
 
@@ -170,7 +170,7 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 2. re-evaluate browser Story policy;
 3. resolve/snapshot all local asset sources for that Story;
 4. require asset readiness;
-5. hold the object URLs/Blob snapshots stable;
+5. hold the resolved runtime sources/Blob snapshots stable;
 6. continue through existing capability/lock/OPFS/render lifecycle.
 
 If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
@@ -183,9 +183,9 @@ Once rendering begins:
 
 - Story snapshot is immutable;
 - local-source map is immutable;
-- object URLs referenced by that snapshot remain valid until render settles and cleanup/download materialization completes;
+- runtime sources referenced by that snapshot remain valid until render settles and cleanup/download materialization completes;
 - library import/rename/delete/apply controls are disabled by the authoring lock;
-- a cross-tab delete of the durable IndexedDB entry must not invalidate an already-materialized Blob/object-URL snapshot in the rendering tab.
+- a cross-tab delete of the durable IndexedDB entry must not invalidate an already-materialized Blob/runtime-source snapshot in the rendering tab.
 
 After render settlement, refresh readiness from durable library state.
 
@@ -214,23 +214,29 @@ renderMediaOnWeb({
 
 Do not fetch IndexedDB from inside render frames.
 
-## Blob URL scope
+## Runtime source transport
 
-The implementation must prove that the pinned Remotion browser renderer can consume the chosen `blob:` sources through the normal HTML image path with `allowHtmlInCanvas: false`.
+ASSET-001 is the mandatory gate that proves the chosen browser runtime transport against pinned Remotion `4.0.529` with `allowHtmlInCanvas: false`.
 
-If that is not supported reliably, stop and revise the runtime source transport without changing the Story reference model. Do not silently fall back to base64-in-Story.
+ASSET-004 must consume that accepted transport; it must not reopen the transport decision implicitly.
 
-## Object URL lifecycle
+If ASSET-001 accepted `blob:` object URLs, use them. If ASSET-001 had to choose a different ephemeral transport, use that proven transport while preserving the same Story refs and IndexedDB Blob storage.
+
+Under no outcome may runtime image bytes/base64 be persisted into Story/YAML.
+
+## Runtime source lifecycle
 
 Use a bounded source manager that:
 
-- creates one runtime URL per needed Blob/digest where practical;
+- creates one runtime source per needed Blob/digest where practical;
 - shares it across repeated scene refs;
 - preserves it for Player/render consumers;
-- revokes obsolete URLs only after no current consumer/render snapshot can use them;
-- revokes all owned URLs on app teardown.
+- releases/revokes obsolete sources only after no current consumer/render snapshot can use them;
+- releases all owned ephemeral sources on app teardown.
 
-A deleted asset may keep an already-open URL alive only for the lifetime of an in-flight frozen render; new readiness checks see it as missing.
+When the accepted transport is `blob:`, this specifically means `URL.createObjectURL()` + bounded `URL.revokeObjectURL()` lifecycle.
+
+A deleted asset may keep an already-materialized runtime source alive only for the lifetime of an in-flight frozen render; new readiness checks see it as missing.
 
 ## Browser download result
 
@@ -262,7 +268,7 @@ Minimum unit/browser coverage:
 - render start defensively rechecks asset readiness;
 - browser render receives the frozen Story + source-map snapshot;
 - asset mutation controls remain locked while rendering;
-- deleting durable asset from another tab does not break an already-held Blob render snapshot;
+- deleting durable asset from another tab does not break an already-held Blob/runtime-source render snapshot;
 - after render settlement, durable deletion becomes missing state;
 - browser golden renders one custom pose and one custom background through normal web renderer;
 - custom-asset MP4 retains v0.2 dimensions/FPS/video-only metadata.
@@ -273,7 +279,7 @@ Minimum unit/browser coverage:
 - local bytes remain outside Story/YAML;
 - Player can communicate missing refs without changing Story meaning;
 - browser MP4 cannot start with unresolved assets;
-- browser render of resolved local images is proven on the pinned Remotion version;
+- ASSET-004 uses the ASSET-001-proven runtime transport and browser-render golden confirms resolved local images through the shared composition;
 - v0.2 bundled output remains intact.
 
 ## Out of scope
