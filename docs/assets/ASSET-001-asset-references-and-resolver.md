@@ -6,7 +6,7 @@
 
 Extend the Story asset boundary so poses/backgrounds may refer either to Tora's bundled images or to deterministic local custom assets, without embedding bytes or introducing a second rendering model.
 
-This spec establishes identity and readiness only. Import/storage/UI are later specs.
+This spec establishes identity/readiness, the v0.3 project-persistence version boundary, and a mandatory browser-render transport spike. Import/storage/UI are later specs.
 
 ## Backward compatibility
 
@@ -45,7 +45,9 @@ Requirements:
 - pose fields accept only bundled poses or `local:pose:...`;
 - background fields accept only bundled backgrounds or `local:background:...`;
 - malformed/uppercase/truncated/unknown-category local refs fail Story schema validation;
-- display label and original filename are never part of identity.
+- display label and original filename are never part of identity;
+- labels do not need to be unique;
+- two visually identical images with different encoded bytes intentionally produce different refs.
 
 The same original bytes may therefore yield two category-specific refs with the same digest.
 
@@ -87,6 +89,35 @@ The bundled catalog remains the source of truth for:
 - category.
 
 Local library metadata is a separate inventory and must not be merged into source-controlled bundled catalog constants.
+
+## Project persistence version boundary
+
+Existing bundled Story/YAML **content** remains valid unchanged, but v0.3 expands the valid domain of `pose` and `background`. Therefore browser project persistence must explicitly advance before any local ref can be durably written.
+
+Change:
+
+~~~text
+PERSISTENCE_VERSION = 1
+~~~
+
+to:
+
+~~~text
+PERSISTENCE_VERSION = 2
+~~~
+
+ASSET-001 owns the migration/version boundary:
+
+- a valid v1 bundled-only persisted Story migrates deterministically to a v2 envelope with identical Story content;
+- v2 does not contain image bytes or asset-library metadata; it only permits the expanded Story refs;
+- malformed/unsupported v1 recovery behavior remains protected;
+- an old v0.2 tab encountering a v2 envelope treats it as unsupported-version/recovery rather than claiming to understand and then schema-rejecting a local ref;
+- the existing physical Story/recovery storage slots remain shared;
+- the persistence Web Lock name remains **unversioned** while those physical slots are shared across old/new bundles.
+
+The custom asset IndexedDB introduced by ASSET-002 has its own independent database schema version.
+
+Existing v0.2 YAML files do not require content migration. This persistence-envelope migration is a browser durable-state compatibility measure.
 
 ## Availability is not schema validity
 
@@ -170,6 +201,39 @@ A local resolver receives the exact local ref and either:
 
 The browser and Node implementations may differ in how they produce a runtime source, but they must consume the same Story ref grammar.
 
+## Browser render transport gate
+
+Before ASSET-002/003 build the full local library, ASSET-001 must prove that the pinned Remotion `4.0.529` browser renderer can consume a local image through the intended runtime transport.
+
+Primary spike:
+
+~~~text
+bounded local Blob
+      ↓
+URL.createObjectURL()
+      ↓
+shared Remotion <Img>
+      ↓
+renderMediaOnWeb()
+      ↓
+valid MP4 containing the local image
+~~~
+
+Requirements:
+
+- use the pinned Remotion version;
+- use the normal v0.2 web-render path;
+- keep `allowHtmlInCanvas: false`;
+- do not embed image bytes/base64 into Story/YAML;
+- verify the rendered MP4 actually contains the local image, not only that render completes;
+- verify object-URL lifetime is sufficient for the render.
+
+If `blob:` succeeds reliably, it becomes the browser runtime transport used by later specs.
+
+If it fails, revise only the ephemeral runtime transport and re-prove the spike. The stable ref grammar, SHA-256 identity, IndexedDB storage choice, and missing-asset semantics stay unchanged.
+
+**ASSET-002/003 must not proceed until this gate passes or a replacement runtime transport is deliberately proven.**
+
 ## Editor state implications
 
 Asset availability becomes another derived render-readiness input; it is **not** a pending visual draft.
@@ -205,6 +269,9 @@ Canonical YAML must not contain:
 Minimum automated coverage:
 
 - all existing bundled Story fixtures remain valid unchanged;
+- v1 bundled persisted project migrates deterministically to v2 with identical Story content;
+- a v2 project containing local refs is not written using the v1 envelope version;
+- cross-version persistence keeps the existing unversioned writer lock;
 - valid local pose ref parses;
 - valid local background ref parses;
 - pose rejects background-local ref;
@@ -214,16 +281,19 @@ Minimum automated coverage:
 - bundled catalog remains exhaustive over bundled values only;
 - a schema-valid Story with missing local refs remains schema/policy-valid but asset-unready;
 - the missing set is deduplicated when several scenes reference the same missing asset;
-- the same digest may appear as separate pose/background refs.
+- the same digest may appear as separate pose/background refs;
+- pinned web-render spike renders a local Blob/runtime source into an MP4 with the expected image.
 
 ## Acceptance criteria
 
-- no existing v0.2 Story requires migration;
+- no existing v0.2 Story/YAML content requires mutation;
+- valid persisted v1 bundled projects migrate safely to persistence envelope v2 before local refs may be persisted;
 - Story schema can safely represent local pose/background references;
 - Story/YAML contains references only, never bytes/runtime URLs;
 - bundled catalog stays closed and source-controlled;
 - local availability is explicitly separated from schema validity;
-- browser and CLI can implement different storage mechanisms behind the same resolver/readiness contract.
+- browser and CLI can implement different storage mechanisms behind the same resolver/readiness contract;
+- browser runtime source transport is proven against pinned Remotion before ASSET-002/003.
 
 ## Out of scope
 
@@ -236,4 +306,4 @@ Minimum automated coverage:
 
 ## Done when
 
-A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state without requiring the image bytes to exist in the same process.
+A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, v1 project persistence safely upgrades to v2, and the browser render transport gate is proven without putting asset bytes into Story data.
