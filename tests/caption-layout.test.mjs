@@ -142,21 +142,20 @@ describe("caption layout", () => {
     );
   });
 
-  it("uses a digit-width bound for figure spaces", () => {
+  it("uses a digit-width bound for figure spaces without breaking the no-break run", () => {
     const text = `A${"\u2007".repeat(20)}A`;
-    const lines = layoutCaptionLines(text, "impact", 92);
+    const fontSize = getCaptionFontSize("impact", text);
+    const lines = layoutCaptionLines(text, "impact", fontSize);
 
     assert.ok(
       estimateCaptionLineWidth("\u2007", "impact", 100) >= 100,
     );
-    assert.ok(lines.length > 1);
-    assert.equal(lines.join(""), text);
+    assert.ok(fontSize < 92);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0], text);
     assert.ok(
-      lines.every(
-        (line) =>
-          estimateCaptionLineWidth(line, "impact", 92) <=
-          CAPTION_CONTENT_WIDTH,
-      ),
+      estimateCaptionLineWidth(lines[0], "impact", fontSize) <=
+        CAPTION_CONTENT_WIDTH,
     );
   });
 
