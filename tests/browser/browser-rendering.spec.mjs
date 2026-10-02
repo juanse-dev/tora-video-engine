@@ -350,7 +350,7 @@ test("pending visual and YAML drafts block browser render", async ({page}) => {
 
   const yaml = page.getByLabel("YAML source");
   await yaml.fill((await yaml.inputValue()).replace(
-    "Tora tiene una regla.",
+    "Tora tiene una regla: Nunca desplegar en viernes.",
     "Unapplied YAML render draft",
   ));
 
