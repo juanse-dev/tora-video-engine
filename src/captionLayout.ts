@@ -22,6 +22,20 @@ const letterSpacing: Record<CaptionVariant, number> = {
 const COMBINING_MARK = /^\p{Mark}$/u;
 const ZERO_WIDTH_SPACE = "\u200B";
 const WORD_JOINER = "\u2060";
+const HARD_WRAP_NO_BREAK_CHARACTERS = new Set([
+  "\u00A0", // NO-BREAK SPACE
+  "\u2007", // FIGURE SPACE
+  "\u202F", // NARROW NO-BREAK SPACE
+  "\uFEFF", // ZERO WIDTH NO-BREAK SPACE
+  WORD_JOINER,
+]);
+
+const isHardWrapNoBreakCharacter = (
+  grapheme: string | undefined,
+): boolean =>
+  grapheme !== undefined &&
+  HARD_WRAP_NO_BREAK_CHARACTERS.has(grapheme);
+
 // Preserve every supported Unicode no-break whitespace character. JavaScript's
 // \s includes all four, so each must be excluded explicitly from the
 // collapsible set to avoid creating new line-break opportunities.
@@ -141,9 +155,13 @@ const segmentHardWrapUnits = (token: string): string[] => {
 
     current += grapheme;
 
-    // WORD JOINER forbids a break on either side, so keep the adjacent
-    // graphemes in the same hard-wrap unit.
-    if (grapheme === WORD_JOINER || next === WORD_JOINER) {
+    // Unicode no-break separators and WORD JOINER forbid a break on either
+    // side. Keep both adjacent graphemes in one indivisible hard-wrap unit so
+    // splitting an oversized token cannot reintroduce a forbidden boundary.
+    if (
+      isHardWrapNoBreakCharacter(grapheme) ||
+      isHardWrapNoBreakCharacter(next)
+    ) {
       continue;
     }
 
