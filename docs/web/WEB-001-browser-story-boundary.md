@@ -1,6 +1,6 @@
 # WEB-001 — Browser-compatible Story boundary
 
-> Status: **Proposed**
+> Status: **Accepted**
 
 ## Goal
 
