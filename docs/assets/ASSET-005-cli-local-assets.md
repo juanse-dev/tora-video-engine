@@ -38,14 +38,17 @@ They are intentionally separate from Tora's source-controlled bundled `public/` 
 
 CLI local assets follow the same v0.3 source rules as browser imports:
 
-- PNG;
+- static PNG (APNG rejected);
 - JPEG (`.jpg` / `.jpeg`);
-- WebP;
-- maximum 25 MiB per file.
+- static WebP (animated WebP rejected);
+- source size >0 and ≤25 MiB;
+- width ≤8192 px;
+- height ≤8192 px;
+- total decoded pixels ≤50 MP.
 
 Only supported image files are candidates for the local index.
 
-A supported extension does not override invalid content: inspect the content signature before accepting/indexing a file.
+A supported extension does not override invalid content: inspect the file structure/content, reject animated PNG/WebP, enforce dimensions/pixel limits, and require successful decode before accepting/indexing a file.
 
 ## No manifest required
 
@@ -99,8 +102,8 @@ For `npm run video -- story.yaml`:
 2. apply existing deterministic output/stale-file safeguards;
 3. collect distinct local visual refs;
 4. if no local refs exist, preserve the v0.2 path with no local-folder requirement;
-5. scan/hash only relevant local asset category directories;
-6. resolve every required ref;
+5. scan/validate/hash only relevant local asset category directories using the same source limits as browser import;
+6. resolve every required same-category ref;
 7. fail before launching Remotion if any required ref is missing;
 8. prepare an ephemeral runtime source map/staging area;
 9. invoke the shared Remotion composition with Story + resolved source map;
@@ -234,16 +237,34 @@ To intentionally use the different image:
 
 v0.3 does not match by filename similarity.
 
-## Optional developer helper
+## Required local ref discovery helper
 
-A small local command/helper that prints discovered refs is allowed if useful:
+v0.3 must include a local command/helper for authoring Stories directly from a checkout after copying files into `local-assets/`.
 
-~~~text
-my-cat.png
-→ local:pose:sha256:...
+Expected UX:
+
+~~~bash
+npm run assets
 ~~~
 
-but it is not required for the core Story render path and must not become a manifest dependency.
+Example output shape:
+
+~~~text
+local-assets/poses/my-cat.png
+  local:pose:sha256:<full-64-lowercase-hex-digest>
+
+local-assets/backgrounds/apartment.jpg
+  local:background:sha256:<full-64-lowercase-hex-digest>
+~~~
+
+Requirements:
+
+- print the **complete canonical ref**, not an abbreviated digest, so it is directly copy/pasteable into YAML;
+- use the same validation/hash/index code as the render path;
+- reject/report unsupported, animated, oversized, over-dimension, or undecodable files consistently;
+- do not create a user-maintained manifest or make filenames part of identity.
+
+The exact script name/output formatting may be refined during implementation, but this capability is required for v0.3.
 
 ## Tests
 
@@ -254,7 +275,9 @@ Minimum automated coverage:
 - SHA-256 matches browser test vectors;
 - nested supported files resolve if recursive scan is implemented;
 - unsupported/invalid-content files do not satisfy refs;
+- APNG/animated WebP do not satisfy refs;
 - >25 MiB candidate is not hashed/accepted;
+- >8192 px/side or >50 MP candidates are not accepted;
 - same bytes under duplicate filenames resolve deterministically;
 - same bytes in background directory cannot satisfy a pose ref;
 - all required refs resolved → runtime source map contains each ref once;
@@ -264,16 +287,19 @@ Minimum automated coverage:
 - staging does not mutate tracked `public/`;
 - staging is cleaned after success/failure;
 - end-to-end CLI fixture renders one custom pose and one custom background;
-- browser/Node hash of the same fixture bytes produces identical refs.
+- browser/Node hash of the same fixture bytes produces identical refs;
+- required asset helper prints complete canonical refs for valid files;
+- helper and render indexing apply the same format/resource validation.
 
 ## Acceptance criteria
 
-- local custom assets require only copying supported files into the documented local folders;
+- local custom assets require only copying supported files into the documented local folders plus using the built-in helper when a local-only author needs the canonical ref;
 - YAML remains machine-independent and contains no paths/bytes;
 - the same file resolves to the same ref in browser and Node;
 - missing assets fail early with actionable diagnostics;
 - bundled-only CLI behavior remains unchanged;
-- custom asset staging is ephemeral and deterministic.
+- custom asset staging is ephemeral and deterministic;
+- the required helper exposes full copy/pasteable refs without introducing a manifest.
 
 ## Out of scope
 
@@ -286,4 +312,4 @@ Minimum automated coverage:
 
 ## Done when
 
-A YAML exported from the browser can render locally after the user copies the exact referenced image files into `local-assets/poses` and/or `local-assets/backgrounds`, with no other project modification.
+A YAML exported from the browser can render locally after the user copies the exact referenced image files into the correct `local-assets/poses` and/or `local-assets/backgrounds` category. A local-only author can obtain the exact YAML refs from the required helper command without creating a manifest.
