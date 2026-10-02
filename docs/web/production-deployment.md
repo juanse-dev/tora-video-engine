@@ -127,6 +127,10 @@ WEB-007 is not accepted merely because the static build succeeds. Before declari
 
 The automated WEB-001…006 tests remain the regression suite; this checklist is the production-host verification that cannot be replaced by a local preview server alone.
 
+### Deploy Preview verification — 2026-10-01
+
+Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story. This is valid deployed-origin smoke/golden evidence for WEB-007, but the final production URL must still be rechecked after the PR is merged to `main`.
+
 ## Production release record
 
 Fill this in when the first production deployment is verified:
@@ -137,7 +141,7 @@ Fill this in when the first production deployment is verified:
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Pending |
+| Browser golden | Deploy Preview #16 passed: preview and browser MP4 render confirmed by user; production post-merge confirmation pending |
 | Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
 | License terms last checked | 2026-10-01 |
 | Telemetry/privacy review | Pending deployed-origin verification |
