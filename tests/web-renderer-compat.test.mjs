@@ -21,7 +21,7 @@ describe("WEB-006 web-renderer compatibility audit", () => {
       );
     }
 
-    assert.match(source, /layoutCaptionLines/);
+    assert.match(source, /resolveCaptionLayout/);
     assert.match(source, /data-caption-line/);
   });
 
