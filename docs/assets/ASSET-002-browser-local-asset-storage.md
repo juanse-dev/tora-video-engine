@@ -227,17 +227,19 @@ Requirements:
 
 A same-origin `BroadcastChannel` is the preferred invalidation signal. If a tab misses a signal, re-reading IndexedDB on focus/re-entry must converge to the durable state.
 
-## Runtime object URLs
+## Runtime source lifecycle
 
 ASSET-001 must already have proven the pinned Remotion browser-render transport gate before this spec is implemented.
 
 Blob URLs are runtime transport only when that ASSET-001 gate accepted `blob:` as the proven transport. If ASSET-001 chose another ephemeral transport, use that transport while preserving every persistence invariant below.
 
-A browser asset source manager may cache:
+When ASSET-001 accepts `blob:`, a browser asset source manager may cache:
 
 ~~~text
 digest → object URL
 ~~~
+
+For any other ASSET-001-proven transport, keep an equivalent bounded `digest → ephemeral runtime source` cache.
 
 but:
 
@@ -280,7 +282,7 @@ Minimum coverage:
 - deleting final metadata removes unreferenced Blob;
 - quota/storage failure leaves prior library intact;
 - reload rebuilds library metadata from IndexedDB;
-- browser object URLs are not persisted;
+- ephemeral runtime sources (including object URLs when used) are not persisted;
 - same-origin mutation invalidation refreshes stale library views.
 
 ## Acceptance criteria
