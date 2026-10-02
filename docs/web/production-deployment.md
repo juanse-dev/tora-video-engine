@@ -133,10 +133,10 @@ Fill this in when the first production deployment is verified:
 
 | Field | Value |
 | --- | --- |
-| Deployment commit | Pending first live deploy |
+| Deployment commit | Pending WEB-007 production deploy after merge |
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
-| Production URL | Pending first live deploy |
-| Host | Netlify project created |
+| Production URL | https://tora-video-engine.netlify.app |
+| Host | Netlify; GitHub repository linked, production branch `main` |
 | Browser golden | Pending |
 | Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
 | License terms last checked | 2026-10-01 |
