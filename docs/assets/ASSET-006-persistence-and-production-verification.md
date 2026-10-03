@@ -74,10 +74,14 @@ If a future “Clear local asset library” action is added, it is a separate de
 Startup order after ASSET-002:
 
 1. restore/validate the v1/v2 Story envelope using the ASSET-001 compatibility boundary and existing recovery safeguards, without eagerly rewriting a valid bundled-only v1 envelope;
-2. open the local asset database independently;
-3. resolve local refs used by the restored/fallback Active Story;
-4. derive asset readiness;
-5. mount preview with resolved images or explicit missing placeholders.
+2. detect asset-library Web Locks capability **before** any IndexedDB open that could create/upgrade schema;
+3. open the local asset database using ASSET-002 startup rules:
+   - coordinated create/migrate/open when Web Locks is available;
+   - non-creating exact-version read-only open only for a safely discovered directly-readable DB when Web Locks is unavailable;
+   - otherwise leave My assets unavailable/read-only without creating/migrating anything;
+4. resolve local refs used by the restored/fallback Active Story;
+5. derive asset readiness/capability state;
+6. mount preview with resolved images or explicit missing placeholders.
 
 Failure to open the asset DB must not corrupt/discard the Story.
 
