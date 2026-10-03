@@ -169,7 +169,7 @@ Test this after:
 
 ## Browser policy interaction
 
-After Story schema/browser authoring policy, the browser first evaluates local-asset readiness + aggregate budget from lightweight metadata **before** loading original Blobs. If that preflight passes, it then verifies the required payloads sequentially and re-evaluates bytes/pixels from verified real metadata before runtime-source creation.
+After Story schema/browser authoring policy, the browser first evaluates local-asset readiness + aggregate budget from lightweight metadata **before** loading original Blobs. If that preflight passes, it verifies required present payloads sequentially. Successful verification requires exact format/size/dimension equality with `payloadMeta`; any mismatch is corruption/unavailable.
 
 A Story can be:
 
@@ -190,7 +190,9 @@ Do not add local-asset byte sizes to the existing canonical-YAML 1 MiB policy be
 
 The local-image resource limits (≤25 MiB source bytes, ≤8192 px per side, ≤50 MP, static PNG/JPEG/WebP only) apply per imported/source asset.
 
-Separately, the browser enforces the ASSET-001 aggregate local-asset budget on distinct refs/digests: ≤64 local refs, ≤256 MiB source bytes, and ≤200 MP. Metadata-preflight overflow causes zero Blob reads. If preflight passes, real format/dimensions/size derived during sequential integrity verification are re-summed; final overflow remains schema-valid/exportable for CLI use but cannot create Player/render runtime sources.
+Separately, the browser enforces the ASSET-001 aggregate local-asset budget on distinct refs/digests: ≤64 local refs, ≤256 MiB source bytes, and ≤200 MP. Metadata-preflight overflow causes zero Blob reads.
+
+For successfully verified digests, the implementation may defensively re-sum bytes/pixels from verified descriptors, but those values must equal the corresponding preflight metadata exactly. A mismatch is corruption/internal consistency failure, not a second normal over-budget state.
 
 ## Loss-risk semantics
 
@@ -228,8 +230,9 @@ Cover the bounded metadata-first design explicitly:
 - total count is obtained independently without materializing all asset rows;
 - paging/window navigation fetches additional bounded metadata pages on demand;
 - valid image-B bytes stored under digest-A are detected by SHA-256 mismatch and never reach Player/render as asset A;
-- Blob A with correct digest A but payloadMeta MIME/dimensions deliberately falsified is detected before runtime-source creation;
-- a Story whose corrupt payloadMeta under-reports pixels enough to pass the metadata preflight is re-evaluated from verified real dimensions and blocked if it exceeds 200 MP;
+- Blob A with correct digest A but payloadMeta MIME/dimensions deliberately falsified is classified corrupt/unavailable before runtime-source creation;
+- intentionally under-reported payloadMeta is never expected to survive integrity verification into a later over-budget state;
+- defensive totals from successful verified descriptors equal metadata-preflight totals for the same digest set; disagreement fails closed as consistency corruption;
 - integrity hashing/inspection is sequential (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), and instrumentation on a fixture near the 256-MiB Story budget proves at most one ≤25-MiB source payload is materialized for verification at a time;
 - successful verified descriptors may be cached only for the current page session/invalidation generation;
 - local/cross-tab mutation of a digest invalidates the integrity cache before later reuse;
@@ -364,6 +367,53 @@ Verify two same-origin tabs converge on local-library state:
 
 Existing Story single-writer rules remain unchanged and separate.
 
+## Same-origin build-to-build persistence verification
+
+The claim that My assets survives normal same-origin deployments requires explicit build-transition evidence, not reload-only evidence.
+
+At least one release verification must exercise **build A → build B on the same origin with the same browser profile/site data**.
+
+### Automated compatibility harness
+
+When practical in CI, use a persistent Playwright browser context and a stable local origin/port:
+
+1. serve a compatible v0.3 build A at the stable origin;
+2. import the fixed pose/background fixtures and apply at least one local ref;
+3. record the canonical refs and confirm IndexedDB contains the library;
+4. stop build A **without** clearing browser/site data;
+5. serve build B/current candidate on the exact same origin/port;
+6. reload/navigate using the same persistent browser context;
+7. verify the same Story/local refs restore;
+8. verify My assets entries, thumbnails, payload metadata, and original bytes remain available;
+9. verify Player resolves them and a browser render can still start/complete.
+
+A simple page reload against one unchanged build does not satisfy this test.
+
+### Production release gate
+
+Regardless of whether CI can fully emulate the transition, v0.3 completion requires one recorded production same-origin transition:
+
+**Build/deploy A**
+
+1. deploy a v0.3-compatible production build to `https://tora-video-engine.netlify.app`;
+2. in the verification browser/profile, import the fixed custom pose/background fixture;
+3. apply at least one ref and record:
+   - build/commit A;
+   - Netlify deploy A;
+   - canonical asset refs;
+   - browser/profile used.
+
+**Build/deploy B**
+
+4. deploy a subsequent v0.3 production build B to the **same production origin** without clearing site data in that verification browser/profile;
+5. reload/open production in that same profile;
+6. confirm the previously imported My assets entries still exist with the same refs;
+7. confirm the Story still resolves/Player previews the local asset;
+8. render/download MP4 successfully without re-importing the asset;
+9. record build/commit B + Netlify deploy B.
+
+This gate proves startup/IndexedDB-open/version handling of a new deployed build does not accidentally recreate or clear the library.
+
 ## Netlify production manual verification
 
 Before marking v0.3 complete, verify on the production origin:
@@ -372,21 +422,23 @@ Before marking v0.3 complete, verify on the production origin:
 2. import one custom pose and one custom background;
 3. both appear under **My assets**, separate from Bundled;
 4. apply them and verify Player;
-5. reload and verify they remain available;
+5. reload the same build and verify they remain available;
 6. export YAML and inspect that refs are present but bytes/blob URLs are absent;
 7. render/download MP4 successfully;
-8. delete one in-use asset and confirm warning + missing state;
-9. re-import exact file in the same category and confirm automatic resolution;
-10. render again successfully;
-11. confirm no custom asset was uploaded to Netlify/server infrastructure.
+8. complete the **same-origin build A → build B** persistence gate above and verify the asset survives without re-import;
+9. delete one in-use asset and confirm warning + missing state;
+10. re-import exact file in the same category and confirm automatic resolution;
+11. render again successfully;
+12. confirm no custom asset was uploaded to Netlify/server infrastructure.
 
 Record:
 
-- production commit;
 - production URL;
-- browser/version;
+- build/commit + Netlify deploy IDs for both same-origin deploy A and deploy B;
+- browser/version/profile used for the uninterrupted site-data check;
 - custom fixture refs;
 - browser golden result;
+- same-origin build-transition result;
 - CLI parity result.
 
 ## v0.3 completion checklist
@@ -398,6 +450,7 @@ Record:
 - [ ] ASSET-005 accepted
 - [ ] existing bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1, and first successful local-ref persistence promotes atomically to v2
 - [ ] browser local library persists across reload on same origin
+- [ ] browser local library survives a recorded build A → build B transition on the same origin/profile without clearing site data or re-importing
 - [ ] catalog metadata is paged at ≤50 rows and never requires whole-library getAll/materialization
 - [ ] bundled and My assets are separate in UI
 - [ ] static PNG/JPEG/WebP imports reject APNG/animated WebP and enforce 25 MiB pre-read, ≤8192 px/side, and ≤50 MP limits
@@ -410,7 +463,7 @@ Record:
 - [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
 - [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP using only assets/payloadMeta records and zero Blob-store reads before rejection while preserving YAML/CLI recovery
 - [ ] original Blob SHA-256/size/actual format/dimensions integrity is verified before first runtime use per session/invalidation generation
-- [ ] aggregate pixel/byte budget is revalidated from verified payload descriptors before runtime-source creation
+- [ ] successful verified descriptors exactly match payloadMeta; defensive aggregate recomputation equals preflight totals and metadata mismatch is corruption, not a post-integrity over-budget path
 - [ ] integrity verification is sequential with at most one ≤25-MiB source payload materialized/hashed at once
 - [ ] custom pose/background Player flow passes
 - [ ] custom pose/background browser MP4 golden passes
@@ -427,10 +480,10 @@ Record:
 ## Acceptance criteria
 
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
-- v0.3 local assets survive ordinary same-origin reload/deploy use;
+- v0.3 local assets survive ordinary same-origin reload **and a recorded same-origin build-to-build deployment transition** without re-import;
 - loss/corruption of asset rows, local bytes, or payload metadata never redirects a Story ref or silently changes Story meaning; valid refs remain available in partial preview, while identity/digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
 - browser and CLI resolve the same content identity from different local stores;
-- production proves the complete import → persist → preview → render → delete/missing → same-category re-import → render flow.
+- production proves import → persist → preview → render, a same-origin deploy transition without re-import, and delete/missing → same-category re-import → render recovery.
 
 ## Out of scope
 
@@ -442,4 +495,4 @@ Record:
 
 ## Done when
 
-A production user can build and render a Story with bounded static local images, keep bundled-only v1 projects rollback-compatible until first local-ref persistence, browse a large library through bounded metadata pages, reject digest-mismatched backing bytes before render, recover missing/corrupt backing data by exact-file reimport, and export a byte-free YAML that resolves identically in browser and CLI from the same content regardless of filename extension.
+A production user can build and render a Story with bounded static local images, keep bundled-only v1 projects rollback-compatible until first local-ref persistence, retain My assets across a recorded same-origin build/deploy transition, browse a large library through bounded metadata pages, reject digest/metadata-mismatched backing data before render, recover missing/corrupt backing data by exact-file reimport, and export byte-free YAML that resolves identically in browser and CLI from the same content regardless of filename extension.
