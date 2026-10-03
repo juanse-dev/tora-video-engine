@@ -97,24 +97,55 @@ The catalog must never use the original full-resolution Blob directly as its thu
 
 ### assets store
 
-Key: full local asset ref.
+Primary key: the **full canonical local asset ref**.
 
-The store must expose an index suitable for bounded pagination by category and stable ordering, for example `[category, createdAt, ref]`. Catalog code must not require `getAll()` across the full library.
+The primary key is the sole authority for asset identity:
 
-Value contains at least:
+~~~text
+local:pose:sha256:<digest>
+local:background:sha256:<digest>
+~~~
+
+Do not persist redundant identity fields such as `ref`, `category`, or `digest` in the row value. They are always derived by parsing the primary key.
+
+Value contains only non-identity metadata, at least:
 
 ~~~ts
 {
-  ref: LocalVisualAssetRef;
-  category: "pose" | "background";
-  digest: string;
   label: string;
   originalFilename: string;
   createdAt: string;
 }
 ~~~
 
-The binary payload is keyed only by digest so the same bytes can back both a pose entry and a background entry without storing the Blob twice.
+Consequences:
+
+- Story resolution parses category + digest from the requested Story ref and performs an exact primary-key lookup;
+- an asset row can never redirect ref A to payload digest B;
+- category cannot be changed by corrupt row metadata;
+- catalog/category pagination uses a primary-key prefix/range such as `local:pose:sha256:` or `local:background:sha256:`, not a redundant row.category index;
+- GC derives the digest from canonical primary keys rather than trusting row values.
+
+The binary payload is keyed only by digest so the same bytes can back both category-specific primary keys without storing the Blob twice.
+
+## Asset-row identity integrity
+
+For any exact Story ref lookup, the requested full ref / IndexedDB primary key is authoritative.
+
+The resolver must:
+
+1. validate/parse the requested local ref using ASSET-001 grammar;
+2. derive expected category + digest from that ref;
+3. fetch exactly `assets[requestedRef]`;
+4. if absent, report missing;
+5. if a legacy/corrupt value contains redundant identity-like fields (`ref`, `category`, `digest`), require them to agree exactly with the primary key before using any non-identity metadata;
+6. on any mismatch, report **corrupt/unavailable** and do not look up the mismatched digest's `payloadMeta` or Blob.
+
+New v0.3 writes omit those redundant identity fields entirely.
+
+For catalog iteration, the cursor primary key is likewise authoritative. A malformed row value may be shown as a repairable/corrupt library entry, but it is never selectable/resolvable under a different ref/category.
+
+Exact-file same-category reimport writes the canonical row shape back at the correct primary key and therefore repairs this class of corruption without mutating the Story.
 
 ## Bounded metadata queries
 
@@ -122,10 +153,11 @@ The reusable library may contain arbitrarily many entries up to browser quota, s
 
 Requirements:
 
-- catalog queries use an IndexedDB cursor/range/index page, not unbounded `getAll()`;
+- catalog queries use an IndexedDB primary-key cursor/range page, not unbounded `getAll()`;
+- category pages use the canonical primary-key prefix/range for `local:pose:sha256:` or `local:background:sha256:`;
 - default/max v0.3 page size is 50 asset metadata rows;
-- total count may be obtained independently via `count()`/equivalent without materializing all rows;
-- category filtering happens in the IndexedDB query/index where practical, not by loading every row and filtering in memory;
+- total/category count may be obtained independently via `count(keyRange)`/equivalent without materializing all rows;
+- category filtering must not depend on redundant mutable/corrupt row metadata;
 - opening My assets reads only the first requested metadata page plus its corresponding bounded thumbnails;
 - pagination/window navigation fetches the next bounded page on demand.
 
@@ -208,12 +240,14 @@ Importing the same bytes again as the same category reuses the existing ref/meta
 
 The freshly validated import must, in one transaction:
 
-- preserve the existing ref;
-- preserve the current display label and original creation metadata;
+- derive the canonical full ref from the selected category + freshly computed digest;
+- upsert the `assets[canonicalRef]` value in canonical v0.3 shape, removing any stale/corrupt redundant identity fields if present;
+- preserve an existing valid display label and creation timestamp where possible; otherwise use safe import defaults;
+- refresh `originalFilename` from the selected file;
 - upsert/replace `payloadMeta[digest]` with authoritative MIME/size/dimensions from the freshly validated bytes;
 - upsert/replace `blobs[digest]` with the freshly validated original bytes;
 - upsert/regenerate `thumbnails[digest]` from those fresh bytes;
-- avoid creating a second asset metadata row.
+- avoid creating a second canonical primary-key entry.
 
 This deliberately repairs cases where metadata exists but the backing Blob/thumbnail is missing or corrupt.
 
@@ -247,11 +281,18 @@ Labels do not need to be unique.
 
 ## Delete semantics
 
-Deleting a local asset entry removes that category-specific metadata row.
+Deleting a local asset entry removes that exact category-specific primary-key row.
 
-After deletion, remove the shared `payloadMeta`, original Blob, **and thumbnail** only if no remaining asset metadata row references its digest.
+Deletion/GC derives the digest from the deleted canonical ref — never from row metadata.
 
-This garbage collection must occur in the same logical mutation so a cross-category asset cannot lose its metadata/binary/thumbnail while still referenced by another local library entry.
+After deletion, remove the shared `payloadMeta`, original Blob, **and thumbnail** only if neither canonical primary key for that digest remains:
+
+~~~text
+local:pose:sha256:<digest>
+local:background:sha256:<digest>
+~~~
+
+The existence of either canonical key keeps shared backing data alive even if that row's non-identity metadata is malformed. This garbage collection occurs in the same logical mutation so corruption cannot redirect GC toward another digest.
 
 Whether deletion requires a user warning based on Story usage is defined in ASSET-003.
 
@@ -413,11 +454,15 @@ Minimum coverage:
 - disallowed/mislabeled content rejected;
 - failed image decode leaves no durable entry;
 - SHA-256 is over original bytes;
-- same bytes + same category reuse one ref and upsert/repair payload metadata + backing Blob/thumbnail without changing label/created metadata;
+- same bytes + same category reuse one canonical primary key and upsert/repair its asset row + payload metadata + backing Blob/thumbnail without changing a valid label/created metadata;
 - same bytes + different categories reuse Blob/thumbnail but create two refs;
-- rename preserves ref/hash;
-- deleting one category keeps shared payload metadata/Blob/thumbnail while another category references it;
-- deleting final asset metadata removes unreferenced payload metadata/Blob/thumbnail;
+- rename preserves the primary-key ref/hash and edits only non-identity row metadata;
+- requested ref A with a corrupt stored row claiming digest B is reported corrupt and causes zero reads of `payloadMeta[B]`/`blobs[B]`;
+- pose primary key with a legacy/corrupt row claiming category background is reported corrupt and never resolves as background;
+- exact-file same-category reimport canonicalizes/repairs a corrupt asset row and restores readiness without Story mutation;
+- deleting one category keeps shared payload metadata/Blob/thumbnail while the other canonical category primary key exists;
+- deletion/GC derives digest from the primary key and cannot be redirected by corrupt row metadata;
+- deleting the final canonical category primary key removes unreferenced payload metadata/Blob/thumbnail;
 - asset metadata present + payloadMeta/Blob/thumbnail missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
 - budget/readiness metadata lookup reads `payloadMeta` without consulting `blobs`;
 - a record stored under digest A with valid image-B bytes fails SHA-256 integrity verification and never becomes a runtime source;
