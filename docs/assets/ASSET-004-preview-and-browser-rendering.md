@@ -205,6 +205,7 @@ schema-valid Active Story
 + local asset aggregate budget eligible
 + no pending visual/YAML/import state
 + browser render capability ready
++ asset-library Web Locks coordination ready when Story contains local refs
 + every required local ref present
 + every required present payload integrity-verified
 =
@@ -217,10 +218,28 @@ Missing assets produce a specific message such as:
 
 Do not collapse missing-asset or aggregate-asset-budget state into generic Story schema rejection. Both are explicit browser asset-readiness outcomes.
 
+## Web Locks capability degradation
+
+Local-asset Player preview and local-asset MP4 rendering have different coordination requirements.
+
+If `navigator.locks?.request` is unavailable:
+
+- ASSET-002 may still read existing durable IndexedDB entries;
+- Player may resolve/integrity-check those existing local assets and build the normal within-budget partial/full preview source map;
+- no asset-library mutations are allowed;
+- **Render MP4 is ineligible for any Story containing at least one local ref**, because the final shared asset-library snapshot barrier cannot be acquired;
+- do not fall back to an unlocked render snapshot;
+- do not claim a browser-render capability error as Story schema invalidity.
+
+Bundled-only rendering follows the existing v0.2 render capability rules.
+
+The UI should distinguish this state from missing/corrupt assets, e.g. “Local assets are read-only in this browser; MP4 rendering with local assets requires Web Locks support.”
+
 ## Render start ordering
 
 Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle for an actual render:
 
+0. if the Story contains local refs, require `navigator.locks?.request`; otherwise fail render capability before payload hashing/snapshot work;
 1. snapshot the current Active Story;
 2. re-evaluate browser Story policy;
 3. re-read/validate every required canonical asset row and `payloadMeta`, then defensively recheck metadata aggregate browser budget without consulting `blobs`;
