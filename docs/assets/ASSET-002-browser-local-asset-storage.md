@@ -302,18 +302,24 @@ A same-origin `BroadcastChannel` is the preferred invalidation signal. If a tab 
 
 ## Backing-store integrity verification
 
-The SHA-256 digest in the Story ref is an identity guarantee, not merely a lookup key.
+The SHA-256 digest in the Story ref is an identity guarantee, and `payloadMeta` is only a **preflight cache** until verified against the stored bytes.
 
 Before the browser exposes an original Blob as a Player/render runtime source for a digest:
 
 1. read `payloadMeta[digest]`;
 2. fetch `blobs[digest]`;
 3. require the Blob to exist and `blob.size === payloadMeta.byteSize`;
-4. compute SHA-256 over the exact retrieved Blob bytes;
-5. require the computed digest to equal the requested digest;
-6. only then create/reuse the runtime source.
+4. read/hash the Blob with the bounded integrity worker described below;
+5. require the computed SHA-256 to equal the requested digest;
+6. detect the actual static PNG/JPEG/WebP format from the retrieved bytes;
+7. derive width/height from those bytes and require positive dimensions within the per-file limits;
+8. require actual format/MIME, width, height, and byte size to agree with `payloadMeta`;
+9. return a **verified payload descriptor** containing the digest + actual MIME/width/height/byteSize;
+10. only after all Story-required digests have been verified and the aggregate budget has been revalidated from those verified descriptors may runtime sources be created/reused.
 
-If any check fails:
+This second aggregate-budget check is mandatory because corrupt `payloadMeta` could under-report dimensions even when the Blob itself still has the correct SHA-256.
+
+If any identity/format/metadata check fails:
 
 - treat the digest as **corrupt/unavailable**;
 - do not expose those bytes to Player/render;
@@ -321,7 +327,29 @@ If any check fails:
 - surface the same recovery path as a missing local asset;
 - exact-file same-category reimport may repair `payloadMeta`, Blob, and thumbnail without Story mutation.
 
-To avoid re-hashing on every frame/use, the browser may cache a successful integrity result in memory for the current page session.
+### Bounded integrity hashing
+
+Integrity verification must not materialize all Story assets into `ArrayBuffer` values concurrently.
+
+For v0.3:
+
+~~~ts
+MAX_CONCURRENT_INTEGRITY_CHECKS = 1
+~~~
+
+Verification is sequential per distinct digest:
+
+- fetch one Blob;
+- materialize/hash/inspect that one bounded payload;
+- release transient byte/decoder references before continuing to the next digest;
+- retain only the small verified descriptor and, when later needed, the durable Blob/runtime source handle;
+- never use `Promise.all(requiredDigests.map(blob => blob.arrayBuffer()))` or equivalent fan-out.
+
+Because each source file is already bounded to 25 MiB, this caps temporary integrity byte materialization to one source payload at a time rather than the full ≤256 MiB Story budget.
+
+The implementation should instrument the verifier in tests so maximum simultaneous integrity checks/temporary payload bytes are observable.
+
+To avoid re-verifying on every frame/use, the browser may cache a successful **verified payload descriptor** in memory for the current page session.
 
 That cache must be invalidated for a digest when:
 
@@ -393,7 +421,10 @@ Minimum coverage:
 - asset metadata present + payloadMeta/Blob/thumbnail missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
 - budget/readiness metadata lookup reads `payloadMeta` without consulting `blobs`;
 - a record stored under digest A with valid image-B bytes fails SHA-256 integrity verification and never becomes a runtime source;
-- successful integrity verification may be cached per session, and any mutation/invalidation for the digest clears that cache;
+- Blob A with correct digest A but payloadMeta dimensions/MIME intentionally falsified fails metadata-integrity verification;
+- after all required digests verify, aggregate bytes/pixels are recomputed from verified descriptors and an under-reported metadata preflight cannot bypass the final Story budget;
+- integrity verification is sequential (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`) and instrumentation proves at most one bounded source payload is materialized/hashed at once for a near-256-MiB Story fixture;
+- successful verified descriptors may be cached per session, and any mutation/invalidation for the digest clears that cache;
 - quota/storage failure leaves prior library intact;
 - reload rebuilds library metadata from IndexedDB;
 - ephemeral runtime sources (including object URLs when used) are not persisted;
@@ -406,7 +437,7 @@ Minimum coverage:
 
 - a valid static PNG/JPEG/WebP satisfying ≤25 MiB, ≤8192 px per side, and ≤50 MP can become a durable local library entry;
 - exact duplicate bytes are deduplicated and duplicate reimport repairs missing/corrupt backing data;
-- original source Blob is preserved byte-for-byte and verified against its digest before first runtime use per session/invalidation generation;
+- original source Blob is preserved byte-for-byte; digest, actual format/dimensions/size, and final aggregate budget are verified before runtime use, with sequential bounded hashing;
 - labels are safely mutable;
 - binary storage remains separate from Story persistence and Remotion OPFS;
 - storage loss degrades into missing refs rather than corrupting Story data.
