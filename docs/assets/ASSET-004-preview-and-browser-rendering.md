@@ -229,13 +229,38 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 6. if any integrity failure appears, fail render readiness immediately after safely releasing that digest's transient resources; do not start MP4;
 7. defensively recompute byte/pixel totals from verified descriptors and require equality with metadata-preflight totals for the same digest set; any disagreement fails closed as corruption/internal consistency failure;
 8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
-9. resolve/snapshot all verified local asset sources for that Story;
-10. hold the verified runtime sources/Blob snapshots stable;
-11. continue through existing capability/lock/OPFS/render lifecycle.
+9. request `tora-video-engine:asset-library` in **shared** mode for the final snapshot critical section;
+10. while holding that shared lock, re-read every required canonical `assets[ref]` and its `payloadMeta[digest]`; require every row to still exist, remain identity-valid, and still exactly match the verified descriptor captured earlier;
+11. if any final revalidation fails, release the shared lock, discard prepared sources/descriptors, fail closed, and require a fresh Render action/readiness cycle;
+12. while the shared lock is still held, create/reuse runtime sources from the already verified Blob handles and freeze the immutable Story + local-source map snapshot;
+13. release `tora-video-engine:asset-library` **only after** the source-map snapshot is immutable;
+14. continue through the existing global render lock / OPFS / render lifecycle.
 
 If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
 
 Do not hold the global render lock merely while waiting for user asset import.
+
+## Render-preparation cross-tab barrier
+
+BroadcastChannel invalidation is eventual and is not sufficient to close the gap between early readiness checks and render snapshot creation.
+
+The final snapshot barrier is the dedicated ASSET-002 Web Lock:
+
+~~~text
+tora-video-engine:asset-library
+~~~
+
+Render preparation uses it in **shared** mode only for the short final revalidation/freeze section.
+
+All durable asset mutations use it in **exclusive** mode.
+
+This guarantees:
+
+- a delete/repair/rename that commits before the shared lock is acquired is visible to the final IndexedDB revalidation;
+- an exclusive mutation requested after the shared lock is acquired waits until the immutable source-map snapshot has been frozen;
+- once the snapshot is frozen and the shared lock is released, later cross-tab deletion may change durable readiness but cannot alter the already-held in-flight Blob/runtime-source snapshot.
+
+The final revalidation must include every required canonical `assets[ref]`, not merely the shared digest payload, so deleting `local:pose:sha256:A` is detected even if `local:background:sha256:A` keeps the shared Blob alive.
 
 ## Frozen render snapshot
 
@@ -339,9 +364,12 @@ Minimum unit/browser coverage:
 - rapid local ref A → B → C changes cannot let stale A/B loads unblock C;
 - Render MP4 is disabled while asset resolution is pending/missing;
 - render start defensively rechecks asset readiness;
+- delete of one required category ref from another tab during the sequential integrity phase is caught by final canonical-row revalidation before snapshot freeze, even when the same digest remains registered in the other category;
+- exclusive cross-tab delete requested during the shared final snapshot critical section waits until snapshot freeze completes;
 - browser render receives the frozen Story + source-map snapshot;
 - asset mutation controls remain locked while rendering;
-- deleting durable asset from another tab does not break an already-held Blob/runtime-source render snapshot;
+- cross-tab delete **during render preparation, before snapshot freeze**, either becomes visible to final canonical-row revalidation or waits behind the shared asset-library lock; it cannot produce a snapshot for a deleted category ref;
+- deleting durable asset from another tab **after** snapshot freeze does not break the already-held Blob/runtime-source render snapshot;
 - after render settlement, durable deletion becomes missing state;
 - browser golden renders one custom pose and one custom background through normal web renderer;
 - custom-asset MP4 retains v0.2 dimensions/FPS/video-only metadata.
