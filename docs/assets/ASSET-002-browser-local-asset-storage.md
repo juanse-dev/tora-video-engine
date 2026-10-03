@@ -26,6 +26,7 @@ version: 1
 
 object stores:
   blobs
+  thumbnails
   assets
 ~~~
 
@@ -45,6 +46,35 @@ Value contains at least:
   height: number;
 }
 ~~~
+
+### thumbnails store
+
+Key: SHA-256 digest.
+
+Value contains at least:
+
+~~~ts
+{
+  digest: string;
+  blob: Blob;
+  mimeType: "image/webp";
+  width: number;
+  height: number;
+}
+~~~
+
+The thumbnail is derivative cache data only. It is not part of asset identity and may be regenerated from the original Blob.
+
+v0.3 thumbnail bounds:
+
+~~~ts
+MAX_THUMBNAIL_DIMENSION = 256
+MAX_MOUNTED_LOCAL_THUMBNAILS = 50
+~~~
+
+Thumbnail generation occurs during import from the already-validated original image. The derivative must preserve aspect ratio and fit within 256×256.
+
+The catalog must never use the original full-resolution Blob directly as its thumbnail source.
 
 ### assets store
 
@@ -111,10 +141,11 @@ For a selected category + file:
 5. compute SHA-256 over those exact original bytes;
 6. decode the image successfully and verify positive finite dimensions consistent with the accepted limits;
 7. build the category-scoped ref from ASSET-001;
-8. atomically store/reuse binary + metadata;
-9. return the existing or newly created local asset entry.
+8. generate a bounded ≤256×256 derivative thumbnail;
+9. atomically store/reuse/repair binary + thumbnail + metadata;
+10. return the existing or newly created local asset entry.
 
-If format/animation/dimension validation or decode fails, the asset is rejected and no partial database record remains.
+If format/animation/dimension validation, full-image decode, or bounded-thumbnail generation fails, the asset is rejected and no partial database record remains. Import processing is single-file in v0.3, so thumbnail generation never requires concurrent full-resolution decodes.
 
 ## Hashing and identity
 
@@ -137,15 +168,19 @@ Category is added to the final Story ref separately.
 
 ### Same bytes, same category
 
-Importing the same bytes again as the same category returns/reuses the existing asset entry.
+Importing the same bytes again as the same category reuses the existing ref/metadata entry, but the import is also a **repair path** for durable backing data.
 
-It must not:
+The freshly validated import must, in one transaction:
 
-- create a second Blob;
-- create a second ref;
-- silently change the existing label.
+- preserve the existing ref;
+- preserve the current display label and original creation metadata;
+- upsert/replace `blobs[digest]` with the freshly validated original bytes + authoritative MIME/size/dimensions;
+- upsert/regenerate `thumbnails[digest]` from those fresh bytes;
+- avoid creating a second asset metadata row.
 
-The UI may inform the user that the asset already exists and select/focus it.
+This deliberately repairs cases where metadata exists but the backing Blob/thumbnail is missing or corrupt.
+
+The UI may inform the user that the asset already existed and has been reused/repaired.
 
 ### Same bytes, different category
 
@@ -156,7 +191,7 @@ local:pose:sha256:<digest>
 local:background:sha256:<digest>
 ~~~
 
-Both point to the same `blobs[digest]`.
+Both point to the same `blobs[digest]` and `thumbnails[digest]`. A fresh valid import may upsert those shared backing records to repair missing/corrupt data without changing either category ref.
 
 ## Labels
 
@@ -177,9 +212,9 @@ Labels do not need to be unique.
 
 Deleting a local asset entry removes that category-specific metadata row.
 
-After deletion, remove the shared Blob only if no remaining asset metadata row references its digest.
+After deletion, remove the shared original Blob **and thumbnail** only if no remaining asset metadata row references its digest.
 
-This garbage collection must occur in the same logical mutation so a cross-category asset cannot lose its binary while still referenced by another local library entry.
+This garbage collection must occur in the same logical mutation so a cross-category asset cannot lose its binary/thumbnail while still referenced by another local library entry.
 
 Whether deletion requires a user warning based on Story usage is defined in ASSET-003.
 
@@ -253,15 +288,21 @@ ASSET-004 defines the Player/render lifecycle around these URLs.
 
 ## Thumbnail behavior
 
-The catalog may render thumbnails from the original Blob through object URLs.
+The catalog uses only the bounded derivative thumbnails generated during import.
 
-If implementation later caches generated thumbnails, they are derivative cache data only:
+Requirements:
 
+- max derivative dimensions: 256×256 while preserving aspect ratio;
+- thumbnail identity/cache key: original SHA-256 digest;
+- thumbnail bytes never affect Story refs or dedup identity;
 - original bytes remain authoritative;
 - SHA-256 continues to use original bytes;
-- deleting an asset removes derivative thumbnail cache as well.
+- catalog cards never decode the original full-resolution Blob merely to show a thumbnail;
+- at most 50 local thumbnail cards are mounted/decoded at once; use windowing/pagination rather than mounting an unbounded library grid;
+- object/runtime URLs for off-window thumbnail cards are released promptly;
+- deleting the final asset entry for a digest removes its thumbnail together with the original Blob.
 
-A dedicated thumbnail pipeline is not required for v0.3.
+This keeps catalog memory bounded even when the library contains many images near the per-file limit.
 
 ## Tests
 
@@ -275,11 +316,12 @@ Minimum coverage:
 - disallowed/mislabeled content rejected;
 - failed image decode leaves no durable entry;
 - SHA-256 is over original bytes;
-- same bytes + same category reuse one ref/Blob;
-- same bytes + different categories reuse Blob but create two refs;
+- same bytes + same category reuse one ref and upsert/repair the backing Blob/thumbnail without changing label/created metadata;
+- same bytes + different categories reuse Blob/thumbnail but create two refs;
 - rename preserves ref/hash;
-- deleting one category keeps shared Blob while another category references it;
-- deleting final metadata removes unreferenced Blob;
+- deleting one category keeps shared Blob/thumbnail while another category references it;
+- deleting final metadata removes unreferenced Blob/thumbnail;
+- metadata-present + Blob/thumbnail-missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
 - quota/storage failure leaves prior library intact;
 - reload rebuilds library metadata from IndexedDB;
 - ephemeral runtime sources (including object URLs when used) are not persisted;
@@ -288,7 +330,7 @@ Minimum coverage:
 ## Acceptance criteria
 
 - a valid static PNG/JPEG/WebP satisfying ≤25 MiB, ≤8192 px per side, and ≤50 MP can become a durable local library entry;
-- exact duplicate bytes are deduplicated;
+- exact duplicate bytes are deduplicated and duplicate reimport repairs missing/corrupt backing data;
 - original source Blob is preserved byte-for-byte;
 - labels are safely mutable;
 - binary storage remains separate from Story persistence and Remotion OPFS;
