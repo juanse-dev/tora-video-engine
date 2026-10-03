@@ -218,6 +218,20 @@ Cover the lazy v1 → v2 boundary explicitly:
 - once durable state is v2, later bundled-only Story writes remain v2 rather than automatically downgrading;
 - a simulated v0.2 reader presented with v2 follows unsupported-version/recovery behavior.
 
+## Browser asset metadata / integrity verification
+
+Cover the bounded metadata-first design explicitly:
+
+- over-budget Story evaluation reads only `assets` + `payloadMeta` records and performs zero `blobs` reads before rejecting;
+- `payloadMeta` contains byte size/dimensions needed for budget calculation without embedding the Blob;
+- opening My assets with a large library fetches at most one 50-row metadata page initially, plus only that page's bounded thumbnails;
+- total count is obtained independently without materializing all asset rows;
+- paging/window navigation fetches additional bounded metadata pages on demand;
+- valid image-B bytes stored under digest-A are detected by SHA-256 mismatch and never reach Player/render as asset A;
+- successful digest verification may be cached only for the current page session/invalidation generation;
+- local/cross-tab mutation of a digest invalidates the integrity cache before later reuse;
+- exact-file same-category reimport repairs `payloadMeta`, original Blob, and thumbnail and restores readiness without Story mutation.
+
 ## Production verification fixture
 
 Add small source-controlled **test fixtures** for v0.3 verification; do not use a developer's personal `local-assets/` contents.
@@ -303,8 +317,9 @@ Cover at least:
 
 - IndexedDB unavailable/open failure;
 - write transaction failure/quota-like error;
-- metadata row present but Blob and/or thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs backing data without Story mutation;
-- Blob row present without metadata;
+- asset row present but payloadMeta/Blob and/or thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs backing data without Story mutation;
+- Blob row present without payloadMeta/asset metadata;
+- payloadMeta present with Blob bytes whose SHA-256 does not equal the digest key;
 - database cleared while Story persists.
 
 Expected behavior is bounded, explicit degradation rather than Story deletion.
@@ -356,6 +371,7 @@ Record:
 - [ ] ASSET-005 accepted
 - [ ] existing bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1, and first successful local-ref persistence promotes atomically to v2
 - [ ] browser local library persists across reload on same origin
+- [ ] catalog metadata is paged at ≤50 rows and never requires whole-library getAll/materialization
 - [ ] bundled and My assets are separate in UI
 - [ ] static PNG/JPEG/WebP imports reject APNG/animated WebP and enforce 25 MiB pre-read, ≤8192 px/side, and ≤50 MP limits
 - [ ] SHA-256 dedup works and exact duplicate reimport repairs missing/corrupt original Blob/thumbnail backing
@@ -365,7 +381,8 @@ Record:
 - [ ] missing refs preserve Story and block render
 - [ ] exact-file same-category re-import resolves missing ref automatically
 - [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
-- [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP before original Blob loading while preserving YAML/CLI recovery
+- [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP using only assets/payloadMeta records and zero Blob-store reads before rejection while preserving YAML/CLI recovery
+- [ ] original Blob SHA-256/size integrity is verified before first runtime use per session/invalidation generation
 - [ ] custom pose/background Player flow passes
 - [ ] custom pose/background browser MP4 golden passes
 - [ ] fresh-browser YAML portability flow passes
@@ -381,7 +398,7 @@ Record:
 
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
 - v0.3 local assets survive ordinary same-origin reload/deploy use;
-- loss of local bytes never corrupts or silently changes Story meaning;
+- loss/corruption of local bytes never corrupts or silently changes Story meaning; digest-mismatched backing bytes are blocked before Player/render;
 - browser and CLI resolve the same content identity from different local stores;
 - production proves the complete import → persist → preview → render → delete/missing → same-category re-import → render flow.
 
@@ -395,4 +412,4 @@ Record:
 
 ## Done when
 
-A production user can build and render a Story with bounded static local images, keep bundled-only v1 projects rollback-compatible until first local-ref persistence, recover missing/corrupt backing data by exact-file reimport, and export a byte-free YAML that resolves identically in browser and CLI from the same content regardless of filename extension.
+A production user can build and render a Story with bounded static local images, keep bundled-only v1 projects rollback-compatible until first local-ref persistence, browse a large library through bounded metadata pages, reject digest-mismatched backing bytes before render, recover missing/corrupt backing data by exact-file reimport, and export a byte-free YAML that resolves identically in browser and CLI from the same content regardless of filename extension.
