@@ -84,8 +84,8 @@ Before mounting/rendering an Active Story, the web app:
 7. otherwise, continue resolving the subset of present refs even when other refs are missing/corrupt;
 8. obtain/verify Blobs for present distinct digests **sequentially, one at a time**;
 9. if one present digest fails integrity, classify every ref using that digest as corrupt/unavailable, continue verifying the remaining present digests, and never expose the failed bytes;
-10. recompute aggregate source-byte/pixel use from all successfully verified descriptors plus the Story ref-count limit;
-11. if that verified aggregate budget exceeds a limit, fail fast for the whole Player/render path and create no runtime source map;
+10. defensively recompute source-byte/pixel totals from successfully verified descriptors and require equality with the metadata-preflight totals for those same verified digests;
+11. if the defensive totals disagree, fail closed as an internal/storage-consistency error;
 12. otherwise create runtime sources only for successfully verified refs and build a **partial** local-source map;
 13. expose `resolved[]` + missing/corrupt entries + over-budget state separately from Story state.
 
@@ -109,7 +109,7 @@ Do not briefly render a stale prior asset for the new ref.
 
 ### Over aggregate browser asset budget
 
-A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001 during either the metadata preflight **or the mandatory post-integrity recheck using dimensions/size derived from the actual Blob bytes**:
+A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001 during the **metadata preflight**:
 
 - >64 distinct category-scoped local refs; or
 - >256 MiB original source bytes across distinct local digests; or
@@ -122,8 +122,8 @@ In that state:
 - suppress the normal Player rather than mounting a partial/heavy source set;
 - disable Render MP4;
 - show which aggregate limit was exceeded;
-- if the **metadata preflight** already exceeded the limit, perform zero original-Blob reads;
-- if only the **post-integrity verified** budget exceeds the limit because durable metadata under-reported resources, previously verified Blob reads are allowed but no runtime source map is created.
+- because any payloadMeta-vs-bytes mismatch is corruption, normal over-budget classification happens at metadata preflight and performs zero original-Blob reads;
+- verified-descriptor recomputation is only a defensive equality assertion, not a second normal over-budget branch.
 
 This is distinct from a missing asset and must not be reported as schema-invalid.
 
@@ -330,8 +330,9 @@ Minimum unit/browser coverage:
 - many-scene fixture with unique near-limit refs fails closed at metadata-budget stage without reading any `blobs` records;
 - instrumentation proves a metadata-preflight over-budget Story consults only canonical `assets` keys/`payloadMeta`, with zero original-Blob store reads and no partial Player source map;
 - Blob keyed by digest A but containing valid image-B bytes fails integrity verification and never reaches Player/render;
-- Blob A with correct digest A plus payloadMeta dimensions deliberately changed from actual values is detected, and verified dimensions are used for the final aggregate budget recheck;
-- a fixture whose corrupted payloadMeta under-reports enough pixels to pass preflight but whose verified descriptors exceed 200 MP is blocked before runtime-source creation;
+- Blob A with correct digest A plus payloadMeta dimensions deliberately changed from actual values is detected as corrupt/unavailable and never reaches runtime-source creation;
+- no test expects deliberately under-reported payloadMeta to survive integrity verification into a later over-budget state;
+- defensive verified-descriptor totals equal metadata-preflight totals for every successfully verified digest set;
 - integrity verification runs sequentially with at most one digest/≤25-MiB source payload materialized for hashing at once, including a fixture near the 256-MiB aggregate source-byte limit;
 - successful integrity verification is reused within the page session until a mutation/invalidation for that digest clears the cache;
 - Player waits for local image readiness before frame advancement;
