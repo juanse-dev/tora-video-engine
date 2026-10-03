@@ -237,7 +237,7 @@ The UI should distinguish this state from missing/corrupt assets, e.g. “Local 
 
 ## Render start ordering
 
-Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle for an actual render:
+Heavy local-asset preparation happens before taking either render-critical lock:
 
 0. if the Story contains local refs, require `navigator.locks?.request`; otherwise fail render capability before payload hashing/snapshot work;
 1. snapshot the current Active Story;
@@ -247,17 +247,23 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 5. verify all required present digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
 6. if any integrity failure appears, fail render readiness immediately after safely releasing that digest's transient resources; do not start MP4;
 7. defensively recompute byte/pixel totals from verified descriptors and require equality with metadata-preflight totals for the same digest set; any disagreement fails closed as corruption/internal consistency failure;
-8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
-9. request `tora-video-engine:asset-library` in **shared** mode for the final snapshot critical section;
-10. while holding that shared lock, re-read every required canonical `assets[ref]` and its `payloadMeta[digest]`; require every row to still exist, remain identity-valid, and still exactly match the verified descriptor captured earlier;
-11. if any final revalidation fails, release the shared lock, discard prepared sources/descriptors, fail closed, and require a fresh Render action/readiness cycle;
-12. while the shared lock is still held, create/reuse runtime sources from the already verified Blob handles and freeze the immutable Story + local-source map snapshot;
-13. release `tora-video-engine:asset-library` **only after** the source-map snapshot is immutable;
-14. continue through the existing global render lock / OPFS / render lifecycle.
+8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations.
 
-If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
+Then perform the lock hand-off in this strict order:
 
-Do not hold the global render lock merely while waiting for user asset import.
+9. acquire the global `tora-video-engine:web-fs-render` lock and keep it held through OPFS/render settlement;
+10. **while still holding the global render lock**, request `tora-video-engine:asset-library` in shared mode for the final snapshot critical section;
+11. while holding both locks, re-read every required canonical `assets[ref]` and its `payloadMeta[digest]`; require every row to still exist, remain identity-valid, and still exactly match the verified descriptor captured earlier;
+12. if any final revalidation fails, release the shared asset-library lock, abort/release the global render lock without touching OPFS/render output, discard prepared sources/descriptors, and require a fresh Render action/readiness cycle;
+13. while both locks are still held, create/reuse runtime sources from the already verified Blob handles and freeze the immutable Story + local-source map snapshot;
+14. release `tora-video-engine:asset-library` **only after** the source-map snapshot is immutable;
+15. continue with OPFS/render while retaining the global `web-fs-render` lock until normal render settlement/cleanup.
+
+For local-ref renders, acquisition of the global render lock is the start of the render transaction. Any asset mutation that commits while this tab is waiting for the global lock is therefore caught by the subsequent shared-lock final revalidation.
+
+Never acquire `asset-library` and then wait for `web-fs-render`; the required order is global render lock → shared asset-library lock. Asset-library mutation paths never acquire the global render lock, so this ordering introduces no lock cycle.
+
+Do not hold either render-critical lock merely while waiting for user asset import or during expensive hashing/decoding.
 
 ## Render-preparation cross-tab barrier
 
@@ -269,13 +275,14 @@ The final snapshot barrier is the dedicated ASSET-002 Web Lock:
 tora-video-engine:asset-library
 ~~~
 
-Render preparation uses it in **shared** mode only for the short final revalidation/freeze section.
+Render preparation uses it in **shared** mode only for the short final revalidation/freeze section, and only **after the global `web-fs-render` lock has already been acquired**.
 
-All durable asset mutations use it in **exclusive** mode.
+All durable asset mutations use it in **exclusive** mode and never acquire the global render lock.
 
 This guarantees:
 
-- a delete/repair/rename that commits before the shared lock is acquired is visible to the final IndexedDB revalidation;
+- a delete/repair/rename that commits while render preparation is still hashing or waiting for the global render lock is visible to the final IndexedDB revalidation;
+- once the global render lock is acquired, the tab immediately establishes the shared asset-library snapshot barrier before touching OPFS/render;
 - an exclusive mutation requested after the shared lock is acquired waits until the immutable source-map snapshot has been frozen;
 - once the snapshot is frozen and the shared lock is released, later cross-tab deletion may change durable readiness but cannot alter the already-held in-flight Blob/runtime-source snapshot.
 
@@ -383,7 +390,8 @@ Minimum unit/browser coverage:
 - rapid local ref A → B → C changes cannot let stale A/B loads unblock C;
 - Render MP4 is disabled while asset resolution is pending/missing;
 - render start defensively rechecks asset readiness;
-- delete of one required category ref from another tab during the sequential integrity phase is caught by final canonical-row revalidation before snapshot freeze, even when the same digest remains registered in the other category;
+- delete of one required category ref from another tab during the sequential integrity phase **or while tab A waits for the global render lock** is caught by final canonical-row revalidation before snapshot freeze, even when the same digest remains registered in the other category;
+- a race test mutates a required ref exactly after heavy verification/snapshot preparation but before tab A acquires the global render lock; after A acquires the global lock, final shared-lock revalidation detects the change and render never touches OPFS/output;
 - exclusive cross-tab delete requested during the shared final snapshot critical section waits until snapshot freeze completes;
 - browser render receives the frozen Story + source-map snapshot;
 - asset mutation controls remain locked while rendering;
