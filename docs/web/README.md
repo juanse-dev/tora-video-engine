@@ -139,10 +139,11 @@ Specs are sequential where a dependency is listed. Do not pull cloud infrastruct
 
 ## Implementation status
 
-- WEB-001 through WEB-007 are accepted and merged into `main`.
-- **Tora Video Engine v0.2 — Web Authoring MVP is complete.**
+- WEB-001 through WEB-006 are accepted and merged into `main`.
+- WEB-007 is deployed to production but remains **In progress** pending the full manual production-browser golden.
 - Production is deployed at `https://tora-video-engine.netlify.app` from Netlify with no Tora application backend.
-- The production load/browser-render golden and release evidence are recorded in [production-deployment.md](./production-deployment.md).
+- Production load and browser MP4 render/download are confirmed; the remaining manual release checks are tracked in [production-deployment.md](./production-deployment.md).
+- **v0.2 Web Authoring MVP is not formally complete until that deployed manual gate is fully recorded.**
 
 ## v0.2 UX target
 
