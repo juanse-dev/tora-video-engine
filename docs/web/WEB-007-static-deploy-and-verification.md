@@ -1,6 +1,6 @@
 # WEB-007 — Static deployment and Web MVP verification
 
-> Status: **Accepted / v0.2 complete**
+> Status: **In progress — production deployed; full manual production golden pending**
 
 ## Goal
 
@@ -232,7 +232,10 @@ Update the root README when implementation reaches this spec so it documents:
 - current Remotion licensing prerequisite and where the deployment's license basis is recorded;
 - link to \`docs/web/\` as the v0.2 source of truth.
 
-## v0.2 completion checklist
+## Automated / implementation completion checklist
+
+The checked items below record implementation and automated verification. They do **not** by themselves close WEB-007: the deployed manual golden in `production-deployment.md` remains a separate required release gate.
+
 
 - [x] WEB-001 accepted
 - [x] WEB-002 accepted
@@ -300,13 +303,31 @@ Update the root README when implementation reaches this spec so it documents:
 - [x] existing CLI render still passes
 - [x] README matches the implemented workflows
 
+## Production manual acceptance gate
+
+WEB-007 remains **In progress** until these checks are explicitly confirmed on the production origin:
+
+- [ ] clean production load confirms bundled assets and canonical Story;
+- [ ] edit caption, pose, and scene order in production;
+- [ ] Player follows the resulting Active Story;
+- [ ] export YAML from production;
+- [ ] reload and confirm persisted Story restoration;
+- [ ] confirm browser render capability state;
+- [x] render/download MP4 in production;
+- [ ] independently verify canonical MP4 metadata: video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds;
+- [ ] exercise Cancel Render;
+- [ ] verify pending/dirty draft blocks MP4 rendering;
+- [ ] verify in-flight render locks authoring until settlement.
+
+The production root-load and MP4 render/download items are already evidenced. The remaining unchecked items require explicit deployed-browser confirmation; automated WEB-001…006 coverage is not substituted for them.
+
 
 Completion evidence:
 
 - production deploy: Netlify deploy `6abf2894da2c7f0008e5496b` from merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` on `main`;
 - production URL: `https://tora-video-engine.netlify.app`;
 - post-merge GitHub Actions CI run `36961473266`: success, including unit tests, lint/typecheck, static build, browser-render golden, Player/browser tests, canonical CLI reference render, artifact verification, and stale-output rejection;
-- real-browser production smoke: application load and browser-side MP4 render/download confirmed successfully after the merge;
+- real-browser production smoke: application load and browser-side MP4 render/download confirmed successfully after the merge; the rest of the required deployed manual golden remains pending;
 - the production deployment remains static-only with no Netlify Functions, Edge Functions, Tora application backend, database, or cloud render service.
 
 ## Out of scope
