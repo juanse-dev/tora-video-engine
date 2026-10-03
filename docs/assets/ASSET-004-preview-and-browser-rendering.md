@@ -227,7 +227,7 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 4. for **render**, require that no ref is missing/corrupt before proceeding to payload work;
 5. verify all required present digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
 6. if any integrity failure appears, fail render readiness immediately after safely releasing that digest's transient resources; do not start MP4;
-7. recompute the aggregate byte/pixel budget from the verified descriptors and fail closed if durable metadata had under-reported resources;
+7. defensively recompute byte/pixel totals from verified descriptors and require equality with metadata-preflight totals for the same digest set; any disagreement fails closed as corruption/internal consistency failure;
 8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
 9. resolve/snapshot all verified local asset sources for that Story;
 10. hold the verified runtime sources/Blob snapshots stable;
