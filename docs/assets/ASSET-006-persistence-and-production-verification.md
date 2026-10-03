@@ -228,6 +228,7 @@ Cover the bounded metadata-first design explicitly:
 - `payloadMeta` contains byte size/dimensions needed for budget calculation without embedding the Blob;
 - opening My assets with a large library fetches at most one 50-row metadata page initially, plus only that page's bounded thumbnails;
 - total count is obtained independently without materializing all asset rows;
+- category paging uses canonical primary-key prefix/range + cursor/keyset pagination, with no secondary category/order index;
 - paging/window navigation fetches additional bounded metadata pages on demand;
 - valid image-B bytes stored under digest-A are detected by SHA-256 mismatch and never reach Player/render as asset A;
 - Blob A with correct digest A but payloadMeta MIME/dimensions deliberately falsified is classified corrupt/unavailable before runtime-source creation;
@@ -363,7 +364,10 @@ Verify two same-origin tabs converge on local-library state:
 - delete in A makes a referenced asset missing in B on refresh/invalidation;
 - concurrent duplicate imports do not create duplicate binary storage;
 - while tab A renders, its local asset mutation controls remain disabled;
-- a cross-tab deletion during A's in-flight render does not alter A's frozen Story/runtime-source snapshot, but becomes missing on A's post-render readiness refresh.
+- all durable asset mutations acquire `tora-video-engine:asset-library` exclusively for their final IndexedDB commit;
+- if tab B deletes one required category ref while tab A is still in sequential render preparation **before snapshot freeze**, tab A's final shared-lock revalidation sees the deletion and refuses to freeze/start render, even if the same digest survives in another category;
+- if tab B requests deletion while tab A already holds the shared asset-library lock for final revalidation/freeze, B waits until the snapshot is frozen;
+- a cross-tab deletion after A's snapshot is frozen does not alter the in-flight Story/runtime-source snapshot, but becomes missing on A's post-render readiness refresh.
 
 Existing Story single-writer rules remain unchanged and separate.
 
@@ -473,7 +477,7 @@ Record:
 - [ ] CLI missing-asset diagnostics pass
 - [ ] CLI scanner skips file/directory symlinks and does not traverse outside local-assets category roots
 - [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
-- [ ] cross-tab library convergence and frozen-render snapshot behavior pass
+- [ ] cross-tab library convergence, render-preparation TOCTOU barrier, and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
 - [ ] production custom-asset golden passes
 
