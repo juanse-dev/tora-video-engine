@@ -1,6 +1,6 @@
 # WEB-007 — Static deployment and Web MVP verification
 
-> Status: **In progress — production golden complete except 3 interaction checks**
+> Status: **Accepted / v0.2 complete**
 
 ## Goal
 
@@ -316,13 +316,13 @@ The production origin has now been exercised for the core authoring → preview 
 - [x] reload and confirm persisted Story restoration;
 - [x] Render MP4 is available/enabled in the tested browser;
 - [x] render/download MP4 in production;
-- [ ] exercise Cancel Render;
-- [ ] verify pending/dirty draft blocks MP4 rendering;
-- [ ] verify in-flight render locks authoring until settlement.
+- [x] exercise Cancel Render;
+- [x] verify pending/dirty draft blocks MP4 rendering;
+- [x] verify in-flight render locks authoring until settlement.
 
 The user explicitly confirmed the nine checked production behaviors. Canonical MP4 codec/dimension/frame/duration metadata is already asserted by the automated browser/CLI golden and is not being misrepresented as a separate manual inspection.
 
-WEB-007 remains **In progress** only for the three unchecked deployed interaction behaviors.
+All required production-origin interaction checks are now confirmed. WEB-007 is **Accepted** and v0.2 Web Authoring MVP is complete.
 
 
 Completion evidence:
@@ -330,7 +330,7 @@ Completion evidence:
 - production deploy: Netlify deploy `6abf2894da2c7f0008e5496b` from merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` on `main`;
 - production URL: `https://tora-video-engine.netlify.app`;
 - post-merge GitHub Actions CI run `36961473266`: success, including unit tests, lint/typecheck, static build, browser-render golden, Player/browser tests, canonical CLI reference render, artifact verification, and stale-output rejection;
-- real-browser production flow: caption/pose/order editing, Player update, YAML export, persistence after reload, Render availability, and MP4 render/download confirmed; Cancel Render, pending-draft blocking, and in-flight authoring-lock behavior remain pending;
+- real-browser production flow: caption/pose/order editing, Player update, YAML export, persistence after reload, Render availability, MP4 render/download, Cancel Render, pending-draft blocking, and in-flight authoring-lock behavior all confirmed;
 - the production deployment remains static-only with no Netlify Functions, Edge Functions, Tora application backend, database, or cloud render service.
 
 ## Out of scope
