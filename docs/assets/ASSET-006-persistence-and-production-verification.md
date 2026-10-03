@@ -228,7 +228,10 @@ Cover the bounded metadata-first design explicitly:
 - total count is obtained independently without materializing all asset rows;
 - paging/window navigation fetches additional bounded metadata pages on demand;
 - valid image-B bytes stored under digest-A are detected by SHA-256 mismatch and never reach Player/render as asset A;
-- successful digest verification may be cached only for the current page session/invalidation generation;
+- Blob A with correct digest A but payloadMeta MIME/dimensions deliberately falsified is detected before runtime-source creation;
+- a Story whose corrupt payloadMeta under-reports pixels enough to pass the metadata preflight is re-evaluated from verified real dimensions and blocked if it exceeds 200 MP;
+- integrity hashing/inspection is sequential (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), and instrumentation on a fixture near the 256-MiB Story budget proves at most one ≤25-MiB source payload is materialized for verification at a time;
+- successful verified descriptors may be cached only for the current page session/invalidation generation;
 - local/cross-tab mutation of a digest invalidates the integrity cache before later reuse;
 - exact-file same-category reimport repairs `payloadMeta`, original Blob, and thumbnail and restores readiness without Story mutation.
 
@@ -295,6 +298,16 @@ Using a fresh browser context/origin storage:
 No bytes are transferred through YAML.
 
 ## CLI parity golden
+
+Use the same source-controlled fixture bytes in a temporary local-asset root.
+
+The test root must also verify the ASSET-005 path-safety rule:
+
+- a symlink-to-file inside `poses/` whose target is outside the category root is skipped and never read/hashed;
+- a symlink-to-directory inside `backgrounds/` whose target is outside the category root is not traversed;
+- ordinary nested regular files still resolve.
+
+Use platform/CI guards where symlink creation requires OS support/permissions, but the scanner policy itself remains no-follow on every platform.
 
 Use the same source-controlled fixture bytes in a temporary local-asset root.
 
@@ -382,13 +395,16 @@ Record:
 - [ ] exact-file same-category re-import resolves missing ref automatically
 - [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
 - [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP using only assets/payloadMeta records and zero Blob-store reads before rejection while preserving YAML/CLI recovery
-- [ ] original Blob SHA-256/size integrity is verified before first runtime use per session/invalidation generation
+- [ ] original Blob SHA-256/size/actual format/dimensions integrity is verified before first runtime use per session/invalidation generation
+- [ ] aggregate pixel/byte budget is revalidated from verified payload descriptors before runtime-source creation
+- [ ] integrity verification is sequential with at most one ≤25-MiB source payload materialized/hashed at once
 - [ ] custom pose/background Player flow passes
 - [ ] custom pose/background browser MP4 golden passes
 - [ ] fresh-browser YAML portability flow passes
 - [ ] CLI resolves same refs from local asset folders
 - [ ] required local asset helper prints full canonical copy/pasteable refs
 - [ ] CLI missing-asset diagnostics pass
+- [ ] CLI scanner skips file/directory symlinks and does not traverse outside local-assets category roots
 - [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
 - [ ] cross-tab library convergence and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
@@ -398,7 +414,7 @@ Record:
 
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
 - v0.3 local assets survive ordinary same-origin reload/deploy use;
-- loss/corruption of local bytes never corrupts or silently changes Story meaning; digest-mismatched backing bytes are blocked before Player/render;
+- loss/corruption of local bytes or payload metadata never corrupts or silently changes Story meaning; digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
 - browser and CLI resolve the same content identity from different local stores;
 - production proves the complete import → persist → preview → render → delete/missing → same-category re-import → render flow.
 
