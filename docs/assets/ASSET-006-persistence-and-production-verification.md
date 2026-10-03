@@ -18,19 +18,21 @@ Existing v0.2 **Story/YAML content** containing only bundled refs must:
 - render unchanged in browser;
 - render unchanged in CLI.
 
-Browser durable project state does have an explicit compatibility migration defined in ASSET-001:
+Browser durable project state uses the lazy compatibility boundary defined in ASSET-001:
 
 ~~~text
-persistence envelope v1
-        ↓
-deterministic migration
-        ↓
-persistence envelope v2
+v1 bundled-only envelope
+        │
+        ├── bundled-only v0.3 reads/writes → stays v1
+        │
+        └── first successful write containing local ref
+                         ↓
+                  atomic promotion to v2
 ~~~
 
-The migrated bundled Story content remains semantically identical. ASSET-006 verifies that migration and cross-version safety; it does not redefine them.
+The Story content remains semantically identical except for the user's intentional local refs. ASSET-006 verifies the lazy promotion and cross-version safety; it does not redefine them.
 
-An old v0.2 tab must see a v2 envelope as unsupported-version/recovery, while the existing unversioned persistence Web Lock continues to protect the shared physical Story/recovery slots.
+Rollback compatibility is preserved for users who only open/edit bundled-only Stories in v0.3. Once a slot has successfully promoted to v2, an old v0.2 tab must see it as unsupported-version/recovery. The existing unversioned persistence Web Lock continues to protect the shared physical Story/recovery slots.
 
 ## Persistence separation
 
@@ -71,7 +73,7 @@ If a future “Clear local asset library” action is added, it is a separate de
 
 Startup order after ASSET-002:
 
-1. restore/validate/migrate the Story envelope using the ASSET-001 v1 → v2 compatibility boundary and existing recovery safeguards;
+1. restore/validate the v1/v2 Story envelope using the ASSET-001 compatibility boundary and existing recovery safeguards, without eagerly rewriting a valid bundled-only v1 envelope;
 2. open the local asset database independently;
 3. resolve local refs used by the restored/fallback Active Story;
 4. derive asset readiness;
@@ -167,7 +169,7 @@ Test this after:
 
 ## Browser policy interaction
 
-Asset readiness is evaluated **after** Story schema/browser authoring policy.
+Asset readiness and the aggregate custom-asset browser budget are evaluated **after** Story schema/browser authoring policy and before loading original local Blobs.
 
 A Story can be:
 
@@ -186,7 +188,9 @@ That state:
 
 Do not add local-asset byte sizes to the existing canonical-YAML 1 MiB policy because the bytes are not part of YAML.
 
-The local-image resource limits (≤25 MiB source bytes, ≤8192 px per side, ≤50 MP, static PNG/JPEG/WebP only) apply per imported/source asset, not to Story source size.
+The local-image resource limits (≤25 MiB source bytes, ≤8192 px per side, ≤50 MP, static PNG/JPEG/WebP only) apply per imported/source asset.
+
+Separately, the browser enforces the ASSET-001 aggregate local-asset budget on distinct refs/digests: ≤64 local refs, ≤256 MiB source bytes, and ≤200 MP. A Story exceeding that aggregate budget remains schema-valid/exportable for CLI use but must not load original Blobs into Player/render.
 
 ## Loss-risk semantics
 
@@ -199,6 +203,20 @@ However:
 - if the local library write itself fails, the operation reports failure and prior library state remains authoritative.
 
 No browser unload warning is required solely because a completed IndexedDB asset mutation has already committed durably.
+
+## Project persistence compatibility tests
+
+Cover the lazy v1 → v2 boundary explicitly:
+
+- a persisted v1 bundled-only Story opens in v0.3 without rewriting its durable envelope;
+- bundled-only edits/autosaves from v0.3 keep the durable slot at v1;
+- after those bundled-only v0.3 edits, a simulated v0.2 reader still restores the Story normally;
+- importing assets into My assets without applying a local ref does not promote the project envelope;
+- first successful durable write of a Story containing a local ref promotes v1 → v2 atomically under the persistence-writer lock;
+- failed first-local-ref write preserves the previous v1 durable envelope and marks the new Active Story unpersisted/loss-risk;
+- a secondary/session-only tab cannot perform the promotion;
+- once durable state is v2, later bundled-only Story writes remain v2 rather than automatically downgrading;
+- a simulated v0.2 reader presented with v2 follows unsupported-version/recovery behavior.
 
 ## Production verification fixture
 
@@ -266,6 +284,8 @@ No bytes are transferred through YAML.
 
 Use the same source-controlled fixture bytes in a temporary local-asset root.
 
+At least one parity fixture must have valid PNG/JPEG/WebP bytes with an absent or intentionally incorrect filename extension. Browser import and CLI indexing must both accept it by content and compute the identical category-scoped ref.
+
 Automate:
 
 1. load the same custom-ref Story used by browser tests;
@@ -283,7 +303,7 @@ Cover at least:
 
 - IndexedDB unavailable/open failure;
 - write transaction failure/quota-like error;
-- metadata row present but Blob missing/corrupt;
+- metadata row present but Blob and/or thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs backing data without Story mutation;
 - Blob row present without metadata;
 - database cleared while Story persists.
 
@@ -306,7 +326,7 @@ Existing Story single-writer rules remain unchanged and separate.
 
 Before marking v0.3 complete, verify on the production origin:
 
-1. app opens with existing bundled Story after verifying any persisted v1 project migrates safely to v2;
+1. app opens with an existing bundled Story and confirms a persisted bundled-only v1 project remains v1 until a local ref is actually persisted;
 2. import one custom pose and one custom background;
 3. both appear under **My assets**, separate from Bundled;
 4. apply them and verify Player;
@@ -334,31 +354,32 @@ Record:
 - [ ] ASSET-003 accepted
 - [ ] ASSET-004 accepted
 - [ ] ASSET-005 accepted
-- [ ] existing bundled YAML/Story content remains unchanged while persisted v1 projects migrate safely to v2
+- [ ] existing bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1, and first successful local-ref persistence promotes atomically to v2
 - [ ] browser local library persists across reload on same origin
 - [ ] bundled and My assets are separate in UI
 - [ ] static PNG/JPEG/WebP imports reject APNG/animated WebP and enforce 25 MiB pre-read, ≤8192 px/side, and ≤50 MP limits
-- [ ] SHA-256 dedup works
+- [ ] SHA-256 dedup works and exact duplicate reimport repairs missing/corrupt original Blob/thumbnail backing
 - [ ] labels rename without changing refs
 - [ ] YAML contains refs only, no bytes/blob URLs/paths
 - [ ] delete-in-use warning passes
 - [ ] missing refs preserve Story and block render
 - [ ] exact-file same-category re-import resolves missing ref automatically
 - [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
+- [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP before original Blob loading while preserving YAML/CLI recovery
 - [ ] custom pose/background Player flow passes
 - [ ] custom pose/background browser MP4 golden passes
 - [ ] fresh-browser YAML portability flow passes
 - [ ] CLI resolves same refs from local asset folders
 - [ ] required local asset helper prints full canonical copy/pasteable refs
 - [ ] CLI missing-asset diagnostics pass
-- [ ] CLI/browser custom-asset parity golden passes
+- [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
 - [ ] cross-tab library convergence and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
 - [ ] production custom-asset golden passes
 
 ## Acceptance criteria
 
-- v0.2 bundled Story/render behavior remains stable and persistence v1 → v2 migration is verified;
+- v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
 - v0.3 local assets survive ordinary same-origin reload/deploy use;
 - loss of local bytes never corrupts or silently changes Story meaning;
 - browser and CLI resolve the same content identity from different local stores;
@@ -374,4 +395,4 @@ Record:
 
 ## Done when
 
-A production user can build and render a Story with their own bounded static local images, survive the v1 → v2 project-persistence transition, lose/recover assets predictably, and export a byte-free YAML that can be resolved in another environment by supplying the exact same files in the same categories.
+A production user can build and render a Story with bounded static local images, keep bundled-only v1 projects rollback-compatible until first local-ref persistence, recover missing/corrupt backing data by exact-file reimport, and export a byte-free YAML that resolves identically in browser and CLI from the same content regardless of filename extension.
