@@ -133,7 +133,32 @@ Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app`
 
 ### Production verification — 2026-10-01
 
-After PR #16 merged, Netlify deployed merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` from `main` as production deploy `6abf2894da2c7f0008e5496b`. The deployment reached `ready` with no Functions or Edge Functions. The user then confirmed that the production URL loaded successfully and completed browser-side MP4 rendering successfully. Post-merge GitHub Actions run `36961473266` also completed successfully, including the browser-render golden and canonical CLI reference render.
+After PR #16 merged, Netlify deployed merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` from `main` as production deploy `6abf2894da2c7f0008e5496b`. The deployment reached `ready` with no Functions or Edge Functions.
+
+The evidence recorded so far is intentionally **partial**:
+
+- the production root URL loaded successfully in Chrome 154 on Windows desktop;
+- browser-side MP4 rendering/download completed successfully;
+- post-merge GitHub Actions run `36961473266` completed successfully, including browser-render golden and canonical CLI reference render.
+
+This does **not** satisfy the full manual release checklist above. WEB-007 remains open until a deployed production-browser pass explicitly records the remaining authoring/persistence/capability/cancellation/draft-blocking/authoring-lock checks.
+
+### Remaining production manual golden
+
+The following deployed-origin checks still require explicit manual confirmation before WEB-007 can be Accepted:
+
+- [ ] bundled poses/backgrounds and canonical Story load from a clean browser state;
+- [ ] caption edit, pose change, and scene reorder work in the visual editor;
+- [ ] Player preview follows the active validated Story after those edits;
+- [ ] YAML export works from production;
+- [ ] reload restores the persisted Story;
+- [ ] browser render capability state is visible/correct;
+- [ ] downloaded canonical MP4 metadata is verified as video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds;
+- [ ] Cancel Render behavior is exercised;
+- [ ] pending/dirty draft blocks MP4 rendering as documented;
+- [ ] in-flight render locks authoring controls until settlement.
+
+The already-confirmed production load + MP4 render/download smoke does not need to be repeated unless the production deployment changes before this checklist is completed.
 
 ## Production release record
 
@@ -145,9 +170,9 @@ Fill this in when the first production deployment is verified:
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Production passed: app load and browser MP4 render confirmed after merge; Deploy Preview #16 also passed |
+| Browser golden | Partial: production load + browser MP4 render/download confirmed; full deployed manual release checklist still pending |
 | Browser | Chrome 154 on Windows desktop |
 | Remotion license basis | Free License — individual |
 | License terms last checked | 2026-10-01 |
 | Telemetry/privacy review | Completed for v0.2; mandatory Remotion client-render telemetry documented |
-| WEB-007 status | Accepted / v0.2 complete |
+| WEB-007 status | In progress — production deployed; full manual release verification pending |
