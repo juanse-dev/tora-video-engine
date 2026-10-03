@@ -172,10 +172,10 @@ MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS = 200_000_000
 
 Accounting rules:
 
-- ref count uses distinct category-scoped local refs;
-- source bytes and decoded pixels are summed once per distinct digest because pose/background refs may share one binary;
+- ref count uses **all** distinct category-scoped local refs in the Story, including currently missing/corrupt refs;
+- source bytes and decoded pixels are summed once per distinct digest whose valid metadata/verified descriptor is currently available because pose/background refs may share one binary;
 - bundled assets do not consume this custom-asset budget;
-- missing/corrupt metadata is asset-unready, not zero-cost;
+- missing/corrupt metadata is asset-unready and keeps render ineligible, but does not force otherwise valid refs out of a within-budget preview;
 - the initial budget preflight is evaluated from IndexedDB metadata **before** fetching the original Blobs;
 - metadata is not final authority: once payload integrity is verified, source bytes/pixels must be recomputed from verified descriptors and the same aggregate limits enforced again before any runtime source is created.
 
@@ -236,6 +236,20 @@ Resolution must retain:
 
 Do not put environment-specific Blob URLs, filesystem paths, or static URLs into the Story.
 
+### Partial preview readiness
+
+Asset readiness supports partial resolution.
+
+If a Story is within the aggregate browser budget but some local refs are missing/corrupt:
+
+- `resolved[]` contains every successfully resolved ref;
+- `missing[]` contains each unavailable ref with a reason;
+- preview may use the resolved subset and placeholders for only the unavailable positions;
+- unrelated valid local refs must not be replaced with placeholders merely because another ref is unavailable;
+- MP4 render remains ineligible until `missing.length === 0`.
+
+Aggregate over-budget is different: it suppresses the normal local Player/render source-map path for the whole Story.
+
 ## Bundled resolver
 
 Bundled refs resolve deterministically from the source-controlled catalog and existing static paths.
@@ -244,10 +258,16 @@ The v0.2 behavior for Tora's bundled assets must remain unchanged.
 
 ## Local resolver contract
 
-A local resolver receives the exact local ref and either:
+A local resolver receives the exact local ref.
 
-- returns the environment's resolved image source + metadata; or
-- reports that the ref is missing/unavailable.
+The **requested ref itself is authoritative** for category + digest. Storage metadata may confirm availability, but it may never redirect that ref to another category or digest.
+
+The resolver either:
+
+- returns the environment's resolved image source + metadata for that exact ref; or
+- reports that exact ref as missing/corrupt/unavailable.
+
+For browser storage, an inconsistent asset row must fail closed before any payload lookup for a different digest.
 
 The browser and Node implementations may differ in how they produce a runtime source, but they must consume the same Story ref grammar.
 
@@ -334,6 +354,7 @@ Minimum automated coverage:
 - serialization round-trips local refs exactly;
 - bundled catalog remains exhaustive over bundled values only;
 - a schema-valid Story with missing local refs remains schema/policy-valid but asset-unready;
+- a mixed Story with resolved + missing refs returns both sets, preserves valid refs in preview, and remains render-ineligible;
 - the missing set is deduplicated when several scenes reference the same missing asset;
 - the same digest may appear as separate pose/background refs;
 - aggregate browser asset budget counts distinct refs and distinct digests correctly;
@@ -348,7 +369,7 @@ Minimum automated coverage:
 - Story schema can safely represent local pose/background references;
 - Story/YAML contains references only, never bytes/runtime URLs;
 - bundled catalog stays closed and source-controlled;
-- local availability is explicitly separated from schema validity;
+- local availability is explicitly separated from schema validity and supports partial preview resolution;
 - browser and CLI can implement different storage mechanisms behind the same resolver/readiness contract;
 - browser runtime source transport is proven against pinned Remotion before ASSET-002/003.
 
