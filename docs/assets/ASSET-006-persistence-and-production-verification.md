@@ -4,7 +4,7 @@
 
 ## Goal
 
-Close v0.3 by proving that local custom assets coexist safely with the ASSET-001 project-persistence v2 boundary, survive normal same-origin browser reload/deploy cycles, fail explicitly when unavailable, and render consistently in browser and CLI.
+Close v0.3 by proving that local custom assets coexist safely with the ASSET-001 project-persistence v2 boundary, survive ordinary same-origin reloads, full browser restarts with the same persistent profile, and same-origin build/deploy transitions, fail explicitly when unavailable, and render consistently in browser and CLI.
 
 ## Compatibility principle
 
