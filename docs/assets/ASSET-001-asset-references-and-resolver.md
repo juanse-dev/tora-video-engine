@@ -162,7 +162,7 @@ This separation is necessary for YAML moved between computers/browsers.
 
 Per-file validation is not enough to make a Story safe for browser preview/render. A schema-valid Story may reference many different local files.
 
-Before reading full Blob payloads or creating runtime image sources, the browser must load only local **metadata** for the distinct refs/digests used by the Story and enforce these initial v0.3 aggregate limits:
+Before reading full Blob payloads or creating runtime image sources, the browser must load only local **metadata** for the distinct refs/digests used by the Story and enforce these initial v0.3 aggregate **preflight** limits:
 
 ~~~ts
 MAX_BROWSER_STORY_LOCAL_ASSET_REFS = 64
@@ -176,7 +176,8 @@ Accounting rules:
 - source bytes and decoded pixels are summed once per distinct digest because pose/background refs may share one binary;
 - bundled assets do not consume this custom-asset budget;
 - missing/corrupt metadata is asset-unready, not zero-cost;
-- the budget is evaluated from IndexedDB metadata **before** fetching the original Blobs.
+- the initial budget preflight is evaluated from IndexedDB metadata **before** fetching the original Blobs;
+- metadata is not final authority: once payload integrity is verified, source bytes/pixels must be recomputed from verified descriptors and the same aggregate limits enforced again before any runtime source is created.
 
 Exceeding this budget is a browser-only readiness/policy failure, not a Story schema error.
 
@@ -336,7 +337,8 @@ Minimum automated coverage:
 - the missing set is deduplicated when several scenes reference the same missing asset;
 - the same digest may appear as separate pose/background refs;
 - aggregate browser asset budget counts distinct refs and distinct digests correctly;
-- a Story above any aggregate browser asset budget remains schema-valid/exportable and does not load original Blobs into Player/render;
+- metadata-preflight overflow remains schema-valid/exportable and causes zero original-Blob reads;
+- metadata that under-reports real resource use cannot bypass limits: verified payload descriptors are re-summed and final overflow blocks runtime-source creation;
 - pinned web-render spike renders a local Blob/runtime source into an MP4 with the expected image.
 
 ## Acceptance criteria
@@ -361,4 +363,4 @@ Minimum automated coverage:
 
 ## Done when
 
-A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, bundled-only v1 persistence remains rollback-compatible until first local-ref use, aggregate browser asset budgets fail closed before Blob loading, and the browser render transport gate is proven without putting asset bytes into Story data.
+A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, bundled-only v1 persistence remains rollback-compatible until first local-ref use, aggregate browser asset budgets fail closed at metadata preflight and again from verified payload descriptors before runtime-source creation, and the browser render transport gate is proven without putting asset bytes into Story data.
