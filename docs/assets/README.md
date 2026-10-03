@@ -24,9 +24,9 @@ The local library is intentionally **not synchronized**. Changing computer, brow
 8. **Original bytes are preserved.** v0.3 does not recompress or resize imported source images.
 9. **Each source image is bounded before expensive work.** Source bytes must be >0 and ≤25 MiB, dimensions ≤8192 px per side, and decoded pixels ≤50 MP; animated PNG/WebP is rejected.
 10. **Browser custom assets remain browser-local.** IndexedDB is the v0.3 durable store; no Netlify upload, backend, cloud sync, remote URL fetch, or account is introduced.
-11. **CLI custom assets remain checkout-local.** Users copy supported files into gitignored local asset folders; Tora resolves the same content-addressed references and exposes a required helper command to print complete copy/pasteable refs.
+11. **CLI custom assets remain checkout-local and content-first.** Users copy files into gitignored local asset folders; Node detects PNG/JPEG/WebP from bytes rather than trusting extension/MIME, resolves the same content-addressed refs, and exposes a required helper command to print complete copy/pasteable refs.
 12. **Pose/background rendering semantics stay unchanged.** Pose images use contain behavior; backgrounds use cover behavior.
-13. **Project persistence has an explicit v0.3 boundary.** v1 bundled projects migrate deterministically to persistence envelope v2 before local refs can be durably written; the existing persistence Web Lock remains unversioned.
+13. **Project persistence has an explicit v0.3 boundary.** v1 bundled projects remain v1 while bundled-only; the first successful durable write containing a local ref promotes atomically to v2. The existing persistence Web Lock remains unversioned.
 14. **Browser render transport is gated early.** ASSET-001 must prove the pinned Remotion web renderer can render the chosen local runtime source transport before ASSET-002/003 proceed.
 
 ## Stable reference grammar
@@ -80,7 +80,7 @@ The Story is shared. Asset bytes are environment-specific.
 
 v0.3 uses a browser-local binary store separate from the existing Story `localStorage` envelope.
 
-v0.3 uses IndexedDB because it can atomically store structured metadata and Blob values without mixing custom assets into Remotion's OPFS render namespace.
+v0.3 uses IndexedDB because it can atomically store structured metadata, original Blobs, and bounded derivative thumbnails without mixing custom assets into Remotion's OPFS render namespace.
 
 At minimum the library records:
 
@@ -94,9 +94,24 @@ MIME type
 byte size
 decoded width/height
 original Blob
+bounded derivative thumbnail (≤256×256)
 ~~~
 
 Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
+
+## Browser active-Story asset budget
+
+Per-file limits are not sufficient for a Story that references many distinct local assets.
+
+Before loading original Blobs for Player/render, v0.3 reads metadata only and enforces:
+
+~~~text
+≤64 distinct category-scoped local refs
+≤256 MiB original source bytes across distinct digests
+≤200 MP across distinct digests
+~~~
+
+A Story above this browser-only budget remains schema-valid and YAML-exportable for CLI use, but Player/render is suppressed and original Blobs are not eagerly materialized.
 
 ## Local CLI model
 
@@ -108,7 +123,7 @@ local-assets/
   backgrounds/
 ~~~
 
-A user can copy supported static images there. The CLI validates size/format/dimensions, hashes files, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
+A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
 
 This deliberately mirrors the browser model:
 
@@ -182,18 +197,19 @@ No fallback to a bundled pose/background is allowed.
 
 v0.3 is complete when:
 
-- existing v0.2 bundled YAML/Story content remains unchanged, while persisted v1 projects migrate safely to envelope v2;
+- existing v0.2 bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1 until first successful local-ref persistence promotes them atomically to v2;
 - static PNG/JPEG/WebP pose/background imports reject APNG/animated WebP and enforce ≤25 MiB, ≤8192 px per side, and ≤50 MP;
 - user assets remain visually separated from bundled assets;
+- catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals, with at most 50 local thumbnail cards mounted at once;
 - original bytes persist in the same browser/origin across reloads;
-- exact duplicate bytes do not create duplicate binary storage;
+- exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport repairs missing/corrupt backing Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
 - YAML exports contain local references but no image bytes/blob URLs;
 - missing references are explicit and block render rather than changing output silently;
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
-- Player and browser MP4 rendering work with local pose/background assets;
-- the CLI resolves the same refs from `local-assets/` and a required helper prints complete canonical refs;
+- Player and browser MP4 rendering work with local pose/background assets within the aggregate browser asset budget;
+- the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
 - production remains static-hosted and backend-free.
