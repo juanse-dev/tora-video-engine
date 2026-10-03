@@ -41,13 +41,14 @@ Value contains at least:
 
 ~~~ts
 {
-  digest: string;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   byteSize: number;
   width: number;
   height: number;
 }
 ~~~
+
+The IndexedDB key is the **only digest authority**. The value does not store a second digest field.
 
 Reading `payloadMeta[digest]` must not materialize `blobs[digest]`.
 
@@ -59,10 +60,11 @@ This store contains the heavyweight original payload only:
 
 ~~~ts
 {
-  digest: string;
   blob: Blob;
 }
 ~~~
+
+The IndexedDB key is the **only digest authority**. The Blob value cannot redirect lookup to another digest.
 
 The original Blob's `size` must agree with `payloadMeta[digest].byteSize` before hashing/decoding it for runtime use.
 
@@ -74,13 +76,14 @@ Value contains at least:
 
 ~~~ts
 {
-  digest: string;
   blob: Blob;
   mimeType: "image/webp";
   width: number;
   height: number;
 }
 ~~~
+
+The IndexedDB key is the **only digest authority** for thumbnails as well.
 
 The thumbnail is derivative cache data only. It is not part of asset identity and may be regenerated from the original Blob.
 
@@ -94,6 +97,21 @@ MAX_MOUNTED_LOCAL_THUMBNAILS = 50
 Thumbnail generation occurs during import from the already-validated original image. The derivative must preserve aspect ratio and fit within 256×256.
 
 The catalog must never use the original full-resolution Blob directly as its thumbnail source.
+
+## Key authority across all stores
+
+Identity comes only from the IndexedDB key used for the lookup:
+
+- `assets` key → full canonical local ref;
+- `payloadMeta` key → SHA-256 digest;
+- `blobs` key → SHA-256 digest;
+- `thumbnails` key → SHA-256 digest.
+
+New writes must not duplicate those identities inside row values.
+
+If malformed/legacy data contains a redundant `digest`/ref/category-like field, it is **never** used to select another record. If such a redundant identity disagrees with the lookup key, treat that record as corrupt/unavailable.
+
+A lookup for digest A must therefore never perform a follow-up lookup of digest B because a value stored at key A claims `digest: B`.
 
 ### assets store
 
@@ -339,7 +357,8 @@ tora-video-engine:asset-library
 
 Lock protocol:
 
-- every durable asset-library mutation (import commit/repair, rename, delete + GC, future DB migration that rewrites asset records) takes this lock in **exclusive** mode around its final IndexedDB transaction;
+- every durable asset-library mutation (import commit/repair, rename, delete + GC) takes this lock in **exclusive** mode around its final IndexedDB transaction;
+- database creation and any schema/data migration that may write records also require this lock in **exclusive** mode before opening/upgrading the target version;
 - expensive pre-import work such as file hashing/decoding/thumbnail generation happens **before** requesting the exclusive lock, so the lock protects only the short durable commit;
 - read-only catalog/preview browsing does not need to hold the lock and may converge through normal IndexedDB rereads/invalidation;
 - ASSET-004 render preparation takes the same lock in **shared** mode only for the final readiness revalidation + runtime-source snapshot freeze;
@@ -358,11 +377,29 @@ A same-origin `BroadcastChannel` remains the preferred best-effort invalidation 
 
 ## Web Locks capability fallback
 
-The dedicated asset-library lock is a **required coordination capability for writes and local-asset MP4 render snapshots**, but not for read-only preview.
+The dedicated asset-library lock is a **required coordination capability for writes, database creation/schema migration, and local-asset MP4 render snapshots**, but not for read-only preview.
+
+Capability detection happens **before any IndexedDB open that could create or upgrade the asset database**.
+
+### Startup without Web Locks
 
 If `navigator.locks?.request` is unavailable:
 
-- open the existing IndexedDB asset library in **read-only application mode**;
+1. do **not** call `indexedDB.open()` speculatively;
+2. require `indexedDB.databases()` (or an equivalent non-creating database-enumeration capability) to discover whether `tora-video-engine-assets` already exists and which durable version it has;
+3. if enumeration is unavailable, the DB is absent, or its durable version is not directly readable by the current code without migration, do not open/create/upgrade it; expose My assets as unavailable/read-only until a coordinated session is available;
+4. only when an existing DB version is explicitly known to be directly readable may the app call `indexedDB.open(name, exactExistingVersion)`;
+5. if `onupgradeneeded` fires unexpectedly during that read-only open, abort the versionchange transaction, close/fail the open, and expose the library as unavailable; never run schema creation/migration code;
+6. all subsequent transactions in this mode are `readonly` only.
+
+For initial v0.3, the directly readable durable schema is version 1. Future versions may explicitly declare older read-compatible schemas, but they must not migrate them without Web Locks.
+
+This covers deletion/race between enumeration and open: if the database disappears and the exact-version open would recreate it, `onupgradeneeded` is aborted so creation is rolled back rather than silently writing schema state.
+
+### Resulting degraded mode
+
+When a compatible existing DB was opened safely:
+
 - existing durable entries may still be listed, paged, integrity-verified, and used for Player preview;
 - do not perform import/repair/rename/delete/GC or any asset DB migration that writes records;
 - do not silently write IndexedDB without coordination;
@@ -370,6 +407,8 @@ If `navigator.locks?.request` is unavailable:
 - Render MP4 is ineligible for any Story that contains local refs because the final shared-lock snapshot barrier cannot be established;
 - bundled-only behavior follows the existing v0.2 browser capability/degradation rules;
 - show an explicit capability message explaining that My assets is read-only because browser coordination support is unavailable.
+
+When no safely readable existing DB can be opened, local refs remain explicit unavailable refs; bundled-only behavior remains usable.
 
 Applying an already-durable local asset to the current Story does not mutate the asset library itself. It may follow the existing Story authoring/persistence capability rules, including v0.2 loss-risk/session-only behavior when Story persistence coordination is unavailable.
 
@@ -513,7 +552,11 @@ Minimum coverage:
 - same-origin mutation invalidation refreshes stale library views;
 - all durable library mutations acquire `tora-video-engine:asset-library` exclusively for their final IndexedDB transaction;
 - a shared render-snapshot critical section blocks an exclusive delete until final canonical-row/payloadMeta revalidation and source-map freeze complete;
-- with `navigator.locks` absent, existing durable My assets remain readable/previewable, all asset-library writes are disabled, no write transaction is attempted, and local-ref MP4 rendering is ineligible;
+- with `navigator.locks` absent and an existing directly readable v1 DB, existing durable My assets remain readable/previewable, all asset-library writes are disabled, all transactions are readonly, and local-ref MP4 rendering is ineligible;
+- with `navigator.locks` absent and no existing DB, startup performs no DB/store creation and no `onupgradeneeded` schema write;
+- with `navigator.locks` absent and an older/incompatible DB requiring migration, startup performs no schema/data migration and exposes My assets unavailable/read-only;
+- if a read-only exact-version open unexpectedly fires `onupgradeneeded`, the upgrade transaction is aborted and no DB/schema creation persists;
+- malformed `payloadMeta[A]`, `blobs[A]`, or `thumbnails[A]` values that contain redundant `digest: B` never trigger any lookup of B and are treated as corrupt if identity is inconsistent;
 - opening a large library reads at most one 50-row metadata page initially and does not call unbounded `getAll()`;
 - total count can be displayed without materializing all metadata rows;
 - next/previous catalog navigation fetches bounded pages through the canonical primary-key prefix/range cursor; no secondary category/order index is required.
