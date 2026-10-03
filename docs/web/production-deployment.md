@@ -129,7 +129,47 @@ The automated WEB-001…006 tests remain the regression suite; this checklist is
 
 ### Deploy Preview verification — 2026-10-01
 
-Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story. This is valid deployed-origin smoke/golden evidence for WEB-007, but the final production URL must still be rechecked after the PR is merged to `main`.
+Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story.
+
+### Production verification — 2026-10-01
+
+After PR #16 merged, Netlify deployed merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` from `main` as production deploy `6abf2894da2c7f0008e5496b`. The deployment reached `ready` with no Functions or Edge Functions.
+
+The production browser flow has now been exercised substantially in Chrome 154 on Windows desktop. The user explicitly confirmed on the production origin:
+
+- caption editing works;
+- pose changes work;
+- scene reordering works;
+- Player preview follows those edits;
+- YAML export works;
+- reload restores persisted Story state;
+- Render MP4 is available/enabled in the tested browser;
+- browser-side MP4 rendering/download completes successfully.
+
+Post-merge GitHub Actions run `36961473266` also completed successfully, including the browser-render golden and canonical CLI reference render.
+
+The user subsequently exercised the three remaining deployed interaction behaviors: Cancel Render, pending/dirty-draft render blocking, and the in-flight authoring lock. The full manual production golden is therefore complete.
+
+### Remaining production manual golden
+
+Production-origin evidence now records:
+
+- [x] production app loads and bundled visual editing is usable;
+- [x] caption edit works;
+- [x] pose change works;
+- [x] scene reorder works;
+- [x] Player preview follows the edited Active Story;
+- [x] YAML export works;
+- [x] reload restores persisted Story state;
+- [x] Render MP4 is available/enabled in the tested browser;
+- [x] browser MP4 render/download completes successfully;
+- [x] Cancel Render behavior is exercised;
+- [x] pending/dirty draft blocks MP4 rendering as documented;
+- [x] in-flight render locks authoring controls until settlement.
+
+Canonical output metadata remains covered by the automated browser/CLI golden (`video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds`); the production user confirmation above is limited to successful render/download and does not claim an independent manual metadata inspection.
+
+All required deployed interaction behaviors are now confirmed. Combined with the automated browser/CLI golden, WEB-007 satisfies its production acceptance gate.
 
 ## Production release record
 
@@ -137,12 +177,13 @@ Fill this in when the first production deployment is verified:
 
 | Field | Value |
 | --- | --- |
-| Deployment commit | Pending WEB-007 production deploy after merge |
+| Deployment commit | `ac8fb3db18ddc7b322538f6006728db045880e89` |
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Deploy Preview #16 passed: preview and browser MP4 render confirmed by user; production post-merge confirmation pending |
-| Remotion license basis | Free License — individual; reconfirm immediately before production deploy |
+| Browser golden | Complete: production authoring, Player, YAML export, persistence, render/download, Cancel Render, pending-draft blocking, and in-flight authoring lock confirmed |
+| Browser | Chrome 154 on Windows desktop |
+| Remotion license basis | Free License — individual |
 | License terms last checked | 2026-10-01 |
-| Telemetry/privacy review | Pending deployed-origin verification |
-| WEB-007 status | In progress |
+| Telemetry/privacy review | Completed for v0.2; mandatory Remotion client-render telemetry documented |
+| WEB-007 status | Accepted / v0.2 complete |

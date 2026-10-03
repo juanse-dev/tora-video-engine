@@ -1,6 +1,6 @@
 # WEB-007 — Static deployment and Web MVP verification
 
-> Status: **In progress**
+> Status: **Accepted / v0.2 complete**
 
 ## Goal
 
@@ -232,7 +232,10 @@ Update the root README when implementation reaches this spec so it documents:
 - current Remotion licensing prerequisite and where the deployment's license basis is recorded;
 - link to \`docs/web/\` as the v0.2 source of truth.
 
-## v0.2 completion checklist
+## Automated / implementation completion checklist
+
+The checked items below record implementation and automated verification. They do **not** by themselves close WEB-007: the deployed manual golden in `production-deployment.md` remains a separate required release gate.
+
 
 - [x] WEB-001 accepted
 - [x] WEB-002 accepted
@@ -241,64 +244,94 @@ Update the root README when implementation reaches this spec so it documents:
 - [x] WEB-005 accepted
 - [x] WEB-006 accepted
 - [x] production static build succeeds
-- [ ] deployed site loads without application backend
-- [ ] visual editor flow passes
-- [ ] visual title >65,536 UTF-16 code units and visual caption >360 UTF-16 code units are rejected before Story validation
-- [ ] YAML/import title >65,536 is rejected by centralized post-schema policy; stored title >65,536 is quarantined by cheap storage preflight before StorySchema
-- [ ] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
-- [ ] 201+ scene visual/YAML/import/render-recheck candidates never invoke timeline derivation/canonical serialization; persisted 201+ scene data is quarantined even earlier by storage preflight before StorySchema
-- [ ] visual Add cannot grow an over-budget pending draft beyond 201 scenes
-- [ ] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount, with a final defensive canonical-YAML ≤1 MiB invariant
-- [ ] maximum-boundary v0.2 fixture remains ≤1 MiB canonical YAML, so no unreachable canonical-only rejection test is required
-- [ ] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
-- [ ] policy-rejected visual candidates remain pending and disable stale render/export
-- [ ] persisted Stories are rechecked against browser policy before restore
-- [ ] policy-rejected stored Stories remain exportable and protected from fallback overwrite until explicit discard
-- [ ] YAML Apply requires both schema validity and browser eligibility
-- [ ] successful Apply resets YAML dirty baseline even for noncanonical source
-- [ ] pasted/edited YAML >1,048,576 UTF-16 code units is rejected before `TextEncoder`, then exact >1 MiB UTF-8 is rejected before parse
-- [ ] transferred visual candidates remain within the 1 MiB source ceiling under current v0.2 structural bounds
-- [ ] editing a transferred buffer clears validated-transfer provenance and requires normal validation again
-- [ ] policy-rejected YAML candidate can be exported verbatim for CLI use
-- [ ] live caption-font reload is safe across sequential and overlapping Story updates
-- [ ] caption font readiness uses ≤1 full-text `FontFaceSet.load()` per required weight per generation (currently ≤3 total), independent of unique caption characters
-- [ ] asset catalog flow passes
-- [ ] YAML import/export flow passes
-- [ ] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
-- [ ] cross-tab/cross-version persistence has exactly one writer under unversioned lock `tora-video-engine:persistence-writer` while physical project/recovery slots are shared
-- [ ] raw stored envelope >1,048,576 code units is quarantined before `JSON.parse()`/Zod and exported as exact neutral raw data via `tora-stored-recovery.txt`
-- [ ] malformed JSON and unsupported storage versions remain exact raw protected recovery, export through **Export stored raw data** as `tora-stored-recovery.txt`, and cannot be overwritten by fallback autosave
-- [ ] storage cheap preflight rejects title >65,536, scenes >200, or raw caption >360 before StorySchema/font coverage
-- [ ] bounded StorySchema-invalid storage remains exact raw protected recovery and cannot be overwritten by fallback autosave
-- [ ] maximum-boundary compact persisted envelope fits its code-unit bound; write overflow preserves prior durable data
-- [ ] persistence ownership retry re-reads durable state and requires explicit conflict resolution before overwrite
-- [ ] YAML/visual mode-switch conflict guards pass in both directions
-- [ ] YAML baseline is regenerated from current Active Story on candidate transfer
-- [ ] Reset requires explicit destructive confirmation whenever any loss-risk/recovery state exists, including an active Story that differs from durable storage
-- [ ] beforeunload protects dirty YAML, pending visual drafts, transfer candidates, and active Stories not durably stored because persistence failed or was intentionally suppressed
-- [ ] unload guard is removed promptly when no loss-risk state remains
-- [ ] import commit is gated by explicit destructive confirmation whenever pending/unpersisted/recovery state exists
-- [ ] invalid/cancelled imports preserve existing pending work
-- [ ] normal web-renderer compatibility pass covers all render-critical shared components
-- [ ] centered/left/long/unbroken caption golden parity passes without depending on experimental HTML-in-canvas
-- [ ] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, ASCII and superscript Win32 device-name, empty-result, and 65,536-code-unit boundary tests
-- [ ] Remotion client-render telemetry is disclosed in deployment/privacy/CSP docs
-- [ ] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
-- [ ] capability and render calls both use `muted: true`
-- [ ] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
-- [ ] dedicated **unversioned** render Web Lock `tora-video-engine:web-fs-render` serializes `web-fs` rendering across same-origin tabs and concurrently open old/new Tora bundle versions through render, public `getBlob()`, and positively-completed cleanup
-- [ ] Cancel Render is mandatory, uses `AbortController`, awaits render settlement, and shares the locked cleanup path
-- [ ] delayed writer-close tests prove the same cleanup helper retries/backoff both post-render and pre-render/new-session while retaining the render lock
-- [ ] exhausted pre-render cleanup enters `cleanup-blocked` and never calls `renderMediaOnWeb()`; successful pre-render Retry cleanup releases the lock immediately and requires a fresh Render click/reacquire/preflight, while exhausted post-render cleanup keeps the lock until its Retry cleanup succeeds
-- [ ] repeated success/failure/cancel render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
-- [ ] public Remotion 4.0.529 `getBlob()` result remains byte-readable after deleting its source OPFS entry, including delayed post-cleanup consumption
-- [ ] Tora adds no second full-payload `arrayBuffer() → new Blob()` materialization layer and no artificial MP4-size rejection path
-- [ ] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
-- [ ] canonical browser MP4 render passes on a supported browser
-- [ ] in-flight render authoring lock prevents stale-result downloads
-- [ ] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
-- [ ] existing CLI render still passes
-- [ ] README matches the implemented workflows
+- [x] deployed site loads without application backend
+- [x] visual editor flow passes
+- [x] visual title >65,536 UTF-16 code units and visual caption >360 UTF-16 code units are rejected before Story validation
+- [x] YAML/import title >65,536 is rejected by centralized post-schema policy; stored title >65,536 is quarantined by cheap storage preflight before StorySchema
+- [x] browser authoring/preview policy short-circuits in the order title → scene count → frames → canonical bytes
+- [x] 201+ scene visual/YAML/import/render-recheck candidates never invoke timeline derivation/canonical serialization; persisted 201+ scene data is quarantined even earlier by storage preflight before StorySchema
+- [x] visual Add cannot grow an over-budget pending draft beyond 201 scenes
+- [x] browser authoring/preview budget blocks >200 scenes or >9,000 frames before Player mount, with a final defensive canonical-YAML ≤1 MiB invariant
+- [x] maximum-boundary v0.2 fixture remains ≤1 MiB canonical YAML, so no unreachable canonical-only rejection test is required
+- [x] every Active Story canonical YAML export stays ≤1 MiB and successfully re-imports
+- [x] policy-rejected visual candidates remain pending and disable stale render/export
+- [x] persisted Stories are rechecked against browser policy before restore
+- [x] policy-rejected stored Stories remain exportable and protected from fallback overwrite until explicit discard
+- [x] YAML Apply requires both schema validity and browser eligibility
+- [x] successful Apply resets YAML dirty baseline even for noncanonical source
+- [x] pasted/edited YAML >1,048,576 UTF-16 code units is rejected before `TextEncoder`, then exact >1 MiB UTF-8 is rejected before parse
+- [x] transferred visual candidates remain within the 1 MiB source ceiling under current v0.2 structural bounds
+- [x] editing a transferred buffer clears validated-transfer provenance and requires normal validation again
+- [x] policy-rejected YAML candidate can be exported verbatim for CLI use
+- [x] live caption-font reload is safe across sequential and overlapping Story updates
+- [x] caption font readiness uses ≤1 full-text `FontFaceSet.load()` per required weight per generation (currently ≤3 total), independent of unique caption characters
+- [x] asset catalog flow passes
+- [x] YAML import/export flow passes
+- [x] persistence flow passes, including quota/access failure handling and suppressed-write loss-risk while recovery storage is protected
+- [x] cross-tab/cross-version persistence has exactly one writer under unversioned lock `tora-video-engine:persistence-writer` while physical project/recovery slots are shared
+- [x] raw stored envelope >1,048,576 code units is quarantined before `JSON.parse()`/Zod and exported as exact neutral raw data via `tora-stored-recovery.txt`
+- [x] malformed JSON and unsupported storage versions remain exact raw protected recovery, export through **Export stored raw data** as `tora-stored-recovery.txt`, and cannot be overwritten by fallback autosave
+- [x] storage cheap preflight rejects title >65,536, scenes >200, or raw caption >360 before StorySchema/font coverage
+- [x] bounded StorySchema-invalid storage remains exact raw protected recovery and cannot be overwritten by fallback autosave
+- [x] maximum-boundary compact persisted envelope fits its code-unit bound; write overflow preserves prior durable data
+- [x] persistence ownership retry re-reads durable state and requires explicit conflict resolution before overwrite
+- [x] YAML/visual mode-switch conflict guards pass in both directions
+- [x] YAML baseline is regenerated from current Active Story on candidate transfer
+- [x] Reset requires explicit destructive confirmation whenever any loss-risk/recovery state exists, including an active Story that differs from durable storage
+- [x] beforeunload protects dirty YAML, pending visual drafts, transfer candidates, and active Stories not durably stored because persistence failed or was intentionally suppressed
+- [x] unload guard is removed promptly when no loss-risk state remains
+- [x] import commit is gated by explicit destructive confirmation whenever pending/unpersisted/recovery state exists
+- [x] invalid/cancelled imports preserve existing pending work
+- [x] normal web-renderer compatibility pass covers all render-critical shared components
+- [x] centered/left/long/unbroken caption golden parity passes without depending on experimental HTML-in-canvas
+- [x] shared YAML/MP4 download basename sanitizer passes reserved-character, Unicode/emoji, ASCII and superscript Win32 device-name, empty-result, and 65,536-code-unit boundary tests
+- [x] Remotion client-render telemetry is disclosed in deployment/privacy/CSP docs
+- [x] production release records current Remotion license basis and uses only a client-safe/free license-key configuration
+- [x] capability and render calls both use `muted: true`
+- [x] full browser MP4 render requires `resolvedOutputTarget === "web-fs"`; `arraybuffer` fallback is rejected without starting render
+- [x] dedicated **unversioned** render Web Lock `tora-video-engine:web-fs-render` serializes `web-fs` rendering across same-origin tabs and concurrently open old/new Tora bundle versions through render, public `getBlob()`, and positively-completed cleanup
+- [x] Cancel Render is mandatory, uses `AbortController`, awaits render settlement, and shares the locked cleanup path
+- [x] delayed writer-close tests prove the same cleanup helper retries/backoff both post-render and pre-render/new-session while retaining the render lock
+- [x] exhausted pre-render cleanup enters `cleanup-blocked` and never calls `renderMediaOnWeb()`; successful pre-render Retry cleanup releases the lock immediately and requires a fresh Render click/reacquire/preflight, while exhausted post-render cleanup keeps the lock until its Retry cleanup succeeds
+- [x] repeated success/failure/cancel render lifecycles clean `__remotion_render:` OPFS files and do not accumulate origin storage
+- [x] public Remotion 4.0.529 `getBlob()` result remains byte-readable after deleting its source OPFS entry, including delayed post-cleanup consumption
+- [x] Tora adds no second full-payload `arrayBuffer() → new Blob()` materialization layer and no artificial MP4-size rejection path
+- [x] canonical browser MP4 has no audio track and is exactly 360 video frames / 12.0 seconds
+- [x] canonical browser MP4 render passes on a supported browser
+- [x] in-flight render authoring lock prevents stale-result downloads
+- [x] render start defensively rechecks the same centralized title / 200-scene / 9,000-frame / 1-MiB-canonical-YAML authoring policy
+- [x] existing CLI render still passes
+- [x] README matches the implemented workflows
+
+## Production manual acceptance gate
+
+The production origin has now been exercised for the core authoring → preview → persistence → render flow:
+
+- [x] production app loads and bundled visual editing is usable;
+- [x] edit caption in production;
+- [x] change pose in production;
+- [x] reorder scenes in production;
+- [x] Player follows the resulting Active Story;
+- [x] export YAML from production;
+- [x] reload and confirm persisted Story restoration;
+- [x] Render MP4 is available/enabled in the tested browser;
+- [x] render/download MP4 in production;
+- [x] exercise Cancel Render;
+- [x] verify pending/dirty draft blocks MP4 rendering;
+- [x] verify in-flight render locks authoring until settlement.
+
+The user explicitly confirmed the nine checked production behaviors. Canonical MP4 codec/dimension/frame/duration metadata is already asserted by the automated browser/CLI golden and is not being misrepresented as a separate manual inspection.
+
+All required production-origin interaction checks are now confirmed. WEB-007 is **Accepted** and v0.2 Web Authoring MVP is complete.
+
+
+Completion evidence:
+
+- production deploy: Netlify deploy `6abf2894da2c7f0008e5496b` from merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` on `main`;
+- production URL: `https://tora-video-engine.netlify.app`;
+- post-merge GitHub Actions CI run `36961473266`: success, including unit tests, lint/typecheck, static build, browser-render golden, Player/browser tests, canonical CLI reference render, artifact verification, and stale-output rejection;
+- real-browser production flow: caption/pose/order editing, Player update, YAML export, persistence after reload, Render availability, MP4 render/download, Cancel Render, pending-draft blocking, and in-flight authoring-lock behavior all confirmed;
+- the production deployment remains static-only with no Netlify Functions, Edge Functions, Tora application backend, database, or cloud render service.
 
 ## Out of scope
 
