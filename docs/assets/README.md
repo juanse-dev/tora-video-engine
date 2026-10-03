@@ -103,6 +103,8 @@ tora-video-engine:asset-library
 
 Durable library mutations take it exclusively for their final IndexedDB transaction. Render preparation takes it shared only for the final canonical-row/payloadMeta revalidation + immutable source-map freeze, closing the delete-during-preparation TOCTOU without depending on BroadcastChannel timing.
 
+If Web Locks is unavailable, My assets degrades to **read-only**: existing durable entries may still list/preview, but import/repair/rename/delete/GC are disabled, no uncoordinated IndexedDB writes or ephemeral imports occur, and MP4 rendering with local refs is unavailable.
+
 ## Browser active-Story asset budget
 
 Per-file limits are not sufficient for a Story that references many distinct local assets.
@@ -221,7 +223,7 @@ v0.3 is complete when:
 - user assets remain visually separated from bundled assets;
 - catalog metadata and thumbnails are paged/windowed at ≤50 entries using canonical primary-key prefix/range + cursor/keyset pagination; no secondary category/order index or whole-library metadata getAll/materialization is required;
 - catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
-- original bytes persist in the same browser/origin across reloads **and a recorded same-origin build A → build B deployment transition without re-import**;
+- original bytes persist in the same browser/origin across reloads, a **full browser restart using the same persistent profile**, and a recorded same-origin build A → build B deployment transition without re-import;
 - a Story ref/asset primary key is authoritative: corrupt row metadata cannot redirect it to another digest/category;
 - exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport canonicalizes/repairs the asset row plus missing/corrupt payloadMeta/Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
@@ -231,6 +233,7 @@ v0.3 is complete when:
 - delete-in-use is allowed only after warning;
 - Player/browser rendering uses only sequentially integrity-verified assets whose actual format/size/dimensions exactly match payloadMeta; defensive aggregate totals must equal preflight totals;
 - render-preparation cross-tab races are closed by final shared-lock canonical ref revalidation before source-map freeze;
+- missing Web Locks capability leaves existing My assets readable/previewable but disables all asset-library writes and local-ref MP4 rendering;
 - the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
