@@ -86,12 +86,12 @@ The storage layout separates lightweight readiness/budget metadata from heavywei
 
 ~~~text
 assets       → primary key = full canonical ref; value = label/original filename/createdAt only
-payloadMeta  → digest/MIME/byte size/dimensions
-blobs        → digest/original Blob only
-thumbnails   → digest/bounded derivative thumbnail (≤256×256)
+payloadMeta  → key = digest; value = MIME/byte size/dimensions
+blobs        → key = digest; value = original Blob only
+thumbnails   → key = digest; value = bounded derivative thumbnail (≤256×256)
 ~~~
 
-The full `assets` primary key is the sole authority for category + digest; row values cannot redirect identity. Category pagination uses primary-key prefix ranges. This separation lets browser budget/readiness checks run without reading original Blob records.
+IndexedDB keys are the sole identity authority in **all four stores**: full ref for `assets`, digest for `payloadMeta`/`blobs`/`thumbnails`. Values do not duplicate those identities and cannot redirect lookups. Category pagination uses primary-key prefix ranges. This separation lets browser budget/readiness checks run without reading original Blob records.
 
 Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
 
@@ -101,9 +101,11 @@ Cross-tab asset mutation/render-snapshot coordination uses a dedicated Web Lock:
 tora-video-engine:asset-library
 ~~~
 
-Durable library mutations take it exclusively for their final IndexedDB transaction. Render preparation takes it shared only for the final canonical-row/payloadMeta revalidation + immutable source-map freeze, closing the delete-during-preparation TOCTOU without depending on BroadcastChannel timing.
+Durable library mutations take it exclusively for their final IndexedDB transaction; DB creation/schema migration also requires coordinated exclusive access.
 
-If Web Locks is unavailable, My assets degrades to **read-only**: existing durable entries may still list/preview, but import/repair/rename/delete/GC are disabled, no uncoordinated IndexedDB writes or ephemeral imports occur, and MP4 rendering with local refs is unavailable.
+For local-ref MP4, heavy verification runs outside locks, then the app acquires the global `tora-video-engine:web-fs-render` lock **before** taking `asset-library` shared for final canonical-row/payloadMeta revalidation + immutable source-map freeze. The asset lock is released after freeze while the global render lock remains held through OPFS/render settlement.
+
+If Web Locks is unavailable, capability is checked before any potentially creating/upgrading IndexedDB open. My assets can become **read-only** only when an existing directly-readable DB can be safely discovered/opened without upgrade; otherwise it is unavailable/read-only. No DB/store creation, migration, CRUD writes, uncoordinated writes, or ephemeral imports occur, and MP4 rendering with local refs is unavailable.
 
 ## Browser active-Story asset budget
 
@@ -144,7 +146,9 @@ local-assets/
   backgrounds/
 ~~~
 
-A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. Recursive scanning uses `lstat()` semantics and **never follows file or directory symlinks**, so link traversal cannot escape the fixed category roots. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
+A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets.
+
+CLI candidate inspection is bounded by `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1`: only one payload/file handle/decoder is materialized at once. `npm run video` deterministically early-stops each category after all required digests are found; `npm run assets` inventories the full library with the same bounded scanner. Recursive scanning uses `lstat()` semantics and **never follows file or directory symlinks**, so link traversal cannot escape the fixed category roots.
 
 This deliberately mirrors the browser model:
 
@@ -224,7 +228,7 @@ v0.3 is complete when:
 - catalog metadata and thumbnails are paged/windowed at ≤50 entries using canonical primary-key prefix/range + cursor/keyset pagination; no secondary category/order index or whole-library metadata getAll/materialization is required;
 - catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
 - original bytes persist in the same browser/origin across reloads, a **full browser restart using the same persistent profile**, and a recorded same-origin build A → build B deployment transition without re-import;
-- a Story ref/asset primary key is authoritative: corrupt row metadata cannot redirect it to another digest/category;
+- IndexedDB keys are authoritative across assets/payloadMeta/blobs/thumbnails; corrupt redundant identity fields cannot redirect any lookup;
 - exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport canonicalizes/repairs the asset row plus missing/corrupt payloadMeta/Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
 - YAML exports contain local references but no image bytes/blob URLs;
@@ -232,8 +236,9 @@ v0.3 is complete when:
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
 - Player/browser rendering uses only sequentially integrity-verified assets whose actual format/size/dimensions exactly match payloadMeta; defensive aggregate totals must equal preflight totals;
-- render-preparation cross-tab races are closed by final shared-lock canonical ref revalidation before source-map freeze;
-- missing Web Locks capability leaves existing My assets readable/previewable but disables all asset-library writes and local-ref MP4 rendering;
+- render-preparation races are closed by lock order `web-fs-render` → shared `asset-library`, followed by final canonical ref revalidation before source-map freeze;
+- missing Web Locks capability permits only safely discovered/directly-readable DB access; it performs no DB creation/migration/CRUD writes and disables local-ref MP4 rendering;
+- CLI inspection is bounded to one candidate payload at a time and render resolution may early-stop completed categories;
 - the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
