@@ -74,19 +74,24 @@ Existing bundled render output must remain pixel/behavior compatible:
 Before mounting/rendering an Active Story, the web app:
 
 1. collects distinct local refs used by the Story;
-2. reads only lightweight ASSET-002 `assets` + `payloadMeta` records for those refs/digests;
-3. identifies missing/corrupt metadata and computes the ASSET-001 aggregate browser asset budget **without consulting the `blobs` store**;
-4. if missing or over budget, stop before any `blobs[digest]` lookup and expose the appropriate readiness failure;
-5. only when the metadata set is complete and within the **metadata preflight** budget, obtain/verify original Blobs **sequentially, one distinct digest at a time**;
-6. for each digest, run ASSET-002 backing-store integrity verification: SHA-256 + actual format + actual dimensions/size vs `payloadMeta`;
-7. release each transient hash/decode buffer before advancing to the next digest and keep only its small verified descriptor/runtime-eligible Blob handle;
-8. after all required digests verify, recompute the aggregate source-byte/pixel budget from the **verified descriptors**, not untrusted `payloadMeta`;
-9. if any integrity check fails or the verified aggregate budget is exceeded, create no runtime source map and expose the appropriate corrupt/over-budget state;
-10. only then create/reuse the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
-11. build the runtime local-source map;
-12. expose readiness/missing/corrupt/over-budget state separately from Story state.
+2. parses category + digest from each Story ref; those parsed values are authoritative;
+3. performs exact ASSET-002 `assets[ref]` lookups and validates any legacy/corrupt row shape against the requested primary key;
+4. classifies refs independently as present, missing, or corrupt; a bad row must never redirect resolution to another digest/category;
+5. computes the ASSET-001 aggregate browser **metadata preflight** without consulting the `blobs` store:
+   - ref count includes every distinct local Story ref, including missing/corrupt refs;
+   - byte/pixel sums include each distinct digest whose valid `payloadMeta` is currently available;
+6. if the preflight itself exceeds any aggregate limit, fail fast for the **whole Player/render path** before any Blob lookup;
+7. otherwise, continue resolving the subset of present refs even when other refs are missing/corrupt;
+8. obtain/verify Blobs for present distinct digests **sequentially, one at a time**;
+9. if one present digest fails integrity, classify every ref using that digest as corrupt/unavailable, continue verifying the remaining present digests, and never expose the failed bytes;
+10. recompute aggregate source-byte/pixel use from all successfully verified descriptors plus the Story ref-count limit;
+11. if that verified aggregate budget exceeds a limit, fail fast for the whole Player/render path and create no runtime source map;
+12. otherwise create runtime sources only for successfully verified refs and build a **partial** local-source map;
+13. expose `resolved[]` + missing/corrupt entries + over-budget state separately from Story state.
 
 Only refs used by the Active Story need runtime sources.
+
+Missing/corrupt refs therefore do **not** suppress otherwise valid local images in preview. They do keep Render MP4 ineligible until every required ref resolves and verifies.
 
 Do not load the entire My assets library into render props, and do not eagerly decode every distinct full-resolution image merely because the Story references it.
 
@@ -114,16 +119,17 @@ In that state:
 
 - preserve the Active/candidate Story and exact refs;
 - keep YAML export available for CLI use;
-- do not fetch the original local Blobs for Player/render;
-- suppress the normal Player rather than mounting hundreds of heavy sources;
+- suppress the normal Player rather than mounting a partial/heavy source set;
 - disable Render MP4;
-- show which aggregate limit was exceeded.
+- show which aggregate limit was exceeded;
+- if the **metadata preflight** already exceeded the limit, perform zero original-Blob reads;
+- if only the **post-integrity verified** budget exceeds the limit because durable metadata under-reported resources, previously verified Blob reads are allowed but no runtime source map is created.
 
 This is distinct from a missing asset and must not be reported as schema-invalid.
 
-### Corrupt backing Blob
+### Corrupt local asset
 
-A local ref whose metadata exists but whose retrieved original Blob fails ASSET-002 integrity verification is treated as unavailable.
+A local ref whose asset row is identity-inconsistent, whose payload metadata is unusable, or whose retrieved original Blob fails ASSET-002 integrity verification is treated as unavailable for that ref/digest.
 
 Examples include:
 
@@ -133,18 +139,19 @@ Examples include:
 
 In that state:
 
-- never create a runtime source from those bytes;
-- never let the mismatched image reach Player/render;
+- never create a runtime source from the corrupt row/bytes;
+- never let a mismatched digest/category/image reach Player/render;
 - preserve the Story/ref unchanged;
-- show an explicit corrupt/missing local asset recovery state;
+- show an explicit corrupt/missing local asset recovery state at affected visual positions;
+- continue resolving unrelated valid refs for partial preview while the Story remains within budget;
 - block MP4 rendering;
-- allow exact-file same-category reimport to repair the backing records.
+- allow exact-file same-category reimport to repair the canonical asset row + backing records.
 
 A valid image-B Blob stored under digest-A is therefore detected as corruption, not rendered as asset A.
 
 ### Missing local refs
 
-The Player may remain mounted, but every missing visual position must show an explicit placeholder instead of stale/fallback imagery.
+When the Story is within aggregate budget, the Player remains mounted with a **partial source map**: every successfully verified local ref renders normally, while every missing/corrupt visual position shows an explicit placeholder instead of stale/fallback imagery.
 
 Examples:
 
@@ -171,7 +178,7 @@ A missing placeholder:
 - cannot be mistaken for the intended final video asset;
 - is used only for preview/defensive composition behavior.
 
-Production MP4 rendering with any missing required asset is prohibited.
+Production MP4 rendering with any missing/corrupt required asset is prohibited even though partial preview remains available.
 
 ## Image readiness
 
@@ -195,11 +202,11 @@ Extend the current render-input gating:
 ~~~text
 schema-valid Active Story
 + browser policy eligible
-+ local asset metadata complete
 + local asset aggregate budget eligible
 + no pending visual/YAML/import state
 + browser render capability ready
-+ all required visual assets resolved
++ every required local ref present
++ every required present payload integrity-verified
 =
 Render MP4 eligible
 ~~~
@@ -216,14 +223,15 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 
 1. snapshot the current Active Story;
 2. re-evaluate browser Story policy;
-3. re-read required `assets` + `payloadMeta` records and defensively recheck the metadata aggregate browser asset budget without consulting `blobs`;
-4. if metadata readiness passes, verify required digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
-5. recompute the aggregate byte/pixel budget from the verified descriptors and fail closed if corrupt metadata had under-reported resources;
-6. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
-7. resolve/snapshot all verified local asset sources for that Story;
-8. require asset readiness;
-9. hold the verified runtime sources/Blob snapshots stable;
-10. continue through existing capability/lock/OPFS/render lifecycle.
+3. re-read/validate every required canonical asset row and `payloadMeta`, then defensively recheck metadata aggregate browser budget without consulting `blobs`;
+4. for **render**, require that no ref is missing/corrupt before proceeding to payload work;
+5. verify all required present digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
+6. if any integrity failure appears, fail render readiness immediately after safely releasing that digest's transient resources; do not start MP4;
+7. recompute the aggregate byte/pixel budget from the verified descriptors and fail closed if durable metadata had under-reported resources;
+8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
+9. resolve/snapshot all verified local asset sources for that Story;
+10. hold the verified runtime sources/Blob snapshots stable;
+11. continue through existing capability/lock/OPFS/render lifecycle.
 
 If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
 
@@ -311,13 +319,16 @@ Minimum unit/browser coverage:
 - local pose resolves through runtime map and uses contain behavior;
 - local background resolves through runtime map and uses cover behavior;
 - missing pose/background render explicit placeholders in Player;
+- mixed Story with valid refs + one missing ref keeps valid local images resolved and shows a placeholder only for the missing position;
+- mixed Story with valid refs + one corrupt ref keeps unrelated valid local images resolved and shows a placeholder only for affected positions;
+- Render MP4 remains disabled for both mixed cases until all refs resolve/verify;
 - no silent bundled fallback;
 - distinct local refs are collected once per Story;
 - duplicate scene refs share resolved source;
 - aggregate budget counts refs and distinct digests correctly;
 - 64-ref / 256-MiB / 200-MP boundaries pass, while each +1/overflow case remains schema-valid/exportable but does not fetch original Blobs or mount Player/render;
 - many-scene fixture with unique near-limit refs fails closed at metadata-budget stage without reading any `blobs` records;
-- instrumentation proves a metadata-preflight over-budget Story consults only `assets`/`payloadMeta`, with zero original-Blob store reads;
+- instrumentation proves a metadata-preflight over-budget Story consults only canonical `assets` keys/`payloadMeta`, with zero original-Blob store reads and no partial Player source map;
 - Blob keyed by digest A but containing valid image-B bytes fails integrity verification and never reaches Player/render;
 - Blob A with correct digest A plus payloadMeta dimensions deliberately changed from actual values is detected, and verified dimensions are used for the final aggregate budget recheck;
 - a fixture whose corrupted payloadMeta under-reports enough pixels to pass preflight but whose verified descriptors exceed 200 MP is blocked before runtime-source creation;
@@ -339,7 +350,8 @@ Minimum unit/browser coverage:
 - shared Remotion components support bundled and local refs without a second renderer;
 - local bytes remain outside Story/YAML;
 - Player can communicate missing refs without changing Story meaning;
-- browser MP4 cannot start with unresolved, integrity-failed, or aggregate-over-budget local assets, and aggregate budget is revalidated from verified real dimensions/size after integrity checks;
+- Player supports partial resolution for missing/corrupt refs while preserving valid local images; browser MP4 cannot start until every required ref is present/integrity-verified;
+- aggregate-over-budget state suppresses the whole Player/render source map, and aggregate budget is revalidated from verified real dimensions/size after integrity checks;
 - ASSET-004 uses the ASSET-001-proven runtime transport and browser-render golden confirms resolved local images through the shared composition;
 - v0.2 bundled output remains intact.
 
@@ -353,4 +365,4 @@ Minimum unit/browser coverage:
 
 ## Done when
 
-The same Active Story and shared component tree can preview/render bundled or browser-local images, with deterministic blocking when refs are missing, backing bytes fail SHA-256 integrity, or aggregate browser asset budgets are exceeded, and without consulting heavy Blob records before metadata budget eligibility is known.
+The same Active Story and shared component tree can preview bundled/browser-local images with partial resolution for missing/corrupt refs, block MP4 until all required refs verify, fail fast for whole-preview aggregate-budget overflow, and avoid consulting heavy Blob records when metadata preflight already rejects the Story.
