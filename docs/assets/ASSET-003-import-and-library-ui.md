@@ -63,15 +63,18 @@ Local cards display:
 
 My assets may grow much larger than the number of images visible at once.
 
-The UI must consume the ASSET-002 derivative thumbnails and keep catalog decode/mount work bounded:
+The UI must consume the ASSET-002 derivative thumbnails **and page the metadata itself**:
 
 - never use original full-resolution local Blobs as card thumbnails;
-- mount/decode at most 50 local thumbnail cards at once;
-- use windowing or pagination as the library grows;
+- query at most 50 local asset metadata rows per page/window;
+- mount/decode at most those 50 local thumbnail cards at once;
+- use the ASSET-002 category/order index + cursor/range pagination rather than unbounded `getAll()`;
+- obtain total library/category counts separately without materializing all metadata rows;
+- fetch the next metadata page only when navigation/windowing requires it;
 - release off-window thumbnail runtime/object URLs promptly;
-- opening My assets must not trigger original-Blob reads for every library entry.
+- opening My assets must not trigger original-Blob reads or whole-library metadata materialization.
 
-The catalog may still list labels/metadata for the whole library through lightweight IndexedDB metadata reads.
+The catalog therefore has a bounded metadata working set and a bounded thumbnail working set.
 
 ## Import entry points
 
@@ -307,7 +310,8 @@ Minimum browser-level coverage:
 - local-only disclosure is visible;
 - production/Deploy Preview/localhost origin separation is communicated;
 - Reset project and Story import do not delete My assets;
-- catalog never uses originals as thumbnails, mounts no more than 50 local thumbnails at once, and releases off-window runtime sources.
+- catalog never uses originals as thumbnails, reads/mounts no more than one 50-entry metadata/thumbnail page at once, and releases off-window runtime sources;
+- opening a large My assets library does not issue an unbounded metadata `getAll()`, while total count remains available independently.
 
 ## Acceptance criteria
 
@@ -317,7 +321,7 @@ Minimum browser-level coverage:
 - delete-in-use is possible but never silent;
 - missing refs are actionable;
 - local-only behavior is explained in-product;
-- a large My assets library remains bounded by derivative thumbnails + windowing rather than full-resolution grid decodes.
+- a large My assets library remains bounded by paged metadata + derivative thumbnails rather than whole-library metadata materialization or full-resolution grid decodes.
 
 ## Out of scope
 
