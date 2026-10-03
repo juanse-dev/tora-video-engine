@@ -148,7 +148,7 @@ The production browser flow has now been exercised substantially in Chrome 154 o
 
 Post-merge GitHub Actions run `36961473266` also completed successfully, including the browser-render golden and canonical CLI reference render.
 
-WEB-007 remains open only for the deployed manual behaviors the user has not yet exercised: Cancel Render, pending/dirty-draft render blocking, and the in-flight authoring lock.
+The user subsequently exercised the three remaining deployed interaction behaviors: Cancel Render, pending/dirty-draft render blocking, and the in-flight authoring lock. The full manual production golden is therefore complete.
 
 ### Remaining production manual golden
 
@@ -163,13 +163,13 @@ Production-origin evidence now records:
 - [x] reload restores persisted Story state;
 - [x] Render MP4 is available/enabled in the tested browser;
 - [x] browser MP4 render/download completes successfully;
-- [ ] Cancel Render behavior is exercised;
-- [ ] pending/dirty draft blocks MP4 rendering as documented;
-- [ ] in-flight render locks authoring controls until settlement.
+- [x] Cancel Render behavior is exercised;
+- [x] pending/dirty draft blocks MP4 rendering as documented;
+- [x] in-flight render locks authoring controls until settlement.
 
 Canonical output metadata remains covered by the automated browser/CLI golden (`video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds`); the production user confirmation above is limited to successful render/download and does not claim an independent manual metadata inspection.
 
-Only the three unchecked deployed interaction behaviors remain before WEB-007 can be Accepted.
+All required deployed interaction behaviors are now confirmed. Combined with the automated browser/CLI golden, WEB-007 satisfies its production acceptance gate.
 
 ## Production release record
 
@@ -181,9 +181,9 @@ Fill this in when the first production deployment is verified:
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Production authoring/Player/YAML/persistence/render flow confirmed; Cancel Render, pending-draft blocking, and in-flight authoring-lock checks still pending |
+| Browser golden | Complete: production authoring, Player, YAML export, persistence, render/download, Cancel Render, pending-draft blocking, and in-flight authoring lock confirmed |
 | Browser | Chrome 154 on Windows desktop |
 | Remotion license basis | Free License — individual |
 | License terms last checked | 2026-10-01 |
 | Telemetry/privacy review | Completed for v0.2; mandatory Remotion client-render telemetry documented |
-| WEB-007 status | In progress — only 3 deployed interaction checks remain |
+| WEB-007 status | Accepted / v0.2 complete |
