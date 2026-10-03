@@ -233,7 +233,20 @@ Cover the bounded metadata-first design explicitly:
 - integrity hashing/inspection is sequential (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), and instrumentation on a fixture near the 256-MiB Story budget proves at most one ≤25-MiB source payload is materialized for verification at a time;
 - successful verified descriptors may be cached only for the current page session/invalidation generation;
 - local/cross-tab mutation of a digest invalidates the integrity cache before later reuse;
-- exact-file same-category reimport repairs `payloadMeta`, original Blob, and thumbnail and restores readiness without Story mutation.
+- exact-file same-category reimport repairs the canonical asset-row value plus `payloadMeta`, original Blob, and thumbnail and restores readiness without Story mutation;
+- requested primary-key ref A plus a corrupt legacy row claiming digest B is rejected before any `payloadMeta[B]`/`blobs[B]` access;
+- pose primary-key ref plus a corrupt row claiming background category is rejected and cannot redirect category resolution;
+- deletion/GC derives digest from canonical primary keys, so corrupt row metadata cannot cause another digest's payload to be collected.
+
+## Partial preview recovery tests
+
+Cover mixed readiness explicitly:
+
+- Story with several valid local refs + one missing ref remains within budget, resolves valid refs, and shows a placeholder only at positions using the missing ref;
+- Story with several valid local refs + one integrity-corrupt ref resolves unrelated valid refs and shows placeholders only for the corrupt digest's positions;
+- neither mixed case enables Render MP4;
+- repairing/reimporting the missing/corrupt ref removes only its placeholder and restores render eligibility after normal budget/integrity re-evaluation;
+- metadata-preflight over-budget still suppresses the whole local Player source map and performs zero Blob reads.
 
 ## Production verification fixture
 
@@ -330,7 +343,8 @@ Cover at least:
 
 - IndexedDB unavailable/open failure;
 - write transaction failure/quota-like error;
-- asset row present but payloadMeta/Blob and/or thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs backing data without Story mutation;
+- canonical asset primary-key row present but its non-identity metadata/backing payloadMeta/Blob/thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs the canonical row/backing data without Story mutation;
+- canonical ref A with legacy/corrupt row identity fields claiming digest B/category mismatch, proving no B payload lookup/runtime resolution occurs;
 - Blob row present without payloadMeta/asset metadata;
 - payloadMeta present with Blob bytes whose SHA-256 does not equal the digest key;
 - database cleared while Story persists.
@@ -387,11 +401,11 @@ Record:
 - [ ] catalog metadata is paged at ≤50 rows and never requires whole-library getAll/materialization
 - [ ] bundled and My assets are separate in UI
 - [ ] static PNG/JPEG/WebP imports reject APNG/animated WebP and enforce 25 MiB pre-read, ≤8192 px/side, and ≤50 MP limits
-- [ ] SHA-256 dedup works and exact duplicate reimport repairs missing/corrupt original Blob/thumbnail backing
+- [ ] SHA-256 dedup works and exact duplicate reimport canonicalizes/repairs asset row + missing/corrupt payloadMeta/Blob/thumbnail backing
 - [ ] labels rename without changing refs
 - [ ] YAML contains refs only, no bytes/blob URLs/paths
 - [ ] delete-in-use warning passes
-- [ ] missing refs preserve Story and block render
+- [ ] missing/corrupt refs preserve Story, allow partial preview of unrelated valid refs, and block render
 - [ ] exact-file same-category re-import resolves missing ref automatically
 - [ ] ASSET-001 pinned-Remotion runtime-source transport gate is accepted before storage/UI rollout
 - [ ] aggregate browser local-asset budget blocks >64 refs / >256 MiB / >200 MP using only assets/payloadMeta records and zero Blob-store reads before rejection while preserving YAML/CLI recovery
@@ -414,7 +428,7 @@ Record:
 
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
 - v0.3 local assets survive ordinary same-origin reload/deploy use;
-- loss/corruption of local bytes or payload metadata never corrupts or silently changes Story meaning; digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
+- loss/corruption of asset rows, local bytes, or payload metadata never redirects a Story ref or silently changes Story meaning; valid refs remain available in partial preview, while identity/digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
 - browser and CLI resolve the same content identity from different local stores;
 - production proves the complete import → persist → preview → render → delete/missing → same-category re-import → render flow.
 
