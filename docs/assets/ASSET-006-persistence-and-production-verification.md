@@ -341,11 +341,18 @@ Automate:
 
 This test must not depend on a developer's real gitignored `local-assets/` folder.
 
-## Browser storage failure tests
+## Browser storage / capability failure tests
 
 Cover at least:
 
 - IndexedDB unavailable/open failure;
+- `navigator.locks` absent while a pre-existing local library exists:
+  - existing entries remain listable/previewable read-only;
+  - import/repair/rename/delete/GC controls are disabled;
+  - no IndexedDB write transaction is attempted;
+  - no ephemeral import fallback is created;
+  - Render MP4 with local refs is ineligible;
+  - bundled-only behavior follows existing v0.2 capability rules;
 - write transaction failure/quota-like error;
 - canonical asset primary-key row present but its non-identity metadata/backing payloadMeta/Blob/thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs the canonical row/backing data without Story mutation;
 - canonical ref A with legacy/corrupt row identity fields claiming digest B/category mismatch, proving no B payload lookup/runtime resolution occurs;
@@ -370,6 +377,29 @@ Verify two same-origin tabs converge on local-library state:
 - a cross-tab deletion after A's snapshot is frozen does not alter the in-flight Story/runtime-source snapshot, but becomes missing on A's post-render readiness refresh.
 
 Existing Story single-writer rules remain unchanged and separate.
+
+## Browser restart persistence verification
+
+The product promise includes ordinary browser restarts, so reload/build-transition coverage is not sufficient by itself.
+
+Use a persistent browser profile/user-data directory and the same origin:
+
+1. serve/open a compatible v0.3 build at the stable test origin;
+2. import the fixed pose/background fixtures;
+3. apply at least one local ref and confirm the Story, My assets library, and Player preview;
+4. record the canonical refs;
+5. **fully close the browser process / persistent context**, not merely the page;
+6. relaunch a new browser process/context using the exact same persistent profile/user-data directory;
+7. navigate to the same origin;
+8. verify the persisted Story restores with the same refs;
+9. verify My assets metadata, thumbnails, payload metadata, and original Blobs reopen from IndexedDB without re-import;
+10. verify ephemeral runtime state was rebuilt rather than persisted:
+    - object/runtime URLs are new;
+    - integrity cache starts cold and is rebuilt;
+11. verify Player preview resolves the same local assets;
+12. when normal browser render capability is available, verify MP4 render can still start/complete without re-import.
+
+The restart test must fail if it accidentally launches with a fresh temporary profile.
 
 ## Same-origin build-to-build persistence verification
 
@@ -427,20 +457,23 @@ Before marking v0.3 complete, verify on the production origin:
 3. both appear under **My assets**, separate from Bundled;
 4. apply them and verify Player;
 5. reload the same build and verify they remain available;
-6. export YAML and inspect that refs are present but bytes/blob URLs are absent;
-7. render/download MP4 successfully;
-8. complete the **same-origin build A → build B** persistence gate above and verify the asset survives without re-import;
-9. delete one in-use asset and confirm warning + missing state;
-10. re-import exact file in the same category and confirm automatic resolution;
-11. render again successfully;
-12. confirm no custom asset was uploaded to Netlify/server infrastructure.
+6. **fully close and reopen the verification browser/profile**, then confirm Story + My assets + Player recover without re-import;
+7. export YAML and inspect that refs are present but bytes/blob URLs are absent;
+8. render/download MP4 successfully;
+9. complete the **same-origin build A → build B** persistence gate above and verify the asset survives without re-import;
+10. delete one in-use asset and confirm warning + missing state;
+11. re-import exact file in the same category and confirm automatic resolution;
+12. render again successfully;
+13. confirm no custom asset was uploaded to Netlify/server infrastructure.
 
 Record:
 
 - production URL;
 - build/commit + Netlify deploy IDs for both same-origin deploy A and deploy B;
-- browser/version/profile used for the uninterrupted site-data check;
+- browser/version + persistent profile used;
 - custom fixture refs;
+- browser reload result;
+- **browser restart result**;
 - browser golden result;
 - same-origin build-transition result;
 - CLI parity result.
@@ -454,6 +487,7 @@ Record:
 - [ ] ASSET-005 accepted
 - [ ] existing bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1, and first successful local-ref persistence promotes atomically to v2
 - [ ] browser local library persists across reload on same origin
+- [ ] browser local library survives a full browser process/context restart using the same persistent profile/origin without re-importing
 - [ ] browser local library survives a recorded build A → build B transition on the same origin/profile without clearing site data or re-importing
 - [ ] catalog metadata is paged at ≤50 rows and never requires whole-library getAll/materialization
 - [ ] bundled and My assets are separate in UI
@@ -477,6 +511,7 @@ Record:
 - [ ] CLI missing-asset diagnostics pass
 - [ ] CLI scanner skips file/directory symlinks and does not traverse outside local-assets category roots
 - [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
+- [ ] missing Web Locks degrades My assets to read-only preview mode with zero asset-library writes and blocks local-ref MP4
 - [ ] cross-tab library convergence, render-preparation TOCTOU barrier, and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
 - [ ] production custom-asset golden passes
@@ -484,10 +519,10 @@ Record:
 ## Acceptance criteria
 
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
-- v0.3 local assets survive ordinary same-origin reload **and a recorded same-origin build-to-build deployment transition** without re-import;
+- v0.3 local assets survive ordinary same-origin reload, a full browser restart using the same persistent profile, **and a recorded same-origin build-to-build deployment transition** without re-import;
 - loss/corruption of asset rows, local bytes, or payload metadata never redirects a Story ref or silently changes Story meaning; valid refs remain available in partial preview, while identity/digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
 - browser and CLI resolve the same content identity from different local stores;
-- production proves import → persist → preview → render, a same-origin deploy transition without re-import, and delete/missing → same-category re-import → render recovery.
+- production proves import → persist → preview → browser restart recovery → render, a same-origin deploy transition without re-import, and delete/missing → same-category re-import → render recovery.
 
 ## Out of scope
 
