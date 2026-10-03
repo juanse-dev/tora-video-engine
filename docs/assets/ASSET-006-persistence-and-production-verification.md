@@ -118,13 +118,17 @@ The asset database has its own schema version independent from the Story persist
 
 Migration requirements:
 
-- opening an older supported DB version performs bounded deterministic migration;
+- capability-check Web Locks **before** any IndexedDB open that could create or upgrade the asset DB;
+- with Web Locks available, database creation/schema migration runs only while holding `tora-video-engine:asset-library` exclusively;
+- with Web Locks unavailable, no database creation or migration write is permitted;
+- read-only degraded mode may open only an already-existing durable version that current code can read without migration, following ASSET-002's non-creating enumeration/exact-version protocol;
+- any unexpected `onupgradeneeded` in read-only degraded mode is aborted and the library becomes unavailable;
 - failed migration does not rewrite Story data;
-- unsupported/corrupt asset metadata degrades affected refs to missing;
+- unsupported/corrupt asset metadata degrades affected refs to missing/unavailable;
 - never reinterpret unknown binary records as trusted images;
 - a DB migration must not change content hashes for unchanged original bytes.
 
-For initial v0.3 there is only version 1, but tests should establish the version boundary.
+For initial v0.3 there is only version 1, but tests establish both the version boundary and the no-write/no-create behavior without Web Locks.
 
 ## Durable Story with deleted asset
 
@@ -333,11 +337,14 @@ At least one parity fixture must have valid PNG/JPEG/WebP bytes with an absent o
 Automate:
 
 1. load the same custom-ref Story used by browser tests;
-2. index temp `poses/` and `backgrounds/`;
+2. index temp `poses/` and `backgrounds/` with `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1`;
 3. verify refs resolve to the same SHA-256 values;
-4. render through CLI;
-5. verify output metadata;
-6. sample frames to prove custom pose/background are present.
+4. instrument payload/file-handle/decoder concurrency and prove it never exceeds 1, including a library with many near-limit candidates;
+5. verify render resolution early-stops each category once all required digests are found;
+6. verify the full `npm run assets` helper still inventories all eligible files while retaining concurrency 1;
+7. render through CLI;
+8. verify output metadata;
+9. sample frames to prove custom pose/background are present.
 
 This test must not depend on a developer's real gitignored `local-assets/` folder.
 
@@ -346,16 +353,24 @@ This test must not depend on a developer's real gitignored `local-assets/` folde
 Cover at least:
 
 - IndexedDB unavailable/open failure;
-- `navigator.locks` absent while a pre-existing local library exists:
+- `navigator.locks` absent while a pre-existing directly-readable v1 local library exists:
+  - capability is checked before any potentially version-changing open;
+  - DB discovery uses a non-creating enumeration path;
+  - exact existing version is opened with readonly transactions only;
   - existing entries remain listable/previewable read-only;
   - import/repair/rename/delete/GC controls are disabled;
-  - no IndexedDB write transaction is attempted;
+  - no IndexedDB write/schema transaction is attempted;
   - no ephemeral import fallback is created;
   - Render MP4 with local refs is ineligible;
   - bundled-only behavior follows existing v0.2 capability rules;
+- `navigator.locks` absent + no existing asset DB → no `indexedDB.open` that creates a DB/store and no schema writes;
+- `navigator.locks` absent + existing older/incompatible DB requiring upgrade → no migration/schema/data write; My assets remains unavailable/read-only until coordinated startup;
+- `navigator.locks` absent + database enumeration capability unavailable → do not speculatively open/create the DB; degrade My assets unavailable/read-only;
+- unexpected `onupgradeneeded` during an exact-version degraded-mode open is aborted and leaves no creation/upgrade persisted;
 - write transaction failure/quota-like error;
 - canonical asset primary-key row present but its non-identity metadata/backing payloadMeta/Blob/thumbnail missing/corrupt, followed by exact-file same-category reimport that repairs the canonical row/backing data without Story mutation;
 - canonical ref A with legacy/corrupt row identity fields claiming digest B/category mismatch, proving no B payload lookup/runtime resolution occurs;
+- `payloadMeta[A]`, `blobs[A]`, and `thumbnails[A]` malformed legacy values that redundantly claim `digest: B`, proving the IndexedDB key remains authoritative and no lookup of B occurs;
 - Blob row present without payloadMeta/asset metadata;
 - payloadMeta present with Blob bytes whose SHA-256 does not equal the digest key;
 - database cleared while Story persists.
@@ -372,8 +387,12 @@ Verify two same-origin tabs converge on local-library state:
 - concurrent duplicate imports do not create duplicate binary storage;
 - while tab A renders, its local asset mutation controls remain disabled;
 - all durable asset mutations acquire `tora-video-engine:asset-library` exclusively for their final IndexedDB commit;
-- if tab B deletes one required category ref while tab A is still in sequential render preparation **before snapshot freeze**, tab A's final shared-lock revalidation sees the deletion and refuses to freeze/start render, even if the same digest survives in another category;
+- heavy hashing/integrity preparation happens before render-critical locks;
+- tab A acquires `tora-video-engine:web-fs-render` **before** requesting the shared `tora-video-engine:asset-library` final snapshot lock;
+- deterministic hand-off race: hold the global render lock elsewhere so tab A finishes heavy verification and waits; tab B mutates/deletes a required ref; after tab A acquires the global lock, its shared-lock final revalidation sees the mutation and aborts before touching OPFS/output;
+- if tab B deletes one required category ref before A's shared snapshot barrier, final canonical-row revalidation sees the deletion and refuses to freeze/start render, even if the same digest survives in another category;
 - if tab B requests deletion while tab A already holds the shared asset-library lock for final revalidation/freeze, B waits until the snapshot is frozen;
+- no path acquires asset-library and then waits for web-fs-render;
 - a cross-tab deletion after A's snapshot is frozen does not alter the in-flight Story/runtime-source snapshot, but becomes missing on A's post-render readiness refresh.
 
 Existing Story single-writer rules remain unchanged and separate.
@@ -510,8 +529,11 @@ Record:
 - [ ] required local asset helper prints full canonical copy/pasteable refs
 - [ ] CLI missing-asset diagnostics pass
 - [ ] CLI scanner skips file/directory symlinks and does not traverse outside local-assets category roots
+- [ ] CLI scanner materializes/validates at most one candidate payload at a time; render resolution early-stops completed categories while helper inventory remains bounded
 - [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
-- [ ] missing Web Locks degrades My assets to read-only preview mode with zero asset-library writes and blocks local-ref MP4
+- [ ] IndexedDB key is the sole identity authority for assets/payloadMeta/blobs/thumbnails; malformed redundant digest fields cannot redirect lookup
+- [ ] missing Web Locks degrades My assets to read-only preview mode with zero CRUD/schema writes, no DB creation/migration, and blocks local-ref MP4
+- [ ] render lock hand-off is global web-fs-render → shared asset-library; mutation while waiting for global lock is caught before OPFS/render
 - [ ] cross-tab library convergence, render-preparation TOCTOU barrier, and frozen-render snapshot behavior pass
 - [ ] production remains static-hosted/backend-free
 - [ ] production custom-asset golden passes
