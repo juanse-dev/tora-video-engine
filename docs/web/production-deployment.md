@@ -135,30 +135,41 @@ Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app`
 
 After PR #16 merged, Netlify deployed merge commit `ac8fb3db18ddc7b322538f6006728db045880e89` from `main` as production deploy `6abf2894da2c7f0008e5496b`. The deployment reached `ready` with no Functions or Edge Functions.
 
-The evidence recorded so far is intentionally **partial**:
+The production browser flow has now been exercised substantially in Chrome 154 on Windows desktop. The user explicitly confirmed on the production origin:
 
-- the production root URL loaded successfully in Chrome 154 on Windows desktop;
-- browser-side MP4 rendering/download completed successfully;
-- post-merge GitHub Actions run `36961473266` completed successfully, including browser-render golden and canonical CLI reference render.
+- caption editing works;
+- pose changes work;
+- scene reordering works;
+- Player preview follows those edits;
+- YAML export works;
+- reload restores persisted Story state;
+- Render MP4 is available/enabled in the tested browser;
+- browser-side MP4 rendering/download completes successfully.
 
-This does **not** satisfy the full manual release checklist above. WEB-007 remains open until a deployed production-browser pass explicitly records the remaining authoring/persistence/capability/cancellation/draft-blocking/authoring-lock checks.
+Post-merge GitHub Actions run `36961473266` also completed successfully, including the browser-render golden and canonical CLI reference render.
+
+WEB-007 remains open only for the deployed manual behaviors the user has not yet exercised: Cancel Render, pending/dirty-draft render blocking, and the in-flight authoring lock.
 
 ### Remaining production manual golden
 
-The following deployed-origin checks still require explicit manual confirmation before WEB-007 can be Accepted:
+Production-origin evidence now records:
 
-- [ ] bundled poses/backgrounds and canonical Story load from a clean browser state;
-- [ ] caption edit, pose change, and scene reorder work in the visual editor;
-- [ ] Player preview follows the active validated Story after those edits;
-- [ ] YAML export works from production;
-- [ ] reload restores the persisted Story;
-- [ ] browser render capability state is visible/correct;
-- [ ] downloaded canonical MP4 metadata is verified as video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds;
+- [x] production app loads and bundled visual editing is usable;
+- [x] caption edit works;
+- [x] pose change works;
+- [x] scene reorder works;
+- [x] Player preview follows the edited Active Story;
+- [x] YAML export works;
+- [x] reload restores persisted Story state;
+- [x] Render MP4 is available/enabled in the tested browser;
+- [x] browser MP4 render/download completes successfully;
 - [ ] Cancel Render behavior is exercised;
 - [ ] pending/dirty draft blocks MP4 rendering as documented;
 - [ ] in-flight render locks authoring controls until settlement.
 
-The already-confirmed production load + MP4 render/download smoke does not need to be repeated unless the production deployment changes before this checklist is completed.
+Canonical output metadata remains covered by the automated browser/CLI golden (`video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 seconds`); the production user confirmation above is limited to successful render/download and does not claim an independent manual metadata inspection.
+
+Only the three unchecked deployed interaction behaviors remain before WEB-007 can be Accepted.
 
 ## Production release record
 
@@ -170,9 +181,9 @@ Fill this in when the first production deployment is verified:
 | Netlify project | https://app.netlify.com/projects/tora-video-engine |
 | Production URL | https://tora-video-engine.netlify.app |
 | Host | Netlify; GitHub repository linked, production branch `main` |
-| Browser golden | Partial: production load + browser MP4 render/download confirmed; full deployed manual release checklist still pending |
+| Browser golden | Production authoring/Player/YAML/persistence/render flow confirmed; Cancel Render, pending-draft blocking, and in-flight authoring-lock checks still pending |
 | Browser | Chrome 154 on Windows desktop |
 | Remotion license basis | Free License — individual |
 | License terms last checked | 2026-10-01 |
 | Telemetry/privacy review | Completed for v0.2; mandatory Remotion client-render telemetry documented |
-| WEB-007 status | In progress — production deployed; full manual release verification pending |
+| WEB-007 status | In progress — only 3 deployed interaction checks remain |
