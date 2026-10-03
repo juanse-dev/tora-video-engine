@@ -356,9 +356,11 @@ Before the browser exposes an original Blob as a Player/render runtime source fo
 7. derive width/height from those bytes and require positive dimensions within the per-file limits;
 8. require actual format/MIME, width, height, and byte size to agree with `payloadMeta`;
 9. return a **verified payload descriptor** containing the digest + actual MIME/width/height/byteSize;
-10. only after all Story-required digests have been verified and the aggregate budget has been revalidated from those verified descriptors may runtime sources be created/reused.
+10. only after Story-required present digests have been verified may runtime sources be created/reused.
 
-This second aggregate-budget check is mandatory because corrupt `payloadMeta` could under-report dimensions even when the Blob itself still has the correct SHA-256.
+Because step 8 requires exact equality with `payloadMeta`, a successful verified descriptor must contribute exactly the same byte/pixel values as metadata preflight. Therefore v0.3 does **not** define a separate user-visible “post-integrity over-budget due to under-reported metadata” path.
+
+The implementation may defensively recompute the aggregate byte/pixel totals from verified descriptors and require them to equal the corresponding preflight totals for the same verified digest set. Any discrepancy is an internal/storage-consistency failure and must fail closed; it is not treated as a normal over-budget outcome.
 
 If any identity/format/metadata check fails:
 
@@ -466,8 +468,9 @@ Minimum coverage:
 - asset metadata present + payloadMeta/Blob/thumbnail missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
 - budget/readiness metadata lookup reads `payloadMeta` without consulting `blobs`;
 - a record stored under digest A with valid image-B bytes fails SHA-256 integrity verification and never becomes a runtime source;
-- Blob A with correct digest A but payloadMeta dimensions/MIME intentionally falsified fails metadata-integrity verification;
-- after all required digests verify, aggregate bytes/pixels are recomputed from verified descriptors and an under-reported metadata preflight cannot bypass the final Story budget;
+- Blob A with correct digest A but payloadMeta dimensions/MIME intentionally falsified fails metadata-integrity verification and becomes corrupt/unavailable;
+- defensive recomputation from successful verified descriptors equals the preflight byte/pixel totals for the same verified digest set; any mismatch fails closed as an internal/storage-consistency error;
+- there is no acceptance path where intentionally under-reported payloadMeta survives integrity verification and is later classified only as over-budget;
 - integrity verification is sequential (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`) and instrumentation proves at most one bounded source payload is materialized/hashed at once for a near-256-MiB Story fixture;
 - successful verified descriptors may be cached per session, and any mutation/invalidation for the digest clears that cache;
 - quota/storage failure leaves prior library intact;
@@ -482,7 +485,7 @@ Minimum coverage:
 
 - a valid static PNG/JPEG/WebP satisfying ≤25 MiB, ≤8192 px per side, and ≤50 MP can become a durable local library entry;
 - exact duplicate bytes are deduplicated and duplicate reimport repairs missing/corrupt backing data;
-- original source Blob is preserved byte-for-byte; digest, actual format/dimensions/size, and final aggregate budget are verified before runtime use, with sequential bounded hashing;
+- original source Blob is preserved byte-for-byte; digest and actual format/dimensions/size must exactly match payloadMeta before runtime use, with sequential bounded hashing and a defensive aggregate-equality assertion;
 - labels are safely mutable;
 - binary storage remains separate from Story persistence and Remotion OPFS;
 - storage loss degrades into missing refs rather than corrupting Story data.
