@@ -35,7 +35,7 @@ object stores:
 
 Key: SHA-256 digest.
 
-This is the **lightweight authoritative metadata** used for asset readiness, aggregate browser budgets, diagnostics, and integrity preflight. It must not contain Blob payloads.
+This is **lightweight durable preflight metadata** used for initial asset readiness, aggregate-budget preflight, diagnostics, and integrity setup. It must not contain Blob payloads and is not trusted as final runtime truth until verified against the original bytes.
 
 Value contains at least:
 
