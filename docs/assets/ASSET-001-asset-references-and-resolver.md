@@ -177,7 +177,8 @@ Accounting rules:
 - bundled assets do not consume this custom-asset budget;
 - missing/corrupt metadata is asset-unready and keeps render ineligible, but does not force otherwise valid refs out of a within-budget preview;
 - the initial budget preflight is evaluated from IndexedDB metadata **before** fetching the original Blobs;
-- metadata is not final authority: once payload integrity is verified, source bytes/pixels must be recomputed from verified descriptors and the same aggregate limits enforced again before any runtime source is created.
+- metadata is not trusted blindly: payload integrity must confirm exact format/size/dimension equality before runtime use;
+- for successfully verified digests, a defensive aggregate recomputation must equal the metadata-preflight byte/pixel totals for that same digest set; any disagreement is corruption/internal inconsistency, not a second normal over-budget state.
 
 Exceeding this budget is a browser-only readiness/policy failure, not a Story schema error.
 
@@ -359,7 +360,8 @@ Minimum automated coverage:
 - the same digest may appear as separate pose/background refs;
 - aggregate browser asset budget counts distinct refs and distinct digests correctly;
 - metadata-preflight overflow remains schema-valid/exportable and causes zero original-Blob reads;
-- metadata that under-reports real resource use cannot bypass limits: verified payload descriptors are re-summed and final overflow blocks runtime-source creation;
+- metadata that under-reports or otherwise disagrees with the real payload fails integrity verification as corrupt/unavailable;
+- successful verified-descriptor totals equal metadata-preflight totals for the same digest set;
 - pinned web-render spike renders a local Blob/runtime source into an MP4 with the expected image.
 
 ## Acceptance criteria
@@ -384,4 +386,4 @@ Minimum automated coverage:
 
 ## Done when
 
-A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, bundled-only v1 persistence remains rollback-compatible until first local-ref use, aggregate browser asset budgets fail closed at metadata preflight and again from verified payload descriptors before runtime-source creation, and the browser render transport gate is proven without putting asset bytes into Story data.
+A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, bundled-only v1 persistence remains rollback-compatible until first local-ref use, aggregate browser asset budgets fail closed at metadata preflight while payload integrity requires exact metadata agreement before runtime-source creation, and the browser render transport gate is proven without putting asset bytes into Story data.
