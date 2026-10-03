@@ -53,11 +53,25 @@ Existing bundled cards keep their current behavior.
 
 Local cards display:
 
-- thumbnail;
+- the bounded derivative thumbnail from ASSET-002 — never the original full-resolution Blob;
 - display label;
 - local-origin indicator;
 - current-selection state;
 - actions for rename/delete.
+
+## Catalog memory bounds
+
+My assets may grow much larger than the number of images visible at once.
+
+The UI must consume the ASSET-002 derivative thumbnails and keep catalog decode/mount work bounded:
+
+- never use original full-resolution local Blobs as card thumbnails;
+- mount/decode at most 50 local thumbnail cards at once;
+- use windowing or pagination as the library grows;
+- release off-window thumbnail runtime/object URLs promptly;
+- opening My assets must not trigger original-Blob reads for every library entry.
+
+The catalog may still list labels/metadata for the whole library through lightweight IndexedDB metadata reads.
 
 ## Import entry points
 
@@ -91,7 +105,7 @@ On success:
 
 - add/reuse the local asset in My assets;
 - make it selectable immediately;
-- if the same bytes/category already exist, focus/select the existing card and explain that the duplicate was reused.
+- if the same bytes/category already exist, focus/select the existing card and explain that the duplicate was reused/repaired from the newly validated bytes.
 
 On failure, keep the previous Story/library state intact and show an actionable error, including resource-limit failures (25 MiB, 8192 px per side, 50 MP) and animated-image rejection.
 
@@ -278,7 +292,7 @@ Minimum browser-level coverage:
 - My assets section is separate from Bundled;
 - import pose and import background create category-correct entries;
 - supported asset becomes visible/selectable immediately;
-- duplicate import reuses/focuses existing entry;
+- duplicate import reuses/focuses existing entry and repairs missing/corrupt backing Blob/thumbnail without changing its ref/label;
 - applying local pose/background commits the stable ref to the Story;
 - rename changes label but not Story ref;
 - delete unused asset requires confirmation;
@@ -292,7 +306,8 @@ Minimum browser-level coverage:
 - asset mutation controls are disabled during browser render;
 - local-only disclosure is visible;
 - production/Deploy Preview/localhost origin separation is communicated;
-- Reset project and Story import do not delete My assets.
+- Reset project and Story import do not delete My assets;
+- catalog never uses originals as thumbnails, mounts no more than 50 local thumbnails at once, and releases off-window runtime sources.
 
 ## Acceptance criteria
 
@@ -301,7 +316,8 @@ Minimum browser-level coverage:
 - labels and identity are clearly separated;
 - delete-in-use is possible but never silent;
 - missing refs are actionable;
-- local-only behavior is explained in-product.
+- local-only behavior is explained in-product;
+- a large My assets library remains bounded by derivative thumbnails + windowing rather than full-resolution grid decodes.
 
 ## Out of scope
 
