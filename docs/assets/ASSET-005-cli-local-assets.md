@@ -187,7 +187,23 @@ category + expected SHA-256
 
 The CLI discovers files from the fixed local asset roots and matches by computed digest.
 
-This prevents path traversal and means exported YAML never contains machine-specific absolute paths.
+### Symlink policy
+
+v0.3 **does not follow filesystem symlinks** while scanning `local-assets/`.
+
+Scanner requirements:
+
+- use `lstat()`/equivalent when classifying directory entries;
+- if an entry is a symbolic link, skip it regardless of whether it targets a file or directory;
+- do not recurse through symlinked directories;
+- do not read/hash symlinked files;
+- regular files/directories reached without following a symlink remain eligible under the normal content-first rules.
+
+This intentionally favors a simple, auditable containment guarantee over supporting symlinked personal asset trees in v0.3.
+
+The fixed roots plus the no-symlink rule guarantee the scanner never reads outside the actual `local-assets/poses/` or `local-assets/backgrounds/` directory tree through link traversal.
+
+Exported YAML still never contains machine-specific absolute paths.
 
 ## Runtime staging
 
@@ -280,7 +296,7 @@ Minimum automated coverage:
 - bundled-only Story does not require `local-assets/`;
 - pose/background directory indexing is category-aware;
 - SHA-256 matches browser test vectors;
-- nested supported files resolve if recursive scan is implemented;
+- nested regular files resolve if recursive scan is implemented;
 - valid PNG/JPEG/WebP bytes resolve even when the filename has no extension or an incorrect extension;
 - browser and CLI accept the same extensionless/misnamed valid-content fixture and compute the same ref;
 - unsupported/invalid-content files do not satisfy refs even when named `.png`, `.jpg`, or `.webp`;
@@ -298,7 +314,10 @@ Minimum automated coverage:
 - end-to-end CLI fixture renders one custom pose and one custom background;
 - browser/Node hash of the same fixture bytes produces identical refs;
 - required asset helper prints complete canonical refs for valid files;
-- helper and render indexing apply the same format/resource validation.
+- helper and render indexing apply the same format/resource validation;
+- symlink-to-file inside a category root is skipped and never read/hashed;
+- symlink-to-directory inside a category root is not traversed, including when its target is outside the root;
+- a regular nested file beside skipped symlinks still resolves normally.
 
 ## Acceptance criteria
 
@@ -308,6 +327,7 @@ Minimum automated coverage:
 - missing assets fail early with actionable diagnostics;
 - bundled-only CLI behavior remains unchanged;
 - custom asset staging is ephemeral and deterministic;
+- CLI scanning never follows symlinks and therefore cannot escape the fixed category roots through link traversal;
 - the required helper exposes full copy/pasteable refs without introducing a manifest.
 
 ## Out of scope
