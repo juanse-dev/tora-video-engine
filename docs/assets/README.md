@@ -82,20 +82,16 @@ v0.3 uses a browser-local binary store separate from the existing Story `localSt
 
 v0.3 uses IndexedDB because it can atomically store structured metadata, original Blobs, and bounded derivative thumbnails without mixing custom assets into Remotion's OPFS render namespace.
 
-At minimum the library records:
+The storage layout separates lightweight readiness/budget metadata from heavyweight payloads:
 
 ~~~text
-asset ref
-category
-SHA-256 digest
-display label
-original filename
-MIME type
-byte size
-decoded width/height
-original Blob
-bounded derivative thumbnail (≤256×256)
+assets       → ref/category/label/original filename
+payloadMeta  → digest/MIME/byte size/dimensions
+blobs        → digest/original Blob only
+thumbnails   → digest/bounded derivative thumbnail (≤256×256)
 ~~~
+
+This separation lets browser budget/readiness checks run without reading original Blob records.
 
 Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
 
@@ -111,7 +107,9 @@ Before loading original Blobs for Player/render, v0.3 reads metadata only and en
 ≤200 MP across distinct digests
 ~~~
 
-A Story above this browser-only budget remains schema-valid and YAML-exportable for CLI use, but Player/render is suppressed and original Blobs are not eagerly materialized.
+A Story above this browser-only budget remains schema-valid and YAML-exportable for CLI use, but Player/render is suppressed and the `blobs` store is not consulted before rejection.
+
+Before first runtime use of a digest in a page session/invalidation generation, the retrieved Blob's size and SHA-256 must match `payloadMeta` + the requested digest. Mismatched bytes are treated as corrupt/unavailable and never reach Player/render.
 
 ## Local CLI model
 
@@ -169,7 +167,7 @@ My assets
 
 A local asset card supports:
 
-- thumbnail;
+- thumbnail from a ≤256×256 derivative;
 - human-readable label;
 - rename;
 - apply to selected scene;
@@ -200,15 +198,16 @@ v0.3 is complete when:
 - existing v0.2 bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1 until first successful local-ref persistence promotes them atomically to v2;
 - static PNG/JPEG/WebP pose/background imports reject APNG/animated WebP and enforce ≤25 MiB, ≤8192 px per side, and ≤50 MP;
 - user assets remain visually separated from bundled assets;
-- catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals, with at most 50 local thumbnail cards mounted at once;
+- catalog metadata and thumbnails are paged/windowed at ≤50 entries at once; no whole-library metadata getAll/materialization is required;
+- catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
 - original bytes persist in the same browser/origin across reloads;
-- exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport repairs missing/corrupt backing Blob/thumbnail data;
+- exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport repairs missing/corrupt payloadMeta/Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
 - YAML exports contain local references but no image bytes/blob URLs;
 - missing references are explicit and block render rather than changing output silently;
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
-- Player and browser MP4 rendering work with local pose/background assets within the aggregate browser asset budget;
+- Player and browser MP4 rendering work with local pose/background assets within the aggregate browser asset budget, and backing Blob SHA-256 integrity is verified before runtime use;
 - the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
