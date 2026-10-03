@@ -95,6 +95,14 @@ The full `assets` primary key is the sole authority for category + digest; row v
 
 Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
 
+Cross-tab asset mutation/render-snapshot coordination uses a dedicated Web Lock:
+
+~~~text
+tora-video-engine:asset-library
+~~~
+
+Durable library mutations take it exclusively for their final IndexedDB transaction. Render preparation takes it shared only for the final canonical-row/payloadMeta revalidation + immutable source-map freeze, closing the delete-during-preparation TOCTOU without depending on BroadcastChannel timing.
+
 ## Browser active-Story asset budget
 
 Per-file limits are not sufficient for a Story that references many distinct local assets.
@@ -211,7 +219,7 @@ v0.3 is complete when:
 - existing v0.2 bundled YAML/Story content remains unchanged; bundled-only persisted v1 projects stay v1 until first successful local-ref persistence promotes them atomically to v2;
 - static PNG/JPEG/WebP pose/background imports reject APNG/animated WebP and enforce ≤25 MiB, ≤8192 px per side, and ≤50 MP;
 - user assets remain visually separated from bundled assets;
-- catalog metadata and thumbnails are paged/windowed at ≤50 entries at once; no whole-library metadata getAll/materialization is required;
+- catalog metadata and thumbnails are paged/windowed at ≤50 entries using canonical primary-key prefix/range + cursor/keyset pagination; no secondary category/order index or whole-library metadata getAll/materialization is required;
 - catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
 - original bytes persist in the same browser/origin across reloads **and a recorded same-origin build A → build B deployment transition without re-import**;
 - a Story ref/asset primary key is authoritative: corrupt row metadata cannot redirect it to another digest/category;
@@ -222,6 +230,7 @@ v0.3 is complete when:
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
 - Player/browser rendering uses only sequentially integrity-verified assets whose actual format/size/dimensions exactly match payloadMeta; defensive aggregate totals must equal preflight totals;
+- render-preparation cross-tab races are closed by final shared-lock canonical ref revalidation before source-map freeze;
 - the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
