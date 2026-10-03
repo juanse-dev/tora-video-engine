@@ -257,6 +257,21 @@ Therefore:
 
 A one-click **Clear entire asset library** operation is out of scope for v0.3.
 
+## My assets coordination capability
+
+When ASSET-002 reports that Web Locks is unavailable, My assets is explicitly **read-only**:
+
+- existing durable cards remain visible;
+- thumbnails/labels and Player preview remain available when their backing data passes readiness/integrity checks;
+- **Import pose**, **Import background**, matching-file repair, rename, delete, and any other asset-library write action are disabled;
+- disabled mutation controls expose an actionable explanation rather than failing after user input;
+- no import is represented as successful unless a coordinated durable entry can be committed;
+- Render MP4 with local refs is unavailable per ASSET-004.
+
+Applying an existing durable local card to a scene may still use the normal Story edit path if Story authoring is available; any Story persistence/session-only warning remains the existing v0.2 concern and must stay visible.
+
+Do not hide existing My assets merely because mutation capability is unavailable.
+
 ## Storage errors
 
 If browser storage is unavailable/full:
@@ -321,6 +336,8 @@ Minimum browser-level coverage:
 - delete-in-use is possible but never silent;
 - missing refs are actionable;
 - local-only behavior is explained in-product;
+- with Web Locks unavailable, existing My assets remain visible/read-only while import/repair/rename/delete are disabled with an explicit capability message;
+- no IndexedDB write or ephemeral import occurs in read-only capability mode;
 - a large My assets library remains bounded by paged metadata + derivative thumbnails rather than whole-library metadata materialization or full-resolution grid decodes.
 
 ## Out of scope
