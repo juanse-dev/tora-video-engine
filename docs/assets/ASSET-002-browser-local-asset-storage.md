@@ -25,27 +25,46 @@ database: tora-video-engine-assets
 version: 1
 
 object stores:
+  payloadMeta
   blobs
   thumbnails
   assets
 ~~~
 
-### blobs store
+### payloadMeta store
 
 Key: SHA-256 digest.
+
+This is the **lightweight authoritative metadata** used for asset readiness, aggregate browser budgets, diagnostics, and integrity preflight. It must not contain Blob payloads.
 
 Value contains at least:
 
 ~~~ts
 {
   digest: string;
-  blob: Blob;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   byteSize: number;
   width: number;
   height: number;
 }
 ~~~
+
+Reading `payloadMeta[digest]` must not materialize `blobs[digest]`.
+
+### blobs store
+
+Key: SHA-256 digest.
+
+This store contains the heavyweight original payload only:
+
+~~~ts
+{
+  digest: string;
+  blob: Blob;
+}
+~~~
+
+The original Blob's `size` must agree with `payloadMeta[digest].byteSize` before hashing/decoding it for runtime use.
 
 ### thumbnails store
 
@@ -142,7 +161,7 @@ For a selected category + file:
 6. decode the image successfully and verify positive finite dimensions consistent with the accepted limits;
 7. build the category-scoped ref from ASSET-001;
 8. generate a bounded ≤256×256 derivative thumbnail;
-9. atomically store/reuse/repair binary + thumbnail + metadata;
+9. atomically store/reuse/repair payload metadata + original Blob + thumbnail + asset metadata;
 10. return the existing or newly created local asset entry.
 
 If format/animation/dimension validation, full-image decode, or bounded-thumbnail generation fails, the asset is rejected and no partial database record remains. Import processing is single-file in v0.3, so thumbnail generation never requires concurrent full-resolution decodes.
@@ -174,7 +193,8 @@ The freshly validated import must, in one transaction:
 
 - preserve the existing ref;
 - preserve the current display label and original creation metadata;
-- upsert/replace `blobs[digest]` with the freshly validated original bytes + authoritative MIME/size/dimensions;
+- upsert/replace `payloadMeta[digest]` with authoritative MIME/size/dimensions from the freshly validated bytes;
+- upsert/replace `blobs[digest]` with the freshly validated original bytes;
 - upsert/regenerate `thumbnails[digest]` from those fresh bytes;
 - avoid creating a second asset metadata row.
 
@@ -191,7 +211,7 @@ local:pose:sha256:<digest>
 local:background:sha256:<digest>
 ~~~
 
-Both point to the same `blobs[digest]` and `thumbnails[digest]`. A fresh valid import may upsert those shared backing records to repair missing/corrupt data without changing either category ref.
+Both point to the same `payloadMeta[digest]`, `blobs[digest]`, and `thumbnails[digest]`. A fresh valid import may upsert those shared backing records to repair missing/corrupt data without changing either category ref.
 
 ## Labels
 
@@ -212,9 +232,9 @@ Labels do not need to be unique.
 
 Deleting a local asset entry removes that category-specific metadata row.
 
-After deletion, remove the shared original Blob **and thumbnail** only if no remaining asset metadata row references its digest.
+After deletion, remove the shared `payloadMeta`, original Blob, **and thumbnail** only if no remaining asset metadata row references its digest.
 
-This garbage collection must occur in the same logical mutation so a cross-category asset cannot lose its binary/thumbnail while still referenced by another local library entry.
+This garbage collection must occur in the same logical mutation so a cross-category asset cannot lose its metadata/binary/thumbnail while still referenced by another local library entry.
 
 Whether deletion requires a user warning based on Story usage is defined in ASSET-003.
 
@@ -257,10 +277,42 @@ Requirements:
 
 - concurrent duplicate imports remain idempotent by digest/ref key;
 - rename must fail cleanly if the entry disappeared before its transaction commits rather than recreating a deleted entry;
-- delete must not remove a Blob still referenced by another category entry;
+- delete must not remove payload metadata/Blob/thumbnail still referenced by another category entry;
+- mutation/invalidation messages identify affected digest(s) so runtime integrity caches can be invalidated;
 - tabs must invalidate/refresh their library view after another same-origin tab mutates the library.
 
 A same-origin `BroadcastChannel` is the preferred invalidation signal. If a tab misses a signal, re-reading IndexedDB on focus/re-entry must converge to the durable state.
+
+## Backing-store integrity verification
+
+The SHA-256 digest in the Story ref is an identity guarantee, not merely a lookup key.
+
+Before the browser exposes an original Blob as a Player/render runtime source for a digest:
+
+1. read `payloadMeta[digest]`;
+2. fetch `blobs[digest]`;
+3. require the Blob to exist and `blob.size === payloadMeta.byteSize`;
+4. compute SHA-256 over the exact retrieved Blob bytes;
+5. require the computed digest to equal the requested digest;
+6. only then create/reuse the runtime source.
+
+If any check fails:
+
+- treat the digest as **corrupt/unavailable**;
+- do not expose those bytes to Player/render;
+- keep the Story/ref unchanged;
+- surface the same recovery path as a missing local asset;
+- exact-file same-category reimport may repair `payloadMeta`, Blob, and thumbnail without Story mutation.
+
+To avoid re-hashing on every frame/use, the browser may cache a successful integrity result in memory for the current page session.
+
+That cache must be invalidated for a digest when:
+
+- this tab mutates/repairs/deletes that digest;
+- a same-origin `BroadcastChannel` mutation event names that digest;
+- the app re-enters/focuses and detects durable library invalidation requiring refresh.
+
+Integrity cache is runtime-only and never persisted as proof across browser sessions.
 
 ## Runtime source lifecycle
 
@@ -316,12 +368,15 @@ Minimum coverage:
 - disallowed/mislabeled content rejected;
 - failed image decode leaves no durable entry;
 - SHA-256 is over original bytes;
-- same bytes + same category reuse one ref and upsert/repair the backing Blob/thumbnail without changing label/created metadata;
+- same bytes + same category reuse one ref and upsert/repair payload metadata + backing Blob/thumbnail without changing label/created metadata;
 - same bytes + different categories reuse Blob/thumbnail but create two refs;
 - rename preserves ref/hash;
-- deleting one category keeps shared Blob/thumbnail while another category references it;
-- deleting final metadata removes unreferenced Blob/thumbnail;
-- metadata-present + Blob/thumbnail-missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
+- deleting one category keeps shared payload metadata/Blob/thumbnail while another category references it;
+- deleting final asset metadata removes unreferenced payload metadata/Blob/thumbnail;
+- asset metadata present + payloadMeta/Blob/thumbnail missing/corrupt + exact-file reimport restores usable backing data without Story mutation;
+- budget/readiness metadata lookup reads `payloadMeta` without consulting `blobs`;
+- a record stored under digest A with valid image-B bytes fails SHA-256 integrity verification and never becomes a runtime source;
+- successful integrity verification may be cached per session, and any mutation/invalidation for the digest clears that cache;
 - quota/storage failure leaves prior library intact;
 - reload rebuilds library metadata from IndexedDB;
 - ephemeral runtime sources (including object URLs when used) are not persisted;
@@ -331,7 +386,7 @@ Minimum coverage:
 
 - a valid static PNG/JPEG/WebP satisfying ≤25 MiB, ≤8192 px per side, and ≤50 MP can become a durable local library entry;
 - exact duplicate bytes are deduplicated and duplicate reimport repairs missing/corrupt backing data;
-- original source Blob is preserved byte-for-byte;
+- original source Blob is preserved byte-for-byte and verified against its digest before first runtime use per session/invalidation generation;
 - labels are safely mutable;
 - binary storage remains separate from Story persistence and Remotion OPFS;
 - storage loss degrades into missing refs rather than corrupting Story data.
