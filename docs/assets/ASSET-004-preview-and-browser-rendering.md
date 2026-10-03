@@ -74,15 +74,17 @@ Existing bundled render output must remain pixel/behavior compatible:
 Before mounting/rendering an Active Story, the web app:
 
 1. collects distinct local refs used by the Story;
-2. resolves them against ASSET-002;
-3. obtains original Blobs;
-4. creates/reuses the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
-5. builds the runtime local-source map;
-6. exposes readiness/missing refs separately from Story state.
+2. reads only lightweight ASSET-002 metadata for those refs/digests;
+3. identifies missing/corrupt metadata and computes the ASSET-001 aggregate browser asset budget;
+4. if missing or over budget, stop before original Blob reads and expose the appropriate readiness failure;
+5. only when the metadata set is complete and within budget, obtain original Blobs for the required digests;
+6. create/reuse the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
+7. build the runtime local-source map;
+8. expose readiness/missing/over-budget state separately from Story state.
 
 Only refs used by the Active Story need runtime sources.
 
-Do not load the entire My assets library into render props.
+Do not load the entire My assets library into render props, and do not eagerly decode every distinct full-resolution image merely because the Story references it.
 
 ## Player states
 
@@ -95,6 +97,25 @@ Mount the normal Player with the source map.
 Keep the Story visible as Active but show a bounded **Resolving local assets…** readiness state and do not start MP4 rendering.
 
 Do not briefly render a stale prior asset for the new ref.
+
+### Over aggregate browser asset budget
+
+A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001:
+
+- >64 distinct category-scoped local refs; or
+- >256 MiB original source bytes across distinct local digests; or
+- >200 MP across distinct local digests.
+
+In that state:
+
+- preserve the Active/candidate Story and exact refs;
+- keep YAML export available for CLI use;
+- do not fetch the original local Blobs for Player/render;
+- suppress the normal Player rather than mounting hundreds of heavy sources;
+- disable Render MP4;
+- show which aggregate limit was exceeded.
+
+This is distinct from a missing asset and must not be reported as schema-invalid.
 
 ### Missing local refs
 
@@ -149,6 +170,8 @@ Extend the current render-input gating:
 ~~~text
 schema-valid Active Story
 + browser policy eligible
++ local asset metadata complete
++ local asset aggregate budget eligible
 + no pending visual/YAML/import state
 + browser render capability ready
 + all required visual assets resolved
@@ -160,7 +183,7 @@ Missing assets produce a specific message such as:
 
 > Browser render is blocked because 2 local assets are unavailable in this browser.
 
-Do not collapse missing-asset state into generic browser-policy rejection.
+Do not collapse missing-asset or aggregate-asset-budget state into generic Story schema rejection. Both are explicit browser asset-readiness outcomes.
 
 ## Render start ordering
 
@@ -168,10 +191,11 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 
 1. snapshot the current Active Story;
 2. re-evaluate browser Story policy;
-3. resolve/snapshot all local asset sources for that Story;
-4. require asset readiness;
-5. hold the resolved runtime sources/Blob snapshots stable;
-6. continue through existing capability/lock/OPFS/render lifecycle.
+3. re-read required local metadata and defensively recheck the aggregate browser asset budget before any Blob fetch;
+4. resolve/snapshot all local asset sources for that Story;
+5. require asset readiness;
+6. hold the resolved runtime sources/Blob snapshots stable;
+7. continue through existing capability/lock/OPFS/render lifecycle.
 
 If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
 
@@ -262,6 +286,9 @@ Minimum unit/browser coverage:
 - no silent bundled fallback;
 - distinct local refs are collected once per Story;
 - duplicate scene refs share resolved source;
+- aggregate budget counts refs and distinct digests correctly;
+- 64-ref / 256-MiB / 200-MP boundaries pass, while each +1/overflow case remains schema-valid/exportable but does not fetch original Blobs or mount Player/render;
+- many-scene fixture with unique near-limit refs fails closed at metadata-budget stage without materializing all original Blobs;
 - Player waits for local image readiness before frame advancement;
 - rapid local ref A → B → C changes cannot let stale A/B loads unblock C;
 - Render MP4 is disabled while asset resolution is pending/missing;
@@ -278,7 +305,7 @@ Minimum unit/browser coverage:
 - shared Remotion components support bundled and local refs without a second renderer;
 - local bytes remain outside Story/YAML;
 - Player can communicate missing refs without changing Story meaning;
-- browser MP4 cannot start with unresolved assets;
+- browser MP4 cannot start with unresolved or aggregate-over-budget local assets;
 - ASSET-004 uses the ASSET-001-proven runtime transport and browser-render golden confirms resolved local images through the shared composition;
 - v0.2 bundled output remains intact.
 
@@ -292,4 +319,4 @@ Minimum unit/browser coverage:
 
 ## Done when
 
-The same Active Story and shared component tree can preview/render bundled or browser-local images, with deterministic blocking and explicit UX whenever a local ref cannot be resolved.
+The same Active Story and shared component tree can preview/render bundled or browser-local images, with deterministic blocking when refs are missing or aggregate browser asset budgets are exceeded, and without eagerly materializing an unbounded set of local Blobs.
