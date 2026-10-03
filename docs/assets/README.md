@@ -111,7 +111,7 @@ A Story above this browser-only budget remains schema-valid and YAML-exportable 
 
 Before first runtime use of a digest in a page session/invalidation generation, the retrieved Blob's SHA-256, size, actual static-image format, and real dimensions must match the requested digest / `payloadMeta`. Integrity checks run sequentially with at most one ≤25-MiB payload materialized for hashing/inspection at a time.
 
-After verification, the aggregate byte/pixel budget is recomputed from the verified descriptors before any runtime source is created. Mismatched bytes or under-reported/corrupt metadata are treated as corrupt/unavailable or over-budget and never reach Player/render.
+Successful integrity verification requires exact agreement between actual format/size/dimensions and `payloadMeta`. Any disagreement is corrupt/unavailable. A defensive aggregate recomputation may assert equality with metadata-preflight totals, but there is no separate normal “under-reported metadata → post-integrity over-budget” path.
 
 ## Partial preview behavior
 
@@ -213,7 +213,7 @@ v0.3 is complete when:
 - user assets remain visually separated from bundled assets;
 - catalog metadata and thumbnails are paged/windowed at ≤50 entries at once; no whole-library metadata getAll/materialization is required;
 - catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
-- original bytes persist in the same browser/origin across reloads;
+- original bytes persist in the same browser/origin across reloads **and a recorded same-origin build A → build B deployment transition without re-import**;
 - a Story ref/asset primary key is authoritative: corrupt row metadata cannot redirect it to another digest/category;
 - exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport canonicalizes/repairs the asset row plus missing/corrupt payloadMeta/Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
@@ -221,7 +221,7 @@ v0.3 is complete when:
 - missing/corrupt references are explicit, preserve unrelated valid assets in partial preview, and block MP4 rather than changing output silently;
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
-- Player and browser MP4 rendering work with local pose/background assets only after sequential SHA-256/format/dimension verification and a final aggregate budget recheck from verified descriptors;
+- Player/browser rendering uses only sequentially integrity-verified assets whose actual format/size/dimensions exactly match payloadMeta; defensive aggregate totals must equal preflight totals;
 - the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
