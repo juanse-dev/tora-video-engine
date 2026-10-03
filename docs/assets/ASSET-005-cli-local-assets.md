@@ -109,14 +109,54 @@ For `npm run video -- story.yaml`:
 2. apply existing deterministic output/stale-file safeguards;
 3. collect distinct local visual refs;
 4. if no local refs exist, preserve the v0.2 path with no local-folder requirement;
-5. scan every regular file in the relevant local asset category directories, apply cheap size preflight, then detect/validate format from content and hash accepted candidates using the same source limits as browser import;
-6. resolve every required same-category ref;
+5. traverse relevant local asset category directories deterministically and inspect candidates with the bounded scanner defined below;
+6. resolve required same-category refs and stop scanning a category as soon as every ref required from that category has been found;
 7. fail before launching Remotion if any required ref is missing;
 8. prepare an ephemeral runtime source map/staging area;
 9. invoke the shared Remotion composition with Story + resolved source map;
 10. remove temporary staging data after render/failure.
 
 Do not make Remotion discover arbitrary local files itself.
+
+## Bounded CLI scanner
+
+CLI indexing must remain bounded even when `local-assets/` contains many large files.
+
+For v0.3:
+
+~~~ts
+MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1
+~~~
+
+Traversal and inspection rules:
+
+- directory traversal is deterministic; sort eligible directory entries lexicographically by normalized relative path before processing;
+- classify entries with `lstat()` and skip symlinks per the security policy;
+- use file stat/size to reject zero-byte or >25 MiB candidates before materializing file contents;
+- open/read/validate/hash/decode **one regular-file candidate at a time**;
+- release its file handle, byte buffer, decoder state, and other per-file temporary resources before materializing the next candidate;
+- never use unbounded `Promise.all()`/parallel reads over discovered files;
+- lightweight path enumeration may exist in memory, but payload bytes/file handles/decoders remain bounded by the inspection concurrency.
+
+### Render resolver early-stop
+
+For `npm run video -- story.yaml`:
+
+- build the required digest set per category first;
+- do not scan a category with zero required local refs;
+- when a candidate resolves a required digest, record its deterministic path;
+- once every required digest in that category has been found, stop traversing/inspecting remaining candidates in that category;
+- if traversal ends with unresolved refs, report the normal missing-asset error before Remotion spawn.
+
+Because duplicate files with the same digest are byte-identical, deterministic traversal + first match is sufficient and preserves stable staging/debug selection.
+
+### Full helper inventory
+
+`npm run assets` intentionally inventories all eligible files so it can print refs for local authoring.
+
+It therefore cannot early-stop based on a Story, but it must use the same `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1` scanner and release each payload before moving to the next file.
+
+No aggregate CLI byte/pixel budget is introduced; the resource bound is on concurrent materialization, not total library size.
 
 ## Hashing
 
@@ -283,7 +323,7 @@ local-assets/backgrounds/apartment.jpg
 Requirements:
 
 - print the **complete canonical ref**, not an abbreviated digest, so it is directly copy/pasteable into YAML;
-- use the same validation/hash/index code as the render path;
+- use the same bounded validation/hash/index scanner as the render path;
 - reject/report unsupported, animated, oversized, over-dimension, or undecodable files consistently;
 - do not create a user-maintained manifest or make filenames part of identity.
 
@@ -315,6 +355,10 @@ Minimum automated coverage:
 - browser/Node hash of the same fixture bytes produces identical refs;
 - required asset helper prints complete canonical refs for valid files;
 - helper and render indexing apply the same format/resource validation;
+- instrumentation over a large near-limit fixture proves at most one candidate payload/file handle/decoder is materialized for inspection at a time;
+- render resolver skips categories with no required refs and stops a category immediately after all of its required digests are found;
+- helper still inventories all eligible candidates but retains concurrency 1;
+- deterministic lexical traversal chooses the same first path when duplicate byte-identical files exist;
 - symlink-to-file inside a category root is skipped and never read/hashed;
 - symlink-to-directory inside a category root is not traversed, including when its target is outside the root;
 - a regular nested file beside skipped symlinks still resolves normally.
@@ -328,6 +372,7 @@ Minimum automated coverage:
 - bundled-only CLI behavior remains unchanged;
 - custom asset staging is ephemeral and deterministic;
 - CLI scanning never follows symlinks and therefore cannot escape the fixed category roots through link traversal;
+- CLI payload inspection is bounded to one candidate at a time, while render resolution may early-stop once all required refs are found;
 - the required helper exposes full copy/pasteable refs without introducing a manifest.
 
 ## Out of scope
