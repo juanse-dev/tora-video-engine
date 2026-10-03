@@ -99,6 +99,8 @@ The catalog must never use the original full-resolution Blob directly as its thu
 
 Key: full local asset ref.
 
+The store must expose an index suitable for bounded pagination by category and stable ordering, for example `[category, createdAt, ref]`. Catalog code must not require `getAll()` across the full library.
+
 Value contains at least:
 
 ~~~ts
@@ -113,6 +115,21 @@ Value contains at least:
 ~~~
 
 The binary payload is keyed only by digest so the same bytes can back both a pose entry and a background entry without storing the Blob twice.
+
+## Bounded metadata queries
+
+The reusable library may contain arbitrarily many entries up to browser quota, so metadata access must also be bounded.
+
+Requirements:
+
+- catalog queries use an IndexedDB cursor/range/index page, not unbounded `getAll()`;
+- default/max v0.3 page size is 50 asset metadata rows;
+- total count may be obtained independently via `count()`/equivalent without materializing all rows;
+- category filtering happens in the IndexedDB query/index where practical, not by loading every row and filtering in memory;
+- opening My assets reads only the first requested metadata page plus its corresponding bounded thumbnails;
+- pagination/window navigation fetches the next bounded page on demand.
+
+These rules are independent from Story asset-readiness lookup: resolving a Story may directly request the exact refs/digests it needs, while browsing the whole library remains page-bounded.
 
 ## File-size boundary
 
@@ -380,7 +397,10 @@ Minimum coverage:
 - quota/storage failure leaves prior library intact;
 - reload rebuilds library metadata from IndexedDB;
 - ephemeral runtime sources (including object URLs when used) are not persisted;
-- same-origin mutation invalidation refreshes stale library views.
+- same-origin mutation invalidation refreshes stale library views;
+- opening a large library reads at most one 50-row metadata page initially and does not call unbounded `getAll()`;
+- total count can be displayed without materializing all metadata rows;
+- next/previous catalog navigation fetches bounded pages through the category/order index.
 
 ## Acceptance criteria
 
