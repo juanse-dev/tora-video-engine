@@ -356,6 +356,25 @@ Requirements:
 
 A same-origin `BroadcastChannel` remains the preferred best-effort invalidation signal. If a tab misses a signal, re-reading IndexedDB on focus/re-entry must converge to the durable state.
 
+## Web Locks capability fallback
+
+The dedicated asset-library lock is a **required coordination capability for writes and local-asset MP4 render snapshots**, but not for read-only preview.
+
+If `navigator.locks?.request` is unavailable:
+
+- open the existing IndexedDB asset library in **read-only application mode**;
+- existing durable entries may still be listed, paged, integrity-verified, and used for Player preview;
+- do not perform import/repair/rename/delete/GC or any asset DB migration that writes records;
+- do not silently write IndexedDB without coordination;
+- do not silently convert import/repair into ephemeral session-only assets;
+- Render MP4 is ineligible for any Story that contains local refs because the final shared-lock snapshot barrier cannot be established;
+- bundled-only behavior follows the existing v0.2 browser capability/degradation rules;
+- show an explicit capability message explaining that My assets is read-only because browser coordination support is unavailable.
+
+Applying an already-durable local asset to the current Story does not mutate the asset library itself. It may follow the existing Story authoring/persistence capability rules, including v0.2 loss-risk/session-only behavior when Story persistence coordination is unavailable.
+
+Returning to full My assets mutation/render capability requires a later page load/environment where Web Locks is available.
+
 ## Backing-store integrity verification
 
 The SHA-256 digest in the Story ref is an identity guarantee, and `payloadMeta` is only a **preflight cache** until verified against the stored bytes.
@@ -494,6 +513,7 @@ Minimum coverage:
 - same-origin mutation invalidation refreshes stale library views;
 - all durable library mutations acquire `tora-video-engine:asset-library` exclusively for their final IndexedDB transaction;
 - a shared render-snapshot critical section blocks an exclusive delete until final canonical-row/payloadMeta revalidation and source-map freeze complete;
+- with `navigator.locks` absent, existing durable My assets remain readable/previewable, all asset-library writes are disabled, no write transaction is attempted, and local-ref MP4 rendering is ineligible;
 - opening a large library reads at most one 50-row metadata page initially and does not call unbounded `getAll()`;
 - total count can be displayed without materializing all metadata rows;
 - next/previous catalog navigation fetches bounded pages through the canonical primary-key prefix/range cursor; no secondary category/order index is required.
@@ -505,7 +525,8 @@ Minimum coverage:
 - original source Blob is preserved byte-for-byte; digest and actual format/dimensions/size must exactly match payloadMeta before runtime use, with sequential bounded hashing and a defensive aggregate-equality assertion;
 - labels are safely mutable;
 - binary storage remains separate from Story persistence and Remotion OPFS;
-- storage loss degrades into missing refs rather than corrupting Story data.
+- storage loss degrades into missing refs rather than corrupting Story data;
+- missing Web Locks capability degrades My assets to explicit read-only preview mode rather than uncoordinated writes or ephemeral imports.
 
 ## Out of scope
 
