@@ -327,9 +327,23 @@ Do not attempt hidden cloud backup.
 
 ## Cross-tab behavior
 
-IndexedDB transactions are the source of truth for asset-library writes.
+IndexedDB transactions are the source of truth for durable asset-library state.
 
-Do not reuse the v0.2 Story persistence-writer lock for binary asset storage.
+Do not reuse the v0.2 Story persistence-writer lock or the browser-render lock for asset-library coordination.
+
+Use a dedicated, unversioned same-origin Web Lock:
+
+~~~text
+tora-video-engine:asset-library
+~~~
+
+Lock protocol:
+
+- every durable asset-library mutation (import commit/repair, rename, delete + GC, future DB migration that rewrites asset records) takes this lock in **exclusive** mode around its final IndexedDB transaction;
+- expensive pre-import work such as file hashing/decoding/thumbnail generation happens **before** requesting the exclusive lock, so the lock protects only the short durable commit;
+- read-only catalog/preview browsing does not need to hold the lock and may converge through normal IndexedDB rereads/invalidation;
+- ASSET-004 render preparation takes the same lock in **shared** mode only for the final readiness revalidation + runtime-source snapshot freeze;
+- while that shared section is active, cross-tab exclusive mutations wait; once the immutable render snapshot is frozen, the shared lock is released and later deletes are allowed without changing the in-flight snapshot.
 
 Requirements:
 
@@ -337,9 +351,10 @@ Requirements:
 - rename must fail cleanly if the entry disappeared before its transaction commits rather than recreating a deleted entry;
 - delete must not remove payload metadata/Blob/thumbnail still referenced by another category entry;
 - mutation/invalidation messages identify affected digest(s) so runtime integrity caches can be invalidated;
-- tabs must invalidate/refresh their library view after another same-origin tab mutates the library.
+- tabs must invalidate/refresh their library view after another same-origin tab mutates the library;
+- BroadcastChannel delivery is **not** treated as a synchronization barrier for render preparation; the Web Lock + final IndexedDB revalidation provides that barrier.
 
-A same-origin `BroadcastChannel` is the preferred invalidation signal. If a tab misses a signal, re-reading IndexedDB on focus/re-entry must converge to the durable state.
+A same-origin `BroadcastChannel` remains the preferred best-effort invalidation signal. If a tab misses a signal, re-reading IndexedDB on focus/re-entry must converge to the durable state.
 
 ## Backing-store integrity verification
 
@@ -477,9 +492,11 @@ Minimum coverage:
 - reload rebuilds library metadata from IndexedDB;
 - ephemeral runtime sources (including object URLs when used) are not persisted;
 - same-origin mutation invalidation refreshes stale library views;
+- all durable library mutations acquire `tora-video-engine:asset-library` exclusively for their final IndexedDB transaction;
+- a shared render-snapshot critical section blocks an exclusive delete until final canonical-row/payloadMeta revalidation and source-map freeze complete;
 - opening a large library reads at most one 50-row metadata page initially and does not call unbounded `getAll()`;
 - total count can be displayed without materializing all metadata rows;
-- next/previous catalog navigation fetches bounded pages through the category/order index.
+- next/previous catalog navigation fetches bounded pages through the canonical primary-key prefix/range cursor; no secondary category/order index is required.
 
 ## Acceptance criteria
 
