@@ -46,9 +46,16 @@ CLI local assets follow the same v0.3 source rules as browser imports:
 - height ≤8192 px;
 - total decoded pixels ≤50 MP.
 
-Only supported image files are candidates for the local index.
+Every regular file under the relevant local asset directory is a **content candidate**, regardless of filename extension.
 
-A supported extension does not override invalid content: inspect the file structure/content, reject animated PNG/WebP, enforce dimensions/pixel limits, and require successful decode before accepting/indexing a file.
+The CLI must be content-first exactly like the browser:
+
+- extension and inferred MIME are hints only;
+- a valid PNG/JPEG/WebP with no extension or with an incorrect extension is still accepted if its bytes pass validation;
+- an invalid payload with a supported-looking extension is rejected;
+- animated PNG/WebP, over-limit dimensions/pixels, and undecodable content are rejected from the bytes/content, not from naming.
+
+The CLI may use file size from `stat` to reject zero-byte or >25 MiB files before reading their contents.
 
 ## No manifest required
 
@@ -102,7 +109,7 @@ For `npm run video -- story.yaml`:
 2. apply existing deterministic output/stale-file safeguards;
 3. collect distinct local visual refs;
 4. if no local refs exist, preserve the v0.2 path with no local-folder requirement;
-5. scan/validate/hash only relevant local asset category directories using the same source limits as browser import;
+5. scan every regular file in the relevant local asset category directories, apply cheap size preflight, then detect/validate format from content and hash accepted candidates using the same source limits as browser import;
 6. resolve every required same-category ref;
 7. fail before launching Remotion if any required ref is missing;
 8. prepare an ephemeral runtime source map/staging area;
@@ -274,7 +281,9 @@ Minimum automated coverage:
 - pose/background directory indexing is category-aware;
 - SHA-256 matches browser test vectors;
 - nested supported files resolve if recursive scan is implemented;
-- unsupported/invalid-content files do not satisfy refs;
+- valid PNG/JPEG/WebP bytes resolve even when the filename has no extension or an incorrect extension;
+- browser and CLI accept the same extensionless/misnamed valid-content fixture and compute the same ref;
+- unsupported/invalid-content files do not satisfy refs even when named `.png`, `.jpg`, or `.webp`;
 - APNG/animated WebP do not satisfy refs;
 - >25 MiB candidate is not hashed/accepted;
 - >8192 px/side or >50 MP candidates are not accepted;
@@ -295,7 +304,7 @@ Minimum automated coverage:
 
 - local custom assets require only copying supported files into the documented local folders plus using the built-in helper when a local-only author needs the canonical ref;
 - YAML remains machine-independent and contains no paths/bytes;
-- the same file resolves to the same ref in browser and Node;
+- the same file resolves to the same ref in browser and Node regardless of filename extension;
 - missing assets fail early with actionable diagnostics;
 - bundled-only CLI behavior remains unchanged;
 - custom asset staging is ephemeral and deterministic;
