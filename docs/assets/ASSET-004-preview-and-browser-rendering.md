@@ -77,12 +77,14 @@ Before mounting/rendering an Active Story, the web app:
 2. reads only lightweight ASSET-002 `assets` + `payloadMeta` records for those refs/digests;
 3. identifies missing/corrupt metadata and computes the ASSET-001 aggregate browser asset budget **without consulting the `blobs` store**;
 4. if missing or over budget, stop before any `blobs[digest]` lookup and expose the appropriate readiness failure;
-5. only when the metadata set is complete and within budget, obtain original Blobs for the required digests;
-6. run ASSET-002 backing-store integrity verification for each needed digest before exposing any runtime source;
-7. if integrity fails, treat that digest as corrupt/unavailable and stop it from reaching Player/render;
-8. create/reuse the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
-9. build the runtime local-source map;
-10. expose readiness/missing/corrupt/over-budget state separately from Story state.
+5. only when the metadata set is complete and within the **metadata preflight** budget, obtain/verify original Blobs **sequentially, one distinct digest at a time**;
+6. for each digest, run ASSET-002 backing-store integrity verification: SHA-256 + actual format + actual dimensions/size vs `payloadMeta`;
+7. release each transient hash/decode buffer before advancing to the next digest and keep only its small verified descriptor/runtime-eligible Blob handle;
+8. after all required digests verify, recompute the aggregate source-byte/pixel budget from the **verified descriptors**, not untrusted `payloadMeta`;
+9. if any integrity check fails or the verified aggregate budget is exceeded, create no runtime source map and expose the appropriate corrupt/over-budget state;
+10. only then create/reuse the ephemeral runtime image sources accepted by the ASSET-001 transport gate (`blob:` object URLs when that gate succeeds with `blob:`);
+11. build the runtime local-source map;
+12. expose readiness/missing/corrupt/over-budget state separately from Story state.
 
 Only refs used by the Active Story need runtime sources.
 
@@ -102,7 +104,7 @@ Do not briefly render a stale prior asset for the new ref.
 
 ### Over aggregate browser asset budget
 
-A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001:
+A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001 during either the metadata preflight **or the mandatory post-integrity recheck using dimensions/size derived from the actual Blob bytes**:
 
 - >64 distinct category-scoped local refs; or
 - >256 MiB original source bytes across distinct local digests; or
@@ -214,13 +216,14 @@ Before acquiring/using the global `tora-video-engine:web-fs-render` lifecycle fo
 
 1. snapshot the current Active Story;
 2. re-evaluate browser Story policy;
-3. re-read required `assets` + `payloadMeta` records and defensively recheck the aggregate browser asset budget without consulting `blobs`;
-4. if budget/readiness metadata passes, fetch required original Blobs;
-5. verify each Blob's size + SHA-256 against the requested digest, using the session integrity cache only when still valid for that digest;
-6. resolve/snapshot all verified local asset sources for that Story;
-7. require asset readiness;
-8. hold the verified runtime sources/Blob snapshots stable;
-9. continue through existing capability/lock/OPFS/render lifecycle.
+3. re-read required `assets` + `payloadMeta` records and defensively recheck the metadata aggregate browser asset budget without consulting `blobs`;
+4. if metadata readiness passes, verify required digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
+5. recompute the aggregate byte/pixel budget from the verified descriptors and fail closed if corrupt metadata had under-reported resources;
+6. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations;
+7. resolve/snapshot all verified local asset sources for that Story;
+8. require asset readiness;
+9. hold the verified runtime sources/Blob snapshots stable;
+10. continue through existing capability/lock/OPFS/render lifecycle.
 
 If readiness changes before the render transaction actually begins, fail closed and require a fresh Render action.
 
@@ -314,8 +317,11 @@ Minimum unit/browser coverage:
 - aggregate budget counts refs and distinct digests correctly;
 - 64-ref / 256-MiB / 200-MP boundaries pass, while each +1/overflow case remains schema-valid/exportable but does not fetch original Blobs or mount Player/render;
 - many-scene fixture with unique near-limit refs fails closed at metadata-budget stage without reading any `blobs` records;
-- instrumentation proves an over-budget Story consults only `assets`/`payloadMeta`, with zero original-Blob store reads;
+- instrumentation proves a metadata-preflight over-budget Story consults only `assets`/`payloadMeta`, with zero original-Blob store reads;
 - Blob keyed by digest A but containing valid image-B bytes fails integrity verification and never reaches Player/render;
+- Blob A with correct digest A plus payloadMeta dimensions deliberately changed from actual values is detected, and verified dimensions are used for the final aggregate budget recheck;
+- a fixture whose corrupted payloadMeta under-reports enough pixels to pass preflight but whose verified descriptors exceed 200 MP is blocked before runtime-source creation;
+- integrity verification runs sequentially with at most one digest/≤25-MiB source payload materialized for hashing at once, including a fixture near the 256-MiB aggregate source-byte limit;
 - successful integrity verification is reused within the page session until a mutation/invalidation for that digest clears the cache;
 - Player waits for local image readiness before frame advancement;
 - rapid local ref A → B → C changes cannot let stale A/B loads unblock C;
@@ -333,7 +339,7 @@ Minimum unit/browser coverage:
 - shared Remotion components support bundled and local refs without a second renderer;
 - local bytes remain outside Story/YAML;
 - Player can communicate missing refs without changing Story meaning;
-- browser MP4 cannot start with unresolved, integrity-failed, or aggregate-over-budget local assets;
+- browser MP4 cannot start with unresolved, integrity-failed, or aggregate-over-budget local assets, and aggregate budget is revalidated from verified real dimensions/size after integrity checks;
 - ASSET-004 uses the ASSET-001-proven runtime transport and browser-render golden confirms resolved local images through the shared composition;
 - v0.2 bundled output remains intact.
 
