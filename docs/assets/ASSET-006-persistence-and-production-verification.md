@@ -169,7 +169,7 @@ Test this after:
 
 ## Browser policy interaction
 
-Asset readiness and the aggregate custom-asset browser budget are evaluated **after** Story schema/browser authoring policy and before loading original local Blobs.
+After Story schema/browser authoring policy, the browser first evaluates local-asset readiness + aggregate budget from lightweight metadata **before** loading original Blobs. If that preflight passes, it then verifies the required payloads sequentially and re-evaluates bytes/pixels from verified real metadata before runtime-source creation.
 
 A Story can be:
 
@@ -190,7 +190,7 @@ Do not add local-asset byte sizes to the existing canonical-YAML 1 MiB policy be
 
 The local-image resource limits (≤25 MiB source bytes, ≤8192 px per side, ≤50 MP, static PNG/JPEG/WebP only) apply per imported/source asset.
 
-Separately, the browser enforces the ASSET-001 aggregate local-asset budget on distinct refs/digests: ≤64 local refs, ≤256 MiB source bytes, and ≤200 MP. A Story exceeding that aggregate budget remains schema-valid/exportable for CLI use but must not load original Blobs into Player/render.
+Separately, the browser enforces the ASSET-001 aggregate local-asset budget on distinct refs/digests: ≤64 local refs, ≤256 MiB source bytes, and ≤200 MP. Metadata-preflight overflow causes zero Blob reads. If preflight passes, real format/dimensions/size derived during sequential integrity verification are re-summed; final overflow remains schema-valid/exportable for CLI use but cannot create Player/render runtime sources.
 
 ## Loss-risk semantics
 
