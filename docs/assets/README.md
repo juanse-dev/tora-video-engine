@@ -109,7 +109,9 @@ Before loading original Blobs for Player/render, v0.3 reads metadata only and en
 
 A Story above this browser-only budget remains schema-valid and YAML-exportable for CLI use, but Player/render is suppressed and the `blobs` store is not consulted before rejection.
 
-Before first runtime use of a digest in a page session/invalidation generation, the retrieved Blob's size and SHA-256 must match `payloadMeta` + the requested digest. Mismatched bytes are treated as corrupt/unavailable and never reach Player/render.
+Before first runtime use of a digest in a page session/invalidation generation, the retrieved Blob's SHA-256, size, actual static-image format, and real dimensions must match the requested digest / `payloadMeta`. Integrity checks run sequentially with at most one ≤25-MiB payload materialized for hashing/inspection at a time.
+
+After verification, the aggregate byte/pixel budget is recomputed from the verified descriptors before any runtime source is created. Mismatched bytes or under-reported/corrupt metadata are treated as corrupt/unavailable or over-budget and never reach Player/render.
 
 ## Local CLI model
 
@@ -121,7 +123,7 @@ local-assets/
   backgrounds/
 ~~~
 
-A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
+A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets. Recursive scanning uses `lstat()` semantics and **never follows file or directory symlinks**, so link traversal cannot escape the fixed category roots. A required `npm run assets`-style helper prints the full canonical refs for local-only authoring.
 
 This deliberately mirrors the browser model:
 
@@ -207,8 +209,8 @@ v0.3 is complete when:
 - missing references are explicit and block render rather than changing output silently;
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
-- Player and browser MP4 rendering work with local pose/background assets within the aggregate browser asset budget, and backing Blob SHA-256 integrity is verified before runtime use;
-- the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, and a required helper prints complete canonical refs;
+- Player and browser MP4 rendering work with local pose/background assets only after sequential SHA-256/format/dimension verification and a final aggregate budget recheck from verified descriptors;
+- the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
 - production remains static-hosted and backend-free.
