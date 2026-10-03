@@ -85,13 +85,13 @@ v0.3 uses IndexedDB because it can atomically store structured metadata, origina
 The storage layout separates lightweight readiness/budget metadata from heavyweight payloads:
 
 ~~~text
-assets       → ref/category/label/original filename
+assets       → primary key = full canonical ref; value = label/original filename/createdAt only
 payloadMeta  → digest/MIME/byte size/dimensions
 blobs        → digest/original Blob only
 thumbnails   → digest/bounded derivative thumbnail (≤256×256)
 ~~~
 
-This separation lets browser budget/readiness checks run without reading original Blob records.
+The full `assets` primary key is the sole authority for category + digest; row values cannot redirect identity. Category pagination uses primary-key prefix ranges. This separation lets browser budget/readiness checks run without reading original Blob records.
 
 Ephemeral runtime image sources are transport-only and must never be persisted in Story/YAML/localStorage. If the ASSET-001 gate accepts `blob:`, this means object URLs; otherwise the proven replacement transport follows the same rule.
 
@@ -112,6 +112,17 @@ A Story above this browser-only budget remains schema-valid and YAML-exportable 
 Before first runtime use of a digest in a page session/invalidation generation, the retrieved Blob's SHA-256, size, actual static-image format, and real dimensions must match the requested digest / `payloadMeta`. Integrity checks run sequentially with at most one ≤25-MiB payload materialized for hashing/inspection at a time.
 
 After verification, the aggregate byte/pixel budget is recomputed from the verified descriptors before any runtime source is created. Mismatched bytes or under-reported/corrupt metadata are treated as corrupt/unavailable or over-budget and never reach Player/render.
+
+## Partial preview behavior
+
+When the Story is within the aggregate browser budget, missing/corrupt local refs do not suppress unrelated valid assets:
+
+- verified refs render normally;
+- only affected visual positions show explicit placeholders;
+- the Story remains editable/exportable;
+- Render MP4 stays blocked until every required ref resolves and verifies.
+
+Aggregate over-budget remains a whole-Player/render failure rather than a partial preview.
 
 ## Local CLI model
 
@@ -203,10 +214,11 @@ v0.3 is complete when:
 - catalog metadata and thumbnails are paged/windowed at ≤50 entries at once; no whole-library metadata getAll/materialization is required;
 - catalog thumbnails are generated derivatives ≤256×256, never full-resolution originals;
 - original bytes persist in the same browser/origin across reloads;
-- exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport repairs missing/corrupt payloadMeta/Blob/thumbnail data;
+- a Story ref/asset primary key is authoritative: corrupt row metadata cannot redirect it to another digest/category;
+- exact duplicate bytes do not create duplicate binary storage, and exact duplicate reimport canonicalizes/repairs the asset row plus missing/corrupt payloadMeta/Blob/thumbnail data;
 - renaming a local asset does not change YAML references;
 - YAML exports contain local references but no image bytes/blob URLs;
-- missing references are explicit and block render rather than changing output silently;
+- missing/corrupt references are explicit, preserve unrelated valid assets in partial preview, and block MP4 rather than changing output silently;
 - exact-file same-category re-import resolves a missing reference by SHA-256;
 - delete-in-use is allowed only after warning;
 - Player and browser MP4 rendering work with local pose/background assets only after sequential SHA-256/format/dimension verification and a final aggregate budget recheck from verified descriptors;
