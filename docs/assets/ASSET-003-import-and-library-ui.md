@@ -68,7 +68,7 @@ The UI must consume the ASSET-002 derivative thumbnails **and page the metadata 
 - never use original full-resolution local Blobs as card thumbnails;
 - query at most 50 local asset metadata rows per page/window;
 - mount/decode at most those 50 local thumbnail cards at once;
-- use the ASSET-002 category/order index + cursor/range pagination rather than unbounded `getAll()`;
+- use ASSET-002 canonical primary-key prefix/range + cursor/keyset pagination rather than unbounded `getAll()`; do not add a redundant secondary category/order index;
 - obtain total library/category counts separately without materializing all metadata rows;
 - fetch the next metadata page only when navigation/windowing requires it;
 - release off-window thumbnail runtime/object URLs promptly;
