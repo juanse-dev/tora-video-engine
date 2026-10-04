@@ -61,15 +61,17 @@ The CLI may use file size from `stat` to reject zero-byte or >25 MiB files befor
 
 The default v0.3 workflow must not require a user-maintained manifest.
 
-The CLI builds an index from local files:
+The CLI discovers content identity from local files:
 
 ~~~text
 category + SHA-256(original bytes)
-              ↓
-         filesystem path
 ~~~
 
-This is what makes an exported browser Story portable without embedding bytes.
+For the inventory/helper flow, that identity may be associated with the deterministic source path for display.
+
+For the render flow, a required match is **not** represented only by the mutable source path. The verified bytes are immediately copied into the render's private ephemeral staging area, and the runtime source map points at that staged snapshot.
+
+This is what makes an exported browser Story portable without embedding bytes while preserving the content-addressed identity through render.
 
 ## Category directories are authoritative
 
@@ -109,12 +111,13 @@ For `npm run video -- story.yaml`:
 2. apply existing deterministic output/stale-file safeguards;
 3. collect distinct local visual refs;
 4. if no local refs exist, preserve the v0.2 path with no local-folder requirement;
-5. traverse relevant local asset category directories deterministically and inspect candidates with the bounded scanner defined below;
-6. resolve required same-category refs and stop scanning a category as soon as every ref required from that category has been found;
-7. fail before launching Remotion if any required ref is missing;
-8. prepare an ephemeral runtime source map/staging area;
-9. invoke the shared Remotion composition with Story + resolved source map;
-10. remove temporary staging data after render/failure.
+5. create a private ephemeral staging directory for this render attempt;
+6. traverse relevant local asset category directories deterministically and inspect candidates with the bounded scanner defined below;
+7. when the currently materialized/validated bytes match a required same-category digest, write **those exact bytes immediately** to the private staging area before releasing that candidate buffer; record the staged snapshot, not the source path, as the resolved runtime source;
+8. stop scanning a category as soon as every ref required from that category has a staged snapshot;
+9. fail before launching Remotion if any required ref is missing or could not be snapshotted;
+10. invoke the shared Remotion composition with Story + the staged runtime source map;
+11. remove temporary staging data after render/failure.
 
 Do not make Remotion discover arbitrary local files itself.
 
@@ -144,11 +147,13 @@ For `npm run video -- story.yaml`:
 
 - build the required digest set per category first;
 - do not scan a category with zero required local refs;
-- when a candidate resolves a required digest, record its deterministic path;
-- once every required digest in that category has been found, stop traversing/inspecting remaining candidates in that category;
+- when a candidate resolves a required digest, synchronously/awaitedly persist the exact already-verified candidate bytes into the render's private staging area **before** releasing the candidate payload;
+- use a deterministic staged filename derived from category + digest + detected format, not from the mutable source filename;
+- record the staged snapshot path/URL as the resolved runtime source; do not later reopen the original source path for staging;
+- once every required digest in that category has a successfully written staged snapshot, stop traversing/inspecting remaining candidates in that category;
 - if traversal ends with unresolved refs, report the normal missing-asset error before Remotion spawn.
 
-Because duplicate files with the same digest are byte-identical, deterministic traversal + first match is sufficient and preserves stable staging/debug selection.
+Because duplicate files with the same digest are byte-identical, deterministic traversal + first successfully snapshotted match is sufficient. Source-path selection remains deterministic for diagnostics, while render content comes only from the staged bytes that produced the digest.
 
 ### Full helper inventory
 
@@ -227,21 +232,27 @@ category + expected SHA-256
 
 The CLI discovers files from the fixed local asset roots and matches by computed digest.
 
-### Symlink policy
+### Symlink policy and filesystem-stability assumption
 
-v0.3 **does not follow filesystem symlinks** while scanning `local-assets/`.
+v0.3 does not intentionally follow filesystem symlinks while scanning `local-assets/`.
+
+For the normal supported case, the local asset tree is assumed to be **quiescent for the duration of one CLI scan**: no editor, sync tool, script, or other process is expected to replace files/directories with symlinks between filesystem syscalls.
 
 Scanner requirements:
 
 - use `lstat()`/equivalent when classifying directory entries;
-- if an entry is a symbolic link, skip it regardless of whether it targets a file or directory;
-- do not recurse through symlinked directories;
-- do not read/hash symlinked files;
-- regular files/directories reached without following a symlink remain eligible under the normal content-first rules.
+- if an entry is observed as a symbolic link, skip it regardless of whether it targets a file or directory;
+- do not recurse through entries observed as symlinked directories;
+- do not read/hash entries observed as symlinked files;
+- for a file candidate, compare identity/metadata available from the pre-open classification with the opened handle's `fstat()`/equivalent **before reading bytes** where the platform exposes stable file identity (for example device/inode); if they disagree, close and reject that candidate;
+- if file size/type changes between classification and opened-handle validation, reject/fail that candidate rather than continuing with stale assumptions;
+- regular files/directories reached in a stable tree without observed symlink traversal remain eligible under the normal content-first rules.
 
-This intentionally favors a simple, auditable containment guarantee over supporting symlinked personal asset trees in v0.3.
+This protects ordinary local use and catches detectable file replacement races before payload reads, but v0.3 **does not claim adversarial race-hardening against a separate process concurrently mutating directory entries between syscalls on every supported OS/filesystem**.
 
-The fixed roots plus the no-symlink rule guarantee the scanner never reads outside the actual `local-assets/poses/` or `local-assets/backgrounds/` directory tree through link traversal.
+In particular, recursive directory traversal is not specified as an `openat(..., O_NOFOLLOW)`-style capability-secure walk across all platforms. Users/tools must not mutate the `local-assets/` tree concurrently with a render/index command if they require deterministic containment.
+
+If stronger race-resistant filesystem containment is required later, it should be introduced as a separately specified platform abstraction rather than implied by `lstat()` alone.
 
 Exported YAML still never contains machine-specific absolute paths.
 
@@ -249,16 +260,21 @@ Exported YAML still never contains machine-specific absolute paths.
 
 The shared Remotion composition consumes an ephemeral runtime source map as defined by ASSET-004.
 
-For CLI/local rendering, the render setup must expose the matched files to the headless Remotion page using an ephemeral local/static staging mechanism.
+For CLI/local rendering, the render setup exposes **snapshotted verified bytes** to the headless Remotion page using an ephemeral local/static staging mechanism.
 
 Requirements:
 
+- create a private staging directory before candidate resolution;
+- when a required digest is matched, write the exact in-memory bytes that were just validated/hashed directly into staging before releasing that buffer;
+- never resolve a required ref by remembering only the original source path and reopening it later;
+- source-file changes after a successful snapshot cannot change the staged render bytes;
+- if the staged write fails, that ref is unresolved and rendering fails before Remotion spawn;
 - do not copy custom files into tracked `public/`;
 - do not mutate the Story;
 - do not encode image bytes/base64 into YAML;
 - do not leave staging files after success/failure;
-- pass only runtime source URLs/paths that are valid for the render lifetime;
-- preserve original file bytes.
+- pass only staged runtime source URLs/paths that are valid for the render lifetime;
+- preserve the verified original bytes byte-for-byte in the staged snapshot.
 
 The exact Remotion staging mechanism may be chosen during implementation, but it must be covered end-to-end by tests rather than assuming `file://` works.
 
@@ -358,10 +374,14 @@ Minimum automated coverage:
 - instrumentation over a large near-limit fixture proves at most one candidate payload/file handle/decoder is materialized for inspection at a time;
 - render resolver skips categories with no required refs and stops a category immediately after all of its required digests are found;
 - helper still inventories all eligible candidates but retains concurrency 1;
-- deterministic lexical traversal chooses the same first path when duplicate byte-identical files exist;
-- symlink-to-file inside a category root is skipped and never read/hashed;
-- symlink-to-directory inside a category root is not traversed, including when its target is outside the root;
-- a regular nested file beside skipped symlinks still resolves normally.
+- deterministic lexical traversal chooses the same first successfully snapshotted source when duplicate byte-identical files exist;
+- required digest A is discovered from source bytes A, source file is then replaced/modified to bytes B before Remotion spawn, and render still consumes staged snapshot A (or the snapshot write fails closed) — never B under ref A;
+- staged snapshot bytes hash back to the required digest before the runtime source map is finalized in the test harness;
+- a stat/open identity mismatch detected before payload read rejects the candidate;
+- symlink-to-file present at classification time is skipped and not payload-read/hashed;
+- symlink-to-directory present at classification time is not traversed;
+- a regular nested file beside skipped symlinks still resolves normally;
+- concurrent adversarial directory-entry replacement between syscalls is documented as outside the v0.3 containment guarantee rather than tested as a promised cross-platform invariant.
 
 ## Acceptance criteria
 
@@ -370,9 +390,10 @@ Minimum automated coverage:
 - the same file resolves to the same ref in browser and Node regardless of filename extension;
 - missing assets fail early with actionable diagnostics;
 - bundled-only CLI behavior remains unchanged;
-- custom asset staging is ephemeral and deterministic;
-- CLI scanning never follows symlinks and therefore cannot escape the fixed category roots through link traversal;
-- CLI payload inspection is bounded to one candidate at a time, while render resolution may early-stop once all required refs are found;
+- custom asset staging is ephemeral, deterministic, and created directly from the same verified bytes that produced each required digest;
+- render never reopens an original source path after digest resolution to obtain its staged bytes;
+- CLI skips symlinks observed during a quiescent scan and rejects detectable stat/open identity changes, while adversarial concurrent filesystem mutation remains explicitly out of scope for v0.3;
+- CLI payload inspection is bounded to one candidate at a time, while render resolution may early-stop once all required refs are snapshotted;
 - the required helper exposes full copy/pasteable refs without introducing a manifest.
 
 ## Out of scope
@@ -386,4 +407,4 @@ Minimum automated coverage:
 
 ## Done when
 
-A YAML exported from the browser can render locally after the user copies the exact referenced image files into the correct `local-assets/poses` and/or `local-assets/backgrounds` category. A local-only author can obtain the exact YAML refs from the required helper command without creating a manifest.
+A YAML exported from the browser can render locally after the user copies the exact referenced image files into the correct `local-assets/poses` and/or `local-assets/backgrounds` category. Required render refs are backed by staged snapshots written from the same bytes that produced their digests, so later source-path mutation cannot silently change render content. A local-only author can obtain the exact YAML refs from the required helper command without creating a manifest.
