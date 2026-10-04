@@ -326,13 +326,16 @@ No bytes are transferred through YAML.
 
 Use the same source-controlled fixture bytes in a temporary local-asset root.
 
-The test root must also verify the ASSET-005 path-safety rule:
+The test root must also verify the ASSET-005 stable-tree path-safety policy:
 
-- a symlink-to-file inside `poses/` whose target is outside the category root is skipped and never read/hashed;
-- a symlink-to-directory inside `backgrounds/` whose target is outside the category root is not traversed;
-- ordinary nested regular files still resolve.
+- a symlink-to-file already present at classification time is skipped and its payload is not read/hashed;
+- a symlink-to-directory already present at classification time is not traversed;
+- ordinary nested regular files still resolve;
+- where stable file identity is available, replacing/changing a regular file between `lstat()` and opened-handle `fstat()` causes that candidate to be rejected before payload read.
 
-Use platform/CI guards where symlink creation requires OS support/permissions, but the scanner policy itself remains no-follow on every platform.
+Use platform/CI guards where symlink/file-identity primitives require OS support/permissions.
+
+Do **not** claim/test a stronger cross-platform invariant against an adversarial process mutating directory entries between arbitrary filesystem syscalls. ASSET-005 explicitly treats a quiescent `local-assets/` tree during one CLI command as the supported v0.3 operating assumption.
 
 Use the same source-controlled fixture bytes in a temporary local-asset root.
 
@@ -344,11 +347,13 @@ Automate:
 2. index temp `poses/` and `backgrounds/` with `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1`;
 3. verify refs resolve to the same SHA-256 values;
 4. instrument payload/file-handle/decoder concurrency and prove it never exceeds 1, including a library with many near-limit candidates;
-5. verify render resolution early-stops each category once all required digests are found;
+5. verify render resolution early-stops each category once all required digests have **staged snapshots**;
 6. verify the full `npm run assets` helper still inventories all eligible files while retaining concurrency 1;
-7. render through CLI;
-8. verify output metadata;
-9. sample frames to prove custom pose/background are present.
+7. for a required ref with source bytes A, let the resolver validate/hash A and write its staged snapshot, then replace/modify the original source path to bytes B before Remotion spawn; verify runtime staging still hashes to A (or snapshot creation fails closed) and B is never rendered under ref A;
+8. verify render runtime sources point at the staged snapshot, not the original source path;
+9. render through CLI;
+10. verify output metadata;
+11. sample frames to prove custom pose/background are present.
 
 This test must not depend on a developer's real gitignored `local-assets/` folder.
 
@@ -532,8 +537,9 @@ Record:
 - [ ] CLI resolves same refs from local asset folders
 - [ ] required local asset helper prints full canonical copy/pasteable refs
 - [ ] CLI missing-asset diagnostics pass
-- [ ] CLI scanner skips file/directory symlinks and does not traverse outside local-assets category roots
+- [ ] CLI stable-tree scan skips symlinks observed at classification, rejects detectable stat/open identity changes before payload read, and documents concurrent adversarial tree mutation as out of scope
 - [ ] CLI scanner materializes/validates at most one candidate payload at a time; render resolution early-stops completed categories while helper inventory remains bounded
+- [ ] CLI render stages each required ref directly from the same verified bytes that produced its digest; changing the source path after resolution cannot change rendered bytes
 - [ ] CLI/browser custom-asset parity golden passes, including extensionless/misnamed valid-content fixture
 - [ ] IndexedDB key is the sole identity authority for assets/payloadMeta/blobs/thumbnails; malformed redundant digest fields cannot redirect lookup
 - [ ] missing Web Locks degrades My assets to read-only preview mode with zero CRUD/schema writes, no DB creation/migration, and blocks local-ref MP4
@@ -547,7 +553,7 @@ Record:
 - v0.2 bundled Story/render behavior remains stable; bundled-only v1 persistence remains rollback-compatible until first local-ref use, and lazy v1 → v2 promotion is verified;
 - v0.3 local assets survive ordinary same-origin reload, a full browser restart using the same persistent profile, **and a recorded same-origin build-to-build deployment transition** without re-import;
 - loss/corruption of asset rows, local bytes, or payload metadata never redirects a Story ref or silently changes Story meaning; valid refs remain available in partial preview, while identity/digest/format/dimension mismatches are blocked and verified resource metadata is used for the final browser budget;
-- browser and CLI resolve the same content identity from different local stores;
+- browser and CLI resolve the same content identity from different local stores, and CLI render uses frozen staged bytes corresponding to that identity rather than reopening mutable source paths;
 - production proves import → persist → preview → browser restart recovery → render, a same-origin deploy transition without re-import, and delete/missing → same-category re-import → render recovery.
 
 ## Out of scope
