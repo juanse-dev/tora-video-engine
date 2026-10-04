@@ -146,9 +146,11 @@ local-assets/
   backgrounds/
 ~~~
 
-A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, builds a category-aware index, resolves required local references, and makes matched files available to the Remotion render without altering the Story or tracked bundled assets.
+A user can copy files there regardless of extension. The CLI stats them for the cheap byte-size bound, detects/validates static PNG/JPEG/WebP from content, validates dimensions, hashes accepted bytes, resolves required local references, and makes verified bytes available to Remotion without altering the Story or tracked bundled assets.
 
-CLI candidate inspection is bounded by `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1`: only one payload/file handle/decoder is materialized at once. `npm run video` deterministically early-stops each category after all required digests are found; `npm run assets` inventories the full library with the same bounded scanner. Recursive scanning uses `lstat()` semantics and **never follows file or directory symlinks**, so link traversal cannot escape the fixed category roots.
+CLI candidate inspection is bounded by `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1`: only one payload/file handle/decoder is materialized at once. For `npm run video`, when required bytes match a digest, those **same bytes are immediately written into the render's private staging snapshot before the candidate buffer is released**; runtime sources never reopen the original mutable source path. The command deterministically early-stops each category after all required digests have staged snapshots. `npm run assets` inventories the full library with the same bounded scanner.
+
+The symlink policy assumes the local asset tree is quiescent for one CLI command. Entries observed as symlinks via `lstat()` are skipped, and detectable stat/open identity changes are rejected before payload read where supported. v0.3 does not claim adversarial race-hardening against another process replacing directory entries between arbitrary filesystem syscalls on every OS/filesystem.
 
 This deliberately mirrors the browser model:
 
@@ -238,8 +240,9 @@ v0.3 is complete when:
 - Player/browser rendering uses only sequentially integrity-verified assets whose actual format/size/dimensions exactly match payloadMeta; defensive aggregate totals must equal preflight totals;
 - render-preparation races are closed by lock order `web-fs-render` → shared `asset-library`, followed by final canonical ref revalidation before source-map freeze;
 - missing Web Locks capability permits only safely discovered/directly-readable DB access; it performs no DB creation/migration/CRUD writes and disables local-ref MP4 rendering;
-- CLI inspection is bounded to one candidate payload at a time and render resolution may early-stop completed categories;
-- the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, never follows symlinks, and a required helper prints complete canonical refs;
+- CLI inspection is bounded to one candidate payload at a time and render resolution may early-stop completed categories after required staged snapshots exist;
+- CLI render stages required assets directly from the verified bytes that produced their digests, so later source-path mutation cannot silently change render content;
+- the CLI resolves the same refs from `local-assets/` by content even with absent/incorrect extensions, skips symlinks observed in a quiescent scan, rejects detectable file-identity changes, and a required helper prints complete canonical refs;
 - missing CLI assets fail before Remotion with actionable diagnostics;
 - the pinned Remotion browser-render transport is proven before full browser library rollout;
 - production remains static-hosted and backend-free.
