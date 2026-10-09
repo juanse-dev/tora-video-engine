@@ -213,3 +213,19 @@ test("built Player recovers when a later caption generation loads after a font f
     await page.evaluate(() => window.__toraUnhandledRejections),
   ).toEqual([]);
 });
+
+test("built Player renders the bundled reference Story without missing-asset placeholders", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const preview = page.locator(".preview-frame");
+
+  await expect(preview.locator("img").first()).toBeVisible();
+  await expect(
+    page.locator("[data-missing-local-asset]"),
+  ).toHaveCount(0);
+  await expect(
+    page.locator("[data-pending-local-asset]"),
+  ).toHaveCount(0);
+});

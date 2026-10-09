@@ -1,22 +1,32 @@
-import {AbsoluteFill, Img, staticFile} from "remotion";
-import {backgroundAssets, isBundledBackground} from "../assets.ts";
+import {AbsoluteFill, Img} from "remotion";
 import type {Background as BackgroundName} from "../story/types.ts";
+import {MissingAssetPlaceholder} from "./MissingAssetPlaceholder.tsx";
+import {useVisualAssetSrc} from "./visualAssetSource.tsx";
 
 type BackgroundProps = {
   background: BackgroundName;
 };
 
 export const Background = ({background}: BackgroundProps) => {
-  // Local refs are drawn by a later task; never fall back to a bundled image.
-  if (!isBundledBackground(background)) {
-    return null;
+  const asset = useVisualAssetSrc("background", background);
+
+  if (asset.kind !== "image") {
+    return (
+      <AbsoluteFill>
+        <MissingAssetPlaceholder
+          assetRef={asset.ref}
+          category={asset.category}
+          variant={asset.kind}
+        />
+      </AbsoluteFill>
+    );
   }
 
   return (
     <AbsoluteFill>
       <Img
         pauseWhenLoading
-        src={staticFile(backgroundAssets[background])}
+        src={asset.src}
         style={{
           height: "100%",
           objectFit: "cover",

@@ -1,7 +1,8 @@
 import type {CSSProperties} from "react";
-import {Img, staticFile} from "remotion";
-import {isBundledPose, toraPoseAssets} from "../assets.ts";
+import {Img} from "remotion";
 import type {Pose} from "../story/types.ts";
+import {MissingAssetPlaceholder} from "./MissingAssetPlaceholder.tsx";
+import {useVisualAssetSrc} from "./visualAssetSource.tsx";
 
 type ToraProps = {
   pose: Pose;
@@ -9,15 +10,22 @@ type ToraProps = {
 };
 
 export const Tora = ({pose, style}: ToraProps) => {
-  // Local refs are drawn by a later task; never fall back to a bundled image.
-  if (!isBundledPose(pose)) {
-    return null;
+  const asset = useVisualAssetSrc("pose", pose);
+
+  if (asset.kind !== "image") {
+    return (
+      <MissingAssetPlaceholder
+        assetRef={asset.ref}
+        category={asset.category}
+        variant={asset.kind}
+      />
+    );
   }
 
   return (
     <Img
       pauseWhenLoading
-      src={staticFile(toraPoseAssets[pose])}
+      src={asset.src}
       style={{
         display: "block",
         height: "100%",
