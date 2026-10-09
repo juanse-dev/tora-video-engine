@@ -186,7 +186,9 @@ When the user clicks **Render MP4** and the Story contains local refs:
 
 Stories without local refs skip steps 3–4's asset work (`prepareLocalAssets` returns `{ok: true, localAssetSources: undefined, release: () => {}}`).
 
-Why this is race-safe: a mutation that commits while step 3 runs, or while the tab waits for the global render lock, is seen by step 4.2. A mutation requested during step 4 waits for the shared lock. A mutation after step 4 changes IndexedDB but not the frozen map or the `Blob` objects the render already holds.
+The render lock keeps its existing non-blocking acquisition (`ifAvailable: true`): if another tab is rendering, the transaction returns `busy` immediately, as in v0.2. Do not change that into a queue.
+
+Why this is race-safe: a mutation that commits between step 3 and the moment the render lock is granted is seen by step 4.2. A mutation requested during step 4 waits for the shared lock. A mutation after step 4 changes IndexedDB but not the frozen map or the `Blob` objects the render already holds.
 
 ## Tasks
 
@@ -237,7 +239,7 @@ Why this is race-safe: a mutation that commits while step 3 runs, or while the t
 
 `tests/browser/local-asset-render-race.spec.mjs` (two pages, one context)
 
-- page B holds `tora-video-engine:web-fs-render` (via `navigator.locks.request` in `page.evaluate`); page A clicks Render and waits; page B deletes the required pose row (exclusive asset lock) and then releases the render lock; page A reports "Local assets changed…" and no `__remotion_render:` OPFS entry was created;
+- page B holds `tora-video-engine:web-fs-render` (via `navigator.locks.request` in `page.evaluate`); page A clicks Render and gets the existing v0.2 `busy` message; page B deletes the required pose row and releases the render lock; page A clicks Render again and is blocked by the missing-asset message (fresh step 3), with no `__remotion_render:` OPFS entry created. The "changed between verification and lock" window itself is covered deterministically by the `createLocalAssetRenderPreparation` unit tests (row deleted after resolution → `ok: false`) and the `startBrowserRenderTransaction` ordering test, not by browser timing;
 - page B deletes the pose row **after** page A's render has started (progress visible) → A's render still succeeds and its MP4 contains the pose;
 - after A's render completes, B's earlier deletion shows as missing in A without reload (refresh token).
 

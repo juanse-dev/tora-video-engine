@@ -114,10 +114,10 @@ Tora poses
 
 - Section headings are text (`Bundled`, `My assets`), not color only. Local cards carry a visible `Local` badge.
 - Bundled cards keep their current markup, class names and behavior.
-- Local cards are `<button aria-pressed>` like bundled cards; clicking applies `onChange({pose: ref})` / `onChange({background: ref})`.
+- A local card is a **non-interactive wrapper** (`<div className="asset-card local-asset-card">`) containing, as siblings: one selection `<button type="button" aria-pressed>` (thumbnail + label + `Local` badge; clicking applies `onChange({pose: ref})` / `onChange({background: ref})`), and a separate actions row with `Rename` and `Delete` buttons. Never nest buttons or inputs inside the selection button. Management buttons do not trigger selection (they are not descendants of the selection button, so no click bubbles into it).
 - Card thumbnails come only from `thumbnails` (ASSET-002). A card whose thumbnail is missing shows a neutral box with the label; it never loads the original blob.
 - Corrupt rows (decoded `corrupt`) render as "Damaged entry" cards: not selectable; only Delete is offered.
-- Rename: a `Rename` button turns the label into a text input with `Save` / `Cancel`; validation from `normalizeLocalAssetLabel`; Enter saves, Escape cancels. `not-found` result → message "This asset was deleted in another tab." and refresh.
+- Rename: the `Rename` button replaces the selection button's label area with a sibling text input plus `Save` / `Cancel` buttons (the selection button is hidden while editing); validation from `normalizeLocalAssetLabel`; Enter saves, Escape cancels. `not-found` result → message "This asset was deleted in another tab." and refresh.
 - Delete: a `Delete` button opens a dialog with the right confirmation text and buttons `Cancel` / `Delete asset` (in use: `Delete asset anyway`). The Story is never modified.
 
 ### Import
@@ -168,6 +168,7 @@ Reset project, YAML import/apply, editor mode switches, and Story deletion of sc
 - import an APNG / a >25 MiB file / a GIF (generate in the test into a temp dir) → error message, Story unchanged, no new card;
 - importing the same pose file again → "already in My assets" message, still one card;
 - rename → label changes, Story YAML unchanged;
+- clicking Rename or Delete does not change the selected scene's ref, and the card markup contains no nested interactive elements (no `button button`, `button input`);
 - delete unused asset → confirmation → card gone;
 - delete in-use asset → dialog shows the scene count; Cancel keeps everything; confirm → Story ref unchanged, missing card + Player placeholder, render blocked;
 - Import matching file with the exact fixture → resolves with no Story change; with a different fixture → mismatch dialog; Cancel writes nothing; "Use it as replacement" changes only the selected scene;

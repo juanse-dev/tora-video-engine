@@ -31,7 +31,7 @@ Browser → CLI: export YAML in the browser, copy the exact original image files
 - **Category folders are authoritative.** Files under `poses/` can only satisfy `local:pose:…`; under `backgrounds/` only `local:background:…`. The same file may be copied into both.
 - **Content first.** Every regular file is a candidate regardless of extension; extensions are ignored.
 - **One file at a time.** Inspection is strictly sequential; at most one file's bytes are in memory.
-- **Deterministic order.** Within a category, files are visited in ascending order of their `/`-separated relative path (plain string comparison). Subfolders are scanned recursively.
+- **Deterministic order.** Within a category, first enumerate every regular-file path recursively (paths only, no contents), then sort the complete `/`-separated relative paths with plain string comparison (`a.png` < `a/z.png`, because `.` < `/`), then inspect in that order. Sorting per directory while recursing is **not** equivalent and must not be used. Holding the path list in memory is fine; bytes are still read one file at a time.
 - **Symlinks are skipped** (classified with `lstat`). The tree is assumed not to change during one command; detectable changes between `lstat` and the opened handle reject that file. Defending against an adversarial concurrent process is out of scope.
 - **Snapshot on match.** When a candidate matches a required digest, its in-memory bytes are written to the staging dir **before** moving to the next file. The original path is never reopened, so later edits to the source cannot change what renders.
 
@@ -108,7 +108,9 @@ export const inventoryLocalAssets = async (root: string, deps?: ScanDeps): Promi
 
 ### Per-candidate steps (`scanCategory`)
 
-1. `lstat(path)`: symbolic link → skip silently (not yielded); directory → recurse (after sorting entries); not a regular file → skip.
+Enumeration (before any file is opened): walk the category folder with `readdir` + `lstat`; symbolic link → skip silently (never yielded, never traversed); directory → recurse; regular file → add `{relativePath, lstat}` to the list; anything else → skip. Then sort the list by `relativePath` as above. For each entry, in order:
+
+1. Re-use the enumeration `lstat` result for the checks below.
 2. `checkLocalAssetByteSize(lstat.size)` → yield rejection without opening.
 3. `handle = await open(path, "r")`; `fstat = await handle.stat()`. If `!fstat.isFile()`, or `fstat.size !== lstat.size`, or (`lstat.ino !== 0` and (`fstat.dev !== lstat.dev` or `fstat.ino !== lstat.ino`)) → close, yield `changed-during-scan`.
 4. `bytes = await handle.readFile()`; close the handle (in `finally`).
@@ -170,6 +172,7 @@ After `loadStory` (which already runs after stale-output removal):
 - pose fixture in `poses/` and background fixture in `backgrounds/` resolve to the refs computed by `sha256Hex` and to `createHash("sha256")` (browser/Node parity uses the same fixtures as ASSET-002);
 - the extensionless WebP fixture and a PNG renamed `photo.jpg` both resolve; a text file named `fake.png`, an APNG, a GIF, and a header claiming 9000×9000 are rejected in inventory and never satisfy a ref;
 - a 25 MiB + 1 byte file is rejected without `open` being called (spy via deps);
+- order: with `poses/a.png`, `poses/a/z.png` and `poses/b.png`, candidates are opened in exactly that order (full-path sort, not per-directory);
 - nested `poses/a/b/pic.png` resolves; the same bytes under `poses/a.png` and `poses/z.png` → staged once, inventory lists both, render is not ambiguous;
 - the background fixture placed only in `poses/` does not satisfy a background ref → `MissingLocalAssetsError` whose message matches the exact shape above (scenes, searched folder);
 - concurrency: instrumented `onCandidateStart`/`onCandidateEnd` never show more than one candidate in progress across 20 files;
