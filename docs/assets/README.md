@@ -82,7 +82,7 @@ These are closed. Implement them as written.
 
 | ID | Decision | Rationale / evidence |
 | --- | --- | --- |
-| D-1 | Browser runtime transport is **`blob:` object URLs** passed through the composition props. | Spike on 2026-10-08 with pinned `@remotion/web-renderer@4.0.529`, `allowHtmlInCanvas: false`, `outputTarget: "web-fs"`, system Chrome: a `<Img pauseWhenLoading src={blobUrl}>` rendered correctly into the MP4 for PNG, JPEG and WebP, including a 6000×8000 PNG (~600 ms for 30 frames). Frames were verified by extracting them with ffmpeg. ASSET-001 turns the spike into a committed regression test. |
+| D-1 | Browser runtime transport is **`blob:` object URLs** passed through the composition props. | Spike on 2026-10-08 with pinned `@remotion/web-renderer@4.0.529`, `allowHtmlInCanvas: false`, `outputTarget: "web-fs"`, system Chrome: a `<Img pauseWhenLoading src={blobUrl}>` rendered correctly into the MP4 for PNG, JPEG and WebP, including a 6000×8000 PNG (~600 ms for 30 frames). Frames were verified by extracting them with ffmpeg. ASSET-004 turns the spike into a committed regression test (MP4 golden). |
 | D-2 | CLI staging uses a **temporary public directory** passed with Remotion's `--public-dir`. It contains a copy of the repository `public/` plus `__local-assets/<category>/<digest>.<ext>`. | Spike on 2026-10-08: `remotion still … --public-dir=<tmp>` used images from the temporary directory. |
 | D-3 | Without Web Locks (`navigator.locks?.request` missing), **My assets is disabled**: the asset database is never opened, all local refs are `unavailable`, and import is hidden behind a capability message. | v0.2 already treats browser MP4 render as unsupported and persistence as session-only without Web Locks. A read-only degraded mode would add a lot of protocol for browsers that don't exist in practice. |
 | D-4 | Image validation is a **shared pure-TypeScript header inspector** (`src/localAssets/imageInspection.ts`) used by both browser and CLI. The browser additionally decodes with `createImageBitmap`. The CLI does **not** decode; an undecodable image that passes header inspection makes the Remotion render fail with a non-zero exit. | Node has no image decoder and v0.3 does not add a native dependency such as `sharp`. One parser guarantees identical accept/reject behavior in browser and CLI. |
@@ -143,10 +143,10 @@ Readiness of one local ref is one of: `ready` · `missing` · `corrupt` · `unav
 
 | Order | Spec | Deliverable | Depends on |
 | --- | --- | --- | --- |
-| 1 | [ASSET-001](./ASSET-001-asset-references-and-resolver.md) | Ref grammar, schema/types, persistence v2, composition contract, readiness/budget functions, transport regression test | v0.2 |
+| 1 | [ASSET-001](./ASSET-001-asset-references-and-resolver.md) | Ref grammar, schema/types, persistence v2, composition contract, readiness/budget functions | v0.2 |
 | 2 | [ASSET-002](./ASSET-002-browser-local-asset-storage.md) | Image inspection, hashing, storage interface + IndexedDB adapter, integrity verifier | ASSET-001 |
 | 3a | [ASSET-005](./ASSET-005-cli-local-assets.md) | CLI scanner, staging, `npm run assets` | ASSET-001, ASSET-002 tasks 1–2 (fixtures, image inspection, hashing) |
-| 3b | [ASSET-004](./ASSET-004-preview-and-browser-rendering.md) | Player + browser render with local sources, render lock hand-off | ASSET-001, ASSET-002 |
+| 3b | [ASSET-004](./ASSET-004-preview-and-browser-rendering.md) | Player + browser render with local sources, render lock hand-off, blob transport MP4 golden | ASSET-001, ASSET-002 |
 | 4 | [ASSET-003](./ASSET-003-import-and-library-ui.md) | My assets UI: import, rename, delete, missing-asset recovery | ASSET-002, ASSET-004 |
 | 5 | [ASSET-006](./ASSET-006-persistence-and-production-verification.md) | Cross-cutting end-to-end tests, then the human production gate | all |
 
