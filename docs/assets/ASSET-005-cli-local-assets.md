@@ -108,7 +108,7 @@ export const inventoryLocalAssets = async (root: string, deps?: ScanDeps): Promi
 
 ### Per-candidate steps (`scanCategory`)
 
-Enumeration (before any file is opened): walk the category folder with `readdir` + `lstat`; symbolic link → skip silently (never yielded, never traversed); directory → recurse; regular file → add `{relativePath, lstat}` to the list; anything else → skip. Then sort the list by `relativePath` as above. For each entry, in order:
+Enumeration (before any file is opened): if the category folder does not exist (`ENOENT`), or is not a directory, the category has **no candidates** — no error. Otherwise walk it with `readdir` + `lstat`; symbolic link → skip silently (never yielded, never traversed); directory → recurse; regular file → add `{relativePath, lstat}` to the list; anything else → skip. Then sort the list by `relativePath` as above. For each entry, in order:
 
 1. Re-use the enumeration `lstat` result for the checks below.
 2. `checkLocalAssetByteSize(lstat.size)` → yield rejection without opening.
@@ -148,7 +148,7 @@ local-assets/backgrounds/old.gif
   skipped: Only static PNG, JPEG and WebP images are supported.
 ~~~
 
-If the root does not exist: print `No local-assets/ folder found. Create local-assets/poses/ and local-assets/backgrounds/ and copy images into them.` and exit 0. Exit 0 when only some files are rejected; exit 1 only on unexpected errors.
+If the root does not exist: print `No local-assets/ folder found. Create local-assets/poses/ and local-assets/backgrounds/ and copy images into them.` and exit 0. If the root exists but a category folder is missing (the normal fresh-checkout state: only `local-assets/README.md` is committed), print `local-assets/poses/ (folder not found — create it and copy images into it)` for that category and continue; exit 0. Exit 0 when only some files are rejected; exit 1 only on unexpected errors.
 
 ### `scripts/render.ts` changes
 
@@ -168,6 +168,7 @@ After `loadStory` (which already runs after stale-output removal):
 
 `tests/cli-local-assets.test.mjs` (temp directories via `mkdtemp`; fixtures from `tests/fixtures/local-assets/`)
 
+- root with only `README.md` (no `poses/`, no `backgrounds/`): `inventoryLocalAssets` returns empty lists without throwing and `npm run assets` exits 0; a Story with a local pose ref fails with `MissingLocalAssetsError` (not `ENOENT`);
 - bundled-only Story: `stageLocalAssetsForStory` is not called / root not required; `buildRenderArgs` without `publicDir` is identical to today;
 - pose fixture in `poses/` and background fixture in `backgrounds/` resolve to the refs computed by `sha256Hex` and to `createHash("sha256")` (browser/Node parity uses the same fixtures as ASSET-002);
 - the extensionless WebP fixture and a PNG renamed `photo.jpg` both resolve; a text file named `fake.png`, an APNG, a GIF, and a header claiming 9000×9000 are rejected in inventory and never satisfy a ref;

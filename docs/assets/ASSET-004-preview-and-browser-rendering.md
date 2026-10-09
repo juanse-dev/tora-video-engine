@@ -70,7 +70,7 @@ export const createLocalAssetRenderPreparation = (input: {
   store: AssetLibraryStore;
   locks: LockManager;
   pool: ObjectUrlPool;
-}): (() => Promise<LocalAssetRenderPreparation>);
+}): ((signal: AbortSignal) => Promise<LocalAssetRenderPreparation>);
 
 /** Message for the render button area, or null when local assets allow rendering. */
 export const describeLocalAssetRenderBlock = (
@@ -164,7 +164,7 @@ export type LocalAssetRenderPreparation =
   | {ok: false; message: string};
 
 // new optional option of startBrowserRenderTransaction:
-prepareLocalAssets?: () => Promise<LocalAssetRenderPreparation>;
+prepareLocalAssets?: (signal: AbortSignal) => Promise<LocalAssetRenderPreparation>; // called with options.signal
 ~~~
 
 `startBrowserRenderTransaction` calls `prepareLocalAssets` **immediately after the render lock lease is acquired and before the pre-render OPFS cleanup**. On `{ok: false}` it releases the lease and returns a new outcome `{kind: "assets-changed", message}` without touching OPFS. If `prepareLocalAssets` **rejects** (IndexedDB read error, Web Lock request failure, abort), wrap the call in `try/catch`: release the lease, never touch OPFS, and return `{kind: "failure", error}` (or `{kind: "cancelled"}` when `signal.aborted`). The lease must never stay held after a failed preparation. On success it passes `localAssetSources` to `renderStory` and calls `release()` after the post-render cleanup (whatever the outcome, including cancel and cleanup-blocked).
@@ -177,7 +177,7 @@ When the user clicks **Render MP4** and the Story contains local refs:
 2. Snapshot the Active Story and enter the existing `rendering` phase exactly as `startBrowserRender` in `src/web/App.tsx` does today (`renderInFlightRef`, `AbortController`, `setRenderUi({phase: "rendering", …})`). From this point `authoringLocked` is true, so the Story and every asset control are frozen for the **whole** preparation, not only the encode. Use the message `"Checking local assets…"` while step 3 runs.
 3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache, {signal: controller.signal})`. The signal is checked before every digest, so Cancel Render during preparation stops after the current payload. If not `resolved` with `allReady`, or cancelled → leave the rendering phase through the existing failure/cancel paths (which unlock authoring) and show the block message.
 4. Call `startBrowserRenderTransaction(snapshot, {…, prepareLocalAssets: createLocalAssetRenderPreparation({resolved, store, locks, pool})})`. The returned function:
-   1. runs inside `withAssetLibraryLock(locks, "shared", …)`;
+   1. runs inside `withAssetLibraryLock(locks, "shared", …, {signal})`, so Cancel Render aborts a still-pending shared-lock request (for example while another tab holds the exclusive lock during a blocked upgrade) instead of waiting for it; the rejection then follows the try/catch path above (lease released, outcome `cancelled`);
    2. for every usage: `getAssetRow(ref)` must still be `present`, and `getPayloadMeta(digest)` must still be `present` and equal (mimeType, byteSize, width, height) to the payload verified in step 3. Re-checking the **row per ref** matters: deleting `local:pose:sha256:A` must be caught even if `local:background:sha256:A` keeps the bytes alive;
    3. if anything changed → `{ok: false, message: "Local assets changed while preparing the render. Try again."}`;
    4. otherwise acquire pool URLs from the blobs obtained in step 3 (one lease for this render), build the map, `Object.freeze` it, and return `{ok: true, localAssetSources, release}`;
@@ -228,6 +228,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - `renderStoryMediaOnWeb` passes `localAssetSources` in both `defaultProps` and `inputProps`;
 - `prepareLocalAssets` runs after `acquireLock` and before the first `cleanup` call (record call order);
 - `{ok: false}` → outcome `assets-changed`, lease released, `cleanup` and `renderStory` never called;
+- aborting the signal while the shared asset-lock request is still waiting (fake `LockManager` that never grants) → the request is aborted, outcome `cancelled`, render lease released, OPFS untouched;
 - `prepareLocalAssets` rejecting with an error → outcome `failure`, lease released, `cleanup` and `renderStory` never called; a second transaction afterwards acquires the lock normally (not `busy`); rejecting after abort → `cancelled`;
 - `release()` is called after post-cleanup on success, failure and cancel;
 - (browser, `local-asset-preview.spec.mjs`) while a Story with local refs is in the "Checking local assets…" preparation step, the authoring fieldset is disabled, and Cancel Render returns to the editable state without creating OPFS entries;

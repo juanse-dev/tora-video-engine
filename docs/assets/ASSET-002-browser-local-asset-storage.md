@@ -208,6 +208,7 @@ export const withAssetLibraryLock = <T>(
   locks: LockManager,
   mode: "exclusive" | "shared",
   task: () => Promise<T>,
+  options?: {signal?: AbortSignal}, // forwarded to locks.request: aborting while still waiting rejects with AbortError
 ): Promise<T>;
 
 export type AssetLibraryMessage = {
