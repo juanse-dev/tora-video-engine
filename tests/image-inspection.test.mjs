@@ -448,6 +448,52 @@ test("static VP8X with ICCP, EXIF and XMP metadata chunks is accepted", () => {
   assert.deepEqual(accepted(bytes), {mimeType: "image/webp", width: 64, height: 32});
 });
 
+/** A VP8X chunk with an arbitrary declared size around a 10-byte payload. */
+const buildVp8xWithDeclaredSize = (declaredSize, ...trailing) => {
+  const header = concatBytes(
+    new TextEncoder().encode("VP8X"),
+    new Uint8Array([
+      declaredSize & 0xff,
+      (declaredSize >>> 8) & 0xff,
+      (declaredSize >>> 16) & 0xff,
+      (declaredSize >>> 24) & 0xff,
+    ]),
+    new Uint8Array([0, 0, 0, 0, 9, 0, 0, 9, 0, 0]), // flags, reserved, 10x10 canvas
+  );
+  const body = concatBytes(new TextEncoder().encode("WEBP"), header, ...trailing);
+
+  return concatBytes(
+    new TextEncoder().encode("RIFF"),
+    new Uint8Array([body.length & 0xff, (body.length >>> 8) & 0xff, 0, 0]),
+    body,
+  );
+};
+
+test("malformed: VP8X chunk size 0xFFFFFFFF cannot hide an ANIM chunk behind it", () => {
+  const bytes = buildVp8xWithDeclaredSize(
+    0xffffffff,
+    webpChunk("ANIM", new Uint8Array(6)),
+  );
+  assert.equal(rejected(bytes), "malformed");
+});
+
+test("malformed: VP8X chunk size 11 (anything but exactly 10)", () => {
+  const bytes = buildVp8xWithDeclaredSize(
+    11,
+    new Uint8Array(2), // the 11th payload byte and its pad byte
+    webpChunk("VP8L", concatBytes(new Uint8Array([0x2f]), new Uint8Array(12))),
+  );
+  assert.equal(rejected(bytes), "malformed");
+});
+
+test("VP8X chunk size exactly 10 is accepted", () => {
+  const bytes = buildVp8xWithDeclaredSize(
+    10,
+    webpChunk("VP8L", concatBytes(new Uint8Array([0x2f]), new Uint8Array(12))),
+  );
+  assert.deepEqual(accepted(bytes), {mimeType: "image/webp", width: 10, height: 10});
+});
+
 test("malformed: webp chunk too small for its frame header", () => {
   const tinyVp8 = concatBytes(
     new TextEncoder().encode("RIFF"),

@@ -8,6 +8,7 @@ import {
   LOCAL_ASSET_PAGE_SIZE,
   MAX_LOCAL_ASSET_LABEL_LENGTH,
   MAX_THUMBNAIL_DIMENSION,
+  THUMBNAIL_MIME_TYPES,
 } from "./constants.ts";
 import {
   withAssetLibraryLock,
@@ -34,6 +35,7 @@ export type AssetLibrary = {
   channel: {post(message: AssetLibraryMessage): void};
 };
 
+// The opposite-direction flag is inferred from the cursor, so callers must handle an empty page.
 export const listLocalAssetPage = async (
   store: AssetLibraryStore,
   category: LocalAssetCategory,
@@ -146,8 +148,6 @@ export const deleteLocalAsset = (
 ): Promise<AssetLibraryMutationResult> =>
   mutateLibrary(library, {kind: "delete", ref});
 
-const THUMBNAIL_MIME_TYPES: readonly string[] = ["image/png", "image/webp"];
-
 /**
  * Record metadata does not bound what the Blob really encodes, so the bytes are
  * inspected before the caller may create an object URL (at most 512 KiB, cheap).
@@ -175,7 +175,9 @@ export const loadThumbnailForDisplay = async (
 
   if (
     !inspected.ok ||
-    !THUMBNAIL_MIME_TYPES.includes(inspected.image.mimeType) ||
+    !(THUMBNAIL_MIME_TYPES as readonly string[]).includes(
+      inspected.image.mimeType,
+    ) ||
     inspected.image.width > MAX_THUMBNAIL_DIMENSION ||
     inspected.image.height > MAX_THUMBNAIL_DIMENSION ||
     inspected.image.width !== width ||
@@ -184,5 +186,6 @@ export const loadThumbnailForDisplay = async (
     return {ok: false};
   }
 
-  return {ok: true, blob};
+  // The stored Blob.type is untrusted; hand out a handle typed by the bytes.
+  return {ok: true, blob: blob.slice(0, blob.size, inspected.image.mimeType)};
 };

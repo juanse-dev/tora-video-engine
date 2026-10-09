@@ -586,3 +586,60 @@ test("mixed outcomes are reported per digest and duplicates are verified once", 
   assert.equal(results.get(missing).reason, "missing");
   assert.equal(store.reads.blobs, 1);
 });
+
+test("the verified blob carries the inspected type even when the stored Blob type is wrong or empty", async () => {
+  for (const storedType of ["", "text/html", "image/jpeg"]) {
+    const store = createMemoryAssetStore();
+    const bytes = pngBytes(4, 3);
+    const {digest} = await putPayload(store, bytes, {
+      blob: new Blob([bytes], {type: storedType}),
+    });
+
+    const result = await verifyPayload(store, digest);
+
+    assert.equal(result.ok, true, storedType);
+    assert.equal(result.blob.type, "image/png", storedType);
+    assert.equal(result.blob.size, bytes.length);
+    assert.deepEqual(new Uint8Array(await result.blob.arrayBuffer()), bytes);
+  }
+});
+
+test("the integrity cache stores and returns the re-typed blob", async () => {
+  const store = createMemoryAssetStore();
+  const bytes = pngBytes(4, 3);
+  const {digest} = await putPayload(store, bytes, {
+    blob: new Blob([bytes], {type: "text/html"}),
+  });
+  const cache = new IntegrityCache();
+
+  const first = await verifyPayloadsSequentially(store, [digest], cache);
+
+  assert.equal(first.get(digest).blob.type, "image/png");
+  assert.equal(cache.get(digest).blob.type, "image/png");
+
+  const second = await verifyPayloadsSequentially(store, [digest], cache);
+
+  assert.equal(second.get(digest).ok, true);
+  assert.equal(second.get(digest).blob.type, "image/png");
+});
+
+test("a blob whose bytes cannot be read is corrupt and its digest is not cached", async () => {
+  const store = createMemoryAssetStore();
+  const bytes = pngBytes(4, 3);
+  const {digest} = await putPayload(store, bytes);
+  const blob = new Blob([bytes], {type: "image/png"});
+
+  blob.arrayBuffer = async () => {
+    throw new DOMException("The blob could not be read.", "NotReadableError");
+  };
+  store.setRaw("blobs", digest, {blob});
+
+  const cache = new IntegrityCache();
+  const results = await verifyPayloadsSequentially(store, [digest], cache);
+  const result = results.get(digest);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "corrupt");
+  assert.match(result.detail, /could not be read/);
+  assert.equal(cache.get(digest), undefined);
+});

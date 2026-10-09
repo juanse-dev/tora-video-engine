@@ -116,7 +116,8 @@ export const verifyPayload = async (
       width: meta.width,
       height: meta.height,
     },
-    blob,
+    // The stored Blob.type is untrusted; the bytes were just checked against meta.
+    blob: blob.slice(0, blob.size, meta.mimeType),
   };
 };
 

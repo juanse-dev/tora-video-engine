@@ -637,6 +637,7 @@ test.describe("IndexedDB asset library", () => {
         const verified = await harness(page, "verify", imported.ref);
 
         expect(verified.ok).toBe(true);
+        expect(verified.blobType).toBe(fixture.mimeType);
         expect(verified.payload).toEqual({
           digest: imported.fixtureSha256,
           mimeType: fixture.mimeType,

@@ -5,10 +5,10 @@ import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {ASSET_LIBRARY_LOCK} from "../src/web/assetLibrary/constants.ts";
 import {openAssetLibrary} from "../src/web/assetLibrary/coordination.ts";
 import {
-  LocalAssetLibraryError,
   openIndexedDbAssetStore,
   toLocalAssetLibraryError,
 } from "../src/web/assetLibrary/indexedDbStore.ts";
+import {LocalAssetLibraryError} from "../src/web/assetLibrary/store.ts";
 import {createMemoryLockManager} from "./helpers/memoryAssetStore.mjs";
 
 const BLOCKED_MESSAGE = "Close other Tora tabs to finish updating My assets.";
@@ -200,6 +200,7 @@ test("a successful open creates only missing stores and releases the lock", asyn
 
   assert.equal(status.kind, "ready");
   assert.equal(typeof request.result.onversionchange, "function");
+  assert.equal(typeof request.result.onclose, "function");
   assert.deepEqual(changes, []);
   await flush();
   assert.equal(locks.held(ASSET_LIBRARY_LOCK).exclusive, false);
@@ -278,7 +279,7 @@ test("a transaction aborted with QuotaExceededError surfaces as storage-full", a
 
   await assert.rejects(store.apply(importMutation()), (error) => {
     assert.ok(error instanceof LocalAssetLibraryError);
-    assert.equal(error.name, "QuotaExceededError");
+    assert.equal(error.name, "LocalAssetLibraryError");
     assert.equal(error.code, "storage-full");
     return true;
   });
@@ -291,7 +292,7 @@ test("other transaction failures surface as storage-error", async () => {
 
   await assert.rejects(store.apply(importMutation()), (error) => {
     assert.ok(error instanceof LocalAssetLibraryError);
-    assert.notEqual(error.name, "QuotaExceededError");
+    assert.equal(error.name, "LocalAssetLibraryError");
     assert.equal(error.code, "storage-error");
     return true;
   });
@@ -307,6 +308,36 @@ test("error mapping keeps library errors and classifies by name", () => {
   );
   assert.equal(toLocalAssetLibraryError("weird").code, "storage-error");
   assert.equal(toLocalAssetLibraryError(null).code, "storage-error");
+});
+
+test("the connection handlers exist the moment the open request succeeds", async () => {
+  const locks = createMemoryLockManager();
+  const factory = createFakeFactory();
+  const opening = openIndexedDbAssetStore({indexedDB: factory, locks});
+
+  await flush();
+
+  const database = createFakeDatabase("complete");
+
+  factory.requests[0].result = database;
+  factory.requests[0].onsuccess();
+  // Nothing has been awaited yet: a versionchange event arriving right now
+  // must already find both handlers.
+  assert.equal(typeof database.onversionchange, "function");
+  assert.equal(typeof database.onclose, "function");
+
+  const store = await opening;
+
+  database.onversionchange();
+  await assert.rejects(store.countAssets("pose"), /upgraded in another tab.*reload/is);
+});
+
+test("an unexpected close makes later calls ask for a reload", async () => {
+  const database = createFakeDatabase("complete");
+  const store = await openFakeStore(database);
+
+  database.onclose();
+  await assert.rejects(store.countAssets("pose"), /closed unexpectedly.*reload/is);
 });
 
 test("versionchange closes the connection and later calls ask for a reload", async () => {

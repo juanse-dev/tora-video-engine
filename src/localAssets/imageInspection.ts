@@ -65,8 +65,20 @@ const hasBytesAt = (bytes: Uint8Array, offset: number, expected: number[]) => {
 const asciiBytes = (text: string) =>
   Array.from(text, (character) => character.charCodeAt(0));
 
-const hasAscii = (bytes: Uint8Array, offset: number, text: string) =>
-  hasBytesAt(bytes, offset, asciiBytes(text));
+// Four-character tags are built once so inspection allocates nothing per call.
+const TAG_IHDR = asciiBytes("IHDR");
+const TAG_IDAT = asciiBytes("IDAT");
+const TAG_ACTL = asciiBytes("acTL");
+const TAG_RIFF = asciiBytes("RIFF");
+const TAG_WEBP = asciiBytes("WEBP");
+const TAG_VP8 = asciiBytes("VP8 ");
+const TAG_VP8L = asciiBytes("VP8L");
+const TAG_VP8X = asciiBytes("VP8X");
+const TAG_ANIM = asciiBytes("ANIM");
+const TAG_ANMF = asciiBytes("ANMF");
+
+const hasTag = (bytes: Uint8Array, offset: number, tag: number[]) =>
+  hasBytesAt(bytes, offset, tag);
 
 // Callers must have verified that the read is within bounds.
 const u16be = (bytes: Uint8Array, offset: number) =>
@@ -107,7 +119,7 @@ const parsePng = (bytes: Uint8Array): ParsedHeader => {
     return MALFORMED;
   }
 
-  if (u32be(bytes, 8) !== 13 || !hasAscii(bytes, 12, "IHDR")) {
+  if (u32be(bytes, 8) !== 13 || !hasTag(bytes, 12, TAG_IHDR)) {
     return MALFORMED;
   }
 
@@ -123,11 +135,11 @@ const parsePng = (bytes: Uint8Array): ParsedHeader => {
 
     const length = u32be(bytes, offset);
 
-    if (hasAscii(bytes, offset + 4, "acTL")) {
+    if (hasTag(bytes, offset + 4, TAG_ACTL)) {
       return ANIMATED;
     }
 
-    if (hasAscii(bytes, offset + 4, "IDAT")) {
+    if (hasTag(bytes, offset + 4, TAG_IDAT)) {
       return image("image/png", width, height);
     }
 
@@ -220,7 +232,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     return MALFORMED;
   }
 
-  if (!hasAscii(bytes, 8, "WEBP")) {
+  if (!hasTag(bytes, 8, TAG_WEBP)) {
     return UNSUPPORTED; // some other RIFF container
   }
 
@@ -231,7 +243,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
   const dataStart = WEBP_FIRST_CHUNK + WEBP_CHUNK_HEADER;
   const size = u32le(bytes, WEBP_FIRST_CHUNK + 4);
 
-  if (hasAscii(bytes, WEBP_FIRST_CHUNK, "VP8 ")) {
+  if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8)) {
     // Frame tag (3) + start code (3) + width (2) + height (2).
     if (size < 10 || dataStart + 10 > bytes.length) {
       return MALFORMED;
@@ -248,7 +260,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     );
   }
 
-  if (hasAscii(bytes, WEBP_FIRST_CHUNK, "VP8L")) {
+  if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8L)) {
     // Signature (1) + packed width/height (4).
     if (size < 5 || dataStart + 5 > bytes.length || bytes[dataStart] !== 0x2f) {
       return MALFORMED;
@@ -263,9 +275,11 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     );
   }
 
-  if (hasAscii(bytes, WEBP_FIRST_CHUNK, "VP8X")) {
+  if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8X)) {
     // Flags (1) + reserved (3) + canvas width-1 (3) + canvas height-1 (3).
-    if (size < 10 || dataStart + 10 > bytes.length) {
+    // The chunk is exactly 10 bytes; any other size is a damaged file, and it
+    // would otherwise let the chunk scan below skip past (or hide) an ANIM chunk.
+    if (size !== 10 || dataStart + 10 > bytes.length) {
       return MALFORMED;
     }
 
@@ -279,14 +293,14 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     // Scan the remaining top-level chunks for animation chunks. A chunk that
     // overruns the data means a damaged file: `malformed`. A missing final pad
     // byte is tolerated.
-    let offset = dataStart + size + (size & 1);
+    let offset = dataStart + size;
 
     while (offset < bytes.length) {
       if (offset + WEBP_CHUNK_HEADER > bytes.length) {
         return MALFORMED;
       }
 
-      if (hasAscii(bytes, offset, "ANIM") || hasAscii(bytes, offset, "ANMF")) {
+      if (hasTag(bytes, offset, TAG_ANIM) || hasTag(bytes, offset, TAG_ANMF)) {
         return ANIMATED;
       }
 
@@ -317,7 +331,7 @@ const parseHeader = (bytes: Uint8Array): ParsedHeader => {
     return parseJpeg(bytes);
   }
 
-  if (hasAscii(bytes, 0, "RIFF")) {
+  if (hasTag(bytes, 0, TAG_RIFF)) {
     return parseWebp(bytes);
   }
 

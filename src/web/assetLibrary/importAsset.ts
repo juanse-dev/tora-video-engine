@@ -18,7 +18,7 @@ import {
   type AssetLibraryMessage,
 } from "./coordination.ts";
 import type {ThumbnailRecord} from "./records.ts";
-import type {AssetLibraryStore} from "./store.ts";
+import {LocalAssetLibraryError, type AssetLibraryStore} from "./store.ts";
 import {createThumbnail} from "./thumbnails.ts";
 
 export type ImportPhase = "reading" | "validating" | "hashing" | "storing";
@@ -231,8 +231,12 @@ export const prepareLocalAssetImport = async (
   };
 };
 
+const isStorageFull = (error: unknown): boolean =>
+  (error instanceof LocalAssetLibraryError && error.code === "storage-full") ||
+  (error as {name?: unknown} | null)?.name === "QuotaExceededError";
+
 const toStorageError = (error: unknown): LocalAssetImportError =>
-  error instanceof Error && error.name === "QuotaExceededError"
+  isStorageFull(error)
     ? new LocalAssetImportError(
         "storage-full",
         "There is not enough browser storage left for this image.",

@@ -9,7 +9,11 @@ import {
   SHA256_HEX_PATTERN,
   type LocalAssetRef,
 } from "../../localAssets/refs.ts";
-import {MAX_THUMBNAIL_BYTES, MAX_THUMBNAIL_DIMENSION} from "./constants.ts";
+import {
+  MAX_THUMBNAIL_BYTES,
+  MAX_THUMBNAIL_DIMENSION,
+  THUMBNAIL_MIME_TYPES,
+} from "./constants.ts";
 
 export type AssetRow = {label: string; originalFilename: string; createdAt: string}; // ISO 8601
 export type ThumbnailRecord = {
@@ -250,7 +254,10 @@ export const decodeThumbnail = (
     return corrupt("blob is not a Blob");
   }
 
-  if (typeof mimeType !== "string" || !PAYLOAD_MIME_TYPES.includes(mimeType)) {
+  if (
+    typeof mimeType !== "string" ||
+    !(THUMBNAIL_MIME_TYPES as readonly string[]).includes(mimeType)
+  ) {
     return corrupt("unknown mimeType");
   }
 

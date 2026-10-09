@@ -33,6 +33,7 @@ import {
   decodePayloadMeta,
   decodeThumbnail,
 } from "../src/web/assetLibrary/records.ts";
+import {LocalAssetLibraryError} from "../src/web/assetLibrary/store.ts";
 import {fitWithin} from "../src/web/assetLibrary/thumbnails.ts";
 import {
   buildJpeg,
@@ -252,6 +253,7 @@ test("decodeThumbnail bounds dimensions and size on read", () => {
     {...thumb, width: 1.5},
     {...thumb, height: Number.NaN},
     {...thumb, mimeType: "image/gif"},
+    {...thumb, mimeType: "image/jpeg"}, // payloads may be JPEG, thumbnails may not
     {...thumb, mimeType: undefined},
     {...thumb, blob: "bytes"},
     {...thumb, blob: new Blob([])},
@@ -868,6 +870,38 @@ test("loadThumbnailForDisplay rejects thumbnails whose real bytes disagree with 
   }
 });
 
+test("loadThumbnailForDisplay returns a blob typed by the inspected bytes, not the stored Blob type", async () => {
+  for (const storedType of ["", "text/html", "image/jpeg"]) {
+    const png = storeWithThumbnail(buildPng({width: 64, height: 32}));
+
+    png.setRaw("thumbnails", DIGEST, {
+      blob: new Blob([buildPng({width: 64, height: 32})], {type: storedType}),
+      mimeType: "image/png",
+      width: 64,
+      height: 32,
+    });
+
+    const result = await loadThumbnailForDisplay(png, DIGEST);
+
+    assert.equal(result.ok, true, storedType);
+    assert.equal(result.blob.type, "image/png", storedType);
+  }
+
+  const webp = storeWithThumbnail(buildWebpVp8({width: 256, height: 200}), {
+    mimeType: "image/webp",
+    width: 256,
+    height: 200,
+  });
+  const result = await loadThumbnailForDisplay(webp, DIGEST);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.blob.type, "image/webp");
+});
+
+test("THUMBNAIL_MIME_TYPES allows PNG and WebP only", () => {
+  assert.deepEqual([...constants.THUMBNAIL_MIME_TYPES], ["image/png", "image/webp"]);
+});
+
 /* ---------------------------------------------------------- coordination */
 
 test("withAssetLibraryLock requests the asset library lock in the given mode", async () => {
@@ -922,7 +956,7 @@ test("exclusive tasks run one at a time and shared tasks overlap", async () => {
   await Promise.all(shared);
 });
 
-test("withAssetLibraryLock forwards the signal and propagates task errors", async () => {
+test("withAssetLibraryLock forwards the signal and propagates task errors", {timeout: 5000}, async () => {
   const locks = createMemoryLockManager();
   let release;
   const holder = withAssetLibraryLock(
@@ -1337,6 +1371,31 @@ test("committing the same bytes again reports created=false and still announces"
     false,
   );
   assert.equal(library.posted.length, 2);
+});
+
+test("commit maps the adapter's storage-full error to storage-full without impersonating QuotaExceededError", async () => {
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const adapterFull = new LocalAssetLibraryError("storage-full", "Browser storage is full.");
+
+  assert.equal(adapterFull.name, "LocalAssetLibraryError");
+  assert.equal(adapterFull.code, "storage-full");
+
+  const full = makeLibrary();
+
+  full.store.failNextApply(adapterFull);
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, full, {storage: undefined}),
+    "storage-full",
+  );
+
+  const other = makeLibrary();
+
+  other.store.failNextApply(new LocalAssetLibraryError("storage-error", "Broken."));
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, other, {storage: undefined}),
+    "storage-error",
+  );
 });
 
 test("commit maps quota failures to storage-full and other failures to storage-error", async () => {

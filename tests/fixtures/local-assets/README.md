@@ -9,7 +9,7 @@ inventory and must never be referenced from `public/` or story data.
 | --- | --- | --- | --- |
 | `pose-magenta.png` | PNG, RGBA | 600x900 | Transparent background with an opaque magenta rectangle (x 150-449, y 225-674). |
 | `background-cyan.jpg` | JPEG | 1080x1920 | Top half cyan, bottom half yellow. |
-| `background-noext` | static WebP (extended, `VP8X` + `VP8 `), **no file extension** | 1080x1920 | Same picture as the JPEG. The missing extension is deliberate: inspection must work from bytes only. |
+| `background-noext` | static WebP (extended, `VP8X` + `ICCP` + `VP8 `), **no file extension** | 1080x1920 | Same picture as the JPEG. The missing extension is deliberate: inspection must work from bytes only. |
 
 ## Regenerating
 

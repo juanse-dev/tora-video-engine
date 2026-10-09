@@ -20,38 +20,13 @@ import {
   type Decoded,
   type ThumbnailRecord,
 } from "./records.ts";
-import type {
-  AssetLibraryMutation,
-  AssetLibraryMutationResult,
-  AssetLibraryStore,
-  AssetPageCursor,
+import {
+  LocalAssetLibraryError,
+  type AssetLibraryMutation,
+  type AssetLibraryMutationResult,
+  type AssetLibraryStore,
+  type AssetPageCursor,
 } from "./store.ts";
-
-export type LocalAssetLibraryErrorCode = "storage-full" | "storage-error";
-
-/**
- * Storage failure from the IndexedDB adapter. A `storage-full` error keeps the
- * name "QuotaExceededError" so callers that classify by `error.name` (the
- * import pipeline) and callers that read `code` agree.
- */
-export class LocalAssetLibraryError extends Error {
-  code: LocalAssetLibraryErrorCode;
-
-  constructor(
-    code: LocalAssetLibraryErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(message);
-    this.code = code;
-    this.name =
-      code === "storage-full" ? "QuotaExceededError" : "LocalAssetLibraryError";
-
-    if (cause !== undefined) {
-      (this as {cause?: unknown}).cause = cause;
-    }
-  }
-}
 
 /** Maps a quota failure to `storage-full` and every other failure to `storage-error`. */
 export const toLocalAssetLibraryError = (
@@ -104,15 +79,22 @@ const requestToPromise = <T>(request: IDBRequest<T>): Promise<T> =>
     request.onerror = () => reject(request.error);
   });
 
+/** Shared between the connection handlers (set up on open) and the store. */
+type ConnectionState = {unusable: LocalAssetLibraryError | null};
+
 /**
  * The open request that may create or upgrade the database runs while holding
  * the library lock exclusively. An IDBOpenDBRequest cannot be cancelled, so the
  * lock is kept until the request settles, including while it is blocked.
+ *
+ * `versionchange` and `close` handlers are attached inside `onsuccess`, before
+ * the promise resolves, so no event can arrive while they are still missing.
  */
 const openConnection = (
   factory: IDBFactory,
   locks: LockManager,
   onBlocked: (() => void) | undefined,
+  state: ConnectionState,
 ): Promise<IDBDatabase> =>
   locks.request(
     ASSET_LIBRARY_LOCK,
@@ -133,7 +115,25 @@ const openConnection = (
         request.onblocked = () => {
           onBlocked?.();
         };
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          const database = request.result;
+
+          // Never hold up another tab's upgrade: close at once, and refuse later calls.
+          database.onversionchange = () => {
+            state.unusable ??= new LocalAssetLibraryError(
+              "storage-error",
+              "My assets was upgraded in another tab. Reload this page to continue.",
+            );
+            database.close();
+          };
+          database.onclose = () => {
+            state.unusable ??= new LocalAssetLibraryError(
+              "storage-error",
+              "The My assets connection was closed unexpectedly. Reload this page to continue.",
+            );
+          };
+          resolve(database);
+        };
         request.onerror = () => reject(request.error);
       }),
   ) as Promise<IDBDatabase>;
@@ -198,23 +198,8 @@ export const openIndexedDbAssetStore = async (
     throw new Error("Web Locks are not available");
   }
 
-  const database = await openConnection(factory, locks, deps.onBlocked);
-  let unusable: LocalAssetLibraryError | null = null;
-
-  // Never hold up another tab's upgrade: close at once, and refuse later calls.
-  database.onversionchange = () => {
-    unusable ??= new LocalAssetLibraryError(
-      "storage-error",
-      "My assets was upgraded in another tab. Reload this page to continue.",
-    );
-    database.close();
-  };
-  database.onclose = () => {
-    unusable ??= new LocalAssetLibraryError(
-      "storage-error",
-      "The My assets connection was closed unexpectedly. Reload this page to continue.",
-    );
-  };
+  const state: ConnectionState = {unusable: null};
+  const database = await openConnection(factory, locks, deps.onBlocked, state);
 
   const transact = <T>(
     storeNames: StoreName | StoreName[],
@@ -225,8 +210,8 @@ export const openIndexedDbAssetStore = async (
       let transaction: IDBTransaction;
 
       try {
-        if (unusable !== null) {
-          throw unusable;
+        if (state.unusable !== null) {
+          throw state.unusable;
         }
 
         transaction = database.transaction(storeNames, mode);
@@ -280,8 +265,8 @@ export const openIndexedDbAssetStore = async (
     });
 
   const assertUsable = () => {
-    if (unusable !== null) {
-      throw unusable;
+    if (state.unusable !== null) {
+      throw state.unusable;
     }
   };
 
@@ -506,7 +491,7 @@ export const openIndexedDbAssetStore = async (
     apply: applyMutation,
 
     close() {
-      unusable ??= new LocalAssetLibraryError(
+      state.unusable ??= new LocalAssetLibraryError(
         "storage-error",
         "The My assets library is closed.",
       );

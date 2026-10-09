@@ -1,11 +1,9 @@
-import {MAX_THUMBNAIL_BYTES, MAX_THUMBNAIL_DIMENSION} from "./constants.ts";
+import {
+  MAX_THUMBNAIL_BYTES,
+  MAX_THUMBNAIL_DIMENSION,
+  THUMBNAIL_MIME_TYPES,
+} from "./constants.ts";
 import type {ThumbnailRecord} from "./records.ts";
-
-const THUMBNAIL_MIME_TYPES: readonly string[] = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-];
 
 /** Scales to fit inside `max` x `max`, keeps the aspect ratio, never upscales, each side >= 1. */
 export const fitWithin = (
@@ -59,6 +57,7 @@ export const createThumbnail = async (
       throw new Error("A 2D canvas context is not available.");
     }
 
+    context.imageSmoothingQuality = "high";
     context.drawImage(bitmap, 0, 0, target.width, target.height);
 
     const thumbnail = await canvas.convertToBlob({
@@ -66,7 +65,7 @@ export const createThumbnail = async (
       quality: 0.8,
     });
 
-    if (!THUMBNAIL_MIME_TYPES.includes(thumbnail.type)) {
+    if (!(THUMBNAIL_MIME_TYPES as readonly string[]).includes(thumbnail.type)) {
       throw new Error(`Unsupported thumbnail type: ${thumbnail.type}`);
     }
 
