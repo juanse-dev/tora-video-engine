@@ -547,4 +547,117 @@ test.describe("IndexedDB asset library", () => {
         digests: [pose.digest],
       });
   });
+
+  test.describe("real import pipeline (default decode and thumbnail)", () => {
+    const fixtures = [
+      {
+        file: "pose-magenta.png",
+        category: "pose",
+        mimeType: "image/png",
+        width: 600,
+        height: 900,
+        thumbnail: {width: 171, height: 256},
+      },
+      {
+        file: "background-cyan.jpg",
+        category: "background",
+        mimeType: "image/jpeg",
+        width: 1080,
+        height: 1920,
+        thumbnail: {width: 144, height: 256},
+      },
+      {
+        file: "background-noext",
+        category: "background",
+        mimeType: "image/webp",
+        width: 1080,
+        height: 1920,
+        thumbnail: {width: 144, height: 256},
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      test(`imports ${fixture.file} through real Chrome codecs`, async ({
+        context,
+      }) => {
+        const page = await openHarnessPage(context);
+
+        await harness(page, "openLibrary");
+
+        const imported = await harness(
+          page,
+          "importFixture",
+          fixture.file,
+          fixture.category,
+        );
+
+        expect(imported.created).toBe(true);
+        expect(imported.ref).toBe(
+          `local:${fixture.category}:sha256:${imported.fixtureSha256}`,
+        );
+        expect(imported.header).toEqual({
+          mimeType: fixture.mimeType,
+          width: fixture.width,
+          height: fixture.height,
+        });
+
+        const stored = await harness(page, "inspectRef", imported.ref);
+
+        expect(stored.row.status).toBe("present");
+        expect(stored.row.value.originalFilename).toBe(fixture.file);
+        expect(stored.meta).toEqual({
+          status: "present",
+          value: {
+            mimeType: imported.header.mimeType,
+            byteSize: imported.fixtureByteSize,
+            width: imported.header.width,
+            height: imported.header.height,
+          },
+        });
+        expect(stored.blob).toMatchObject({
+          status: "present",
+          type: fixture.mimeType,
+          size: imported.fixtureByteSize,
+          sha256: imported.fixtureSha256,
+        });
+
+        // The thumbnail is a separate, smaller derivative that keeps the
+        // aspect ratio and is never upscaled.
+        expect(stored.thumbnail.status).toBe("present");
+        expect(["image/webp", "image/png"]).toContain(stored.thumbnail.mimeType);
+        expect(stored.thumbnail.blobType).toBe(stored.thumbnail.mimeType);
+        expect(stored.thumbnail.width).toBe(fixture.thumbnail.width);
+        expect(stored.thumbnail.height).toBe(fixture.thumbnail.height);
+
+        const display = await harness(page, "displayThumbnail", imported.ref);
+
+        expect(display.ok).toBe(true);
+        expect(display.type).toBe(stored.thumbnail.mimeType);
+
+        const verified = await harness(page, "verify", imported.ref);
+
+        expect(verified.ok).toBe(true);
+        expect(verified.payload).toEqual({
+          digest: imported.fixtureSha256,
+          mimeType: fixture.mimeType,
+          byteSize: imported.fixtureByteSize,
+          width: fixture.width,
+          height: fixture.height,
+        });
+
+        // Importing the same file again reuses the row.
+        const again = await harness(
+          page,
+          "importFixture",
+          fixture.file,
+          fixture.category,
+        );
+
+        expect(again.ref).toBe(imported.ref);
+        expect(again.created).toBe(false);
+        expect(await harness(page, "count", fixture.category)).toBe(1);
+        expect(page.errors).toEqual([]);
+      });
+    }
+  });
 });

@@ -25,6 +25,8 @@ import {
   type AssetLibraryMessage,
   type AssetLibraryStatus,
 } from "../../src/web/assetLibrary/coordination.ts";
+import {verifyPayload} from "../../src/web/assetLibrary/integrity.ts";
+import {importLocalAsset} from "../../src/web/assetLibrary/importAsset.ts";
 import {
   countLocalAssets,
   deleteLocalAsset,
@@ -391,6 +393,7 @@ const toraHarness = {
           ? {
               status: "present" as const,
               mimeType: thumbnail.value.mimeType,
+              blobType: thumbnail.value.blob.type,
               width: thumbnail.value.width,
               height: thumbnail.value.height,
               size: thumbnail.value.blob.size,
@@ -462,6 +465,70 @@ const toraHarness = {
 
   count: (category: LocalAssetCategory) =>
     countLocalAssets(requireLibrary().store, category),
+
+  /* ---- the real import pipeline (default decode + thumbnail) ---- */
+
+  /**
+   * Fetches a committed fixture from the dev server, wraps it in a `File` and
+   * runs the REAL `importLocalAsset` (default createImageBitmap decode and
+   * OffscreenCanvas thumbnail, no injected fakes) against the open library.
+   */
+  async importFixture(fixture: string, category: LocalAssetCategory) {
+    const response = await fetch(`/tests/fixtures/local-assets/${fixture}`);
+
+    if (!response.ok) {
+      throw new Error(`Fixture ${fixture} answered ${response.status}`);
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const file = new File([bytes as BlobPart], fixture);
+    const inspected = inspectImageBytes(bytes);
+
+    if (!inspected.ok) {
+      throw new Error(`Fixture ${fixture} rejected: ${inspected.reason}`);
+    }
+
+    const result = await importLocalAsset(file, category, requireLibrary());
+
+    return {
+      ref: result.ref,
+      created: result.created,
+      fixtureSha256: await sha256Hex(bytes),
+      fixtureByteSize: bytes.length,
+      header: inspected.image,
+    };
+  },
+
+  async displayThumbnail(ref: LocalAssetRef) {
+    const parsed = parseLocalAssetRef(ref);
+
+    if (parsed === null) {
+      throw new Error("not a ref");
+    }
+
+    const result = await loadThumbnailForDisplay(
+      requireLibrary().store,
+      parsed.digest,
+    );
+
+    return result.ok
+      ? {ok: true as const, size: result.blob.size, type: result.blob.type}
+      : {ok: false as const};
+  },
+
+  async verify(ref: LocalAssetRef) {
+    const parsed = parseLocalAssetRef(ref);
+
+    if (parsed === null) {
+      throw new Error("not a ref");
+    }
+
+    const result = await verifyPayload(requireLibrary().store, parsed.digest);
+
+    return result.ok
+      ? {ok: true as const, payload: result.payload, blobType: result.blob.type}
+      : {ok: false as const, reason: result.reason, detail: result.detail};
+  },
 
   async renderCard(ref: LocalAssetRef) {
     const parsed = parseLocalAssetRef(ref);

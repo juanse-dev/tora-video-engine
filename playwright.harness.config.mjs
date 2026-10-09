@@ -1,7 +1,8 @@
 import {defineConfig} from "@playwright/test";
 
 // Harness specs exercise the real IndexedDB adapter in a browser, against the
-// vite dev server (the harness page is not part of the production build).
+// vite dev server (the harness page is not part of the production build). The
+// harness vite config also serves the local-asset fixtures as raw bytes.
 export default defineConfig({
   testDir: "tests/harness",
   timeout: 30_000,
@@ -10,7 +11,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "npm run web:dev -- --host 127.0.0.1 --port 4174 --strictPort",
+    command: "npm run web:dev -- --config tests/harness/vite.harness.config.mts --host 127.0.0.1 --port 4174 --strictPort",
     port: 4174,
     reuseExistingServer: false,
   },
