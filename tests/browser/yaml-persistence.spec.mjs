@@ -1119,6 +1119,15 @@ test("owner tab promotes the persistence envelope to version 2 when a local ref 
 
   await applyLocalPoseRefViaYaml(page);
 
+  const missingPlaceholder = page.locator(
+    ".preview-frame [data-missing-local-asset]",
+  );
+  await expect(missingPlaceholder).toHaveCount(1);
+  await expect(missingPlaceholder).toHaveAttribute(
+    "data-missing-local-asset",
+    localPoseRef,
+  );
+
   await expect.poll(() => readStoredVersion(page)).toBe(2);
   expect(
     await page.evaluate(() =>
