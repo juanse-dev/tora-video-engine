@@ -35,10 +35,12 @@ import {hasLossRisk} from "./lossRisk.ts";
 import {
   acquirePersistenceOwnership,
   PERSISTENCE_STORAGE_KEY,
+  requiredPersistenceVersion,
   restorePersistedProject,
   serializePersistedEnvelope,
   storiesSemanticallyEqual,
   type PersistenceOwnership,
+  type PersistenceVersion,
   type ProtectedRecovery,
 } from "./persistence.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
@@ -72,6 +74,7 @@ type TransitionState =
 
 type PersistenceConflict = {
   durableStory: Story | null;
+  durableVersion: PersistenceVersion | null;
 };
 
 type PolicyRejectedImport = {
@@ -84,6 +87,7 @@ type PolicyRejectedImport = {
 type InitialProject = {
   activeStory: Story;
   durableStory: Story | null;
+  durableVersion: PersistenceVersion | null;
   recovery: ProtectedRecovery | null;
   storageWarning: string | null;
 };
@@ -125,6 +129,7 @@ const loadInitialProject = (): InitialProject => {
     return {
       activeStory: restored.activeStory,
       durableStory: restored.durableStory,
+      durableVersion: restored.durableVersion,
       recovery: restored.recovery,
       storageWarning: null,
     };
@@ -132,6 +137,7 @@ const loadInitialProject = (): InitialProject => {
     return {
       activeStory: fallback,
       durableStory: null,
+      durableVersion: null,
       recovery: null,
       storageWarning:
         error instanceof Error
@@ -215,6 +221,8 @@ export const App = () => {
   const [durableStory, setDurableStory] = useState<Story | null>(
     initialProject.durableStory,
   );
+  const [durableVersion, setDurableVersion] =
+    useState<PersistenceVersion | null>(initialProject.durableVersion);
   const [recovery, setRecovery] = useState<ProtectedRecovery | null>(
     initialProject.recovery,
   );
@@ -411,9 +419,11 @@ export const App = () => {
       }
 
       try {
-        const serialized = serializePersistedEnvelope(story);
+        const version = requiredPersistenceVersion(story, durableVersion);
+        const serialized = serializePersistedEnvelope(story, version);
         window.localStorage.setItem(PERSISTENCE_STORAGE_KEY, serialized);
         setDurableStory(story);
+        setDurableVersion(version);
         setStorageWarning(null);
         return true;
       } catch (error) {
@@ -425,7 +435,7 @@ export const App = () => {
         return false;
       }
     },
-    [conflict, ownership.mode, persistenceReady, recovery],
+    [conflict, durableVersion, ownership.mode, persistenceReady, recovery],
   );
 
   useEffect(() => {
@@ -501,6 +511,7 @@ export const App = () => {
         if (current.recovery !== null) {
           setRecovery(current.recovery);
           setDurableStory(null);
+          setDurableVersion(null);
           setStorageWarning(
             "Stored recovery is protected. Autosave is suspended until it is explicitly discarded.",
           );
@@ -517,7 +528,11 @@ export const App = () => {
           )
         ) {
           setDurableStory(current.durableStory);
-          setConflict({durableStory: current.durableStory});
+          setDurableVersion(current.durableVersion);
+          setConflict({
+            durableStory: current.durableStory,
+            durableVersion: current.durableVersion,
+          });
           setStorageWarning(
             current.durableStory === null
               ? "Durable storage was cleared while this tab did not own persistence."
@@ -527,6 +542,7 @@ export const App = () => {
         }
 
         setDurableStory(current.durableStory);
+        setDurableVersion(current.durableVersion);
         setStorageWarning(null);
       } catch (error) {
         lease.release();
@@ -582,6 +598,7 @@ export const App = () => {
         if (current.recovery !== null) {
           setRecovery(current.recovery);
           setDurableStory(null);
+          setDurableVersion(null);
           setStorageWarning(
             "Stored recovery is protected. Autosave is suspended until it is explicitly discarded.",
           );
@@ -596,7 +613,11 @@ export const App = () => {
           )
         ) {
           setDurableStory(current.durableStory);
-          setConflict({durableStory: current.durableStory});
+          setDurableVersion(current.durableVersion);
+          setConflict({
+            durableStory: current.durableStory,
+            durableVersion: current.durableVersion,
+          });
           setStorageWarning(
             current.durableStory === null
               ? "Durable storage was cleared before persistence ownership was acquired."
@@ -606,6 +627,7 @@ export const App = () => {
         }
 
         setDurableStory(current.durableStory);
+        setDurableVersion(current.durableVersion);
         setStorageWarning(null);
       } catch (error) {
         next.release();
@@ -984,6 +1006,7 @@ export const App = () => {
       window.localStorage.removeItem(PERSISTENCE_STORAGE_KEY);
       setRecovery(null);
       setDurableStory(null);
+      setDurableVersion(null);
       setStorageWarning(null);
       return true;
     } catch (error) {
@@ -1277,6 +1300,7 @@ export const App = () => {
     setYamlState(null);
     setMode("visual");
     setDurableStory(conflict.durableStory);
+    setDurableVersion(conflict.durableVersion);
     setPolicyRejectedImport(null);
     setConflict(null);
     setStorageWarning(null);
