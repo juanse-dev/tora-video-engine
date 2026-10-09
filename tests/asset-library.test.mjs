@@ -1447,6 +1447,8 @@ test("importLocalAsset maps storage failures after the storing phase", async () 
   assert.deepEqual(log.phases, ["reading", "validating", "hashing", "storing"]);
 });
 
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 test("a successful commit asks for persistent storage once; failures do not", async () => {
   resetPersistentStorageRequestForTests();
 
@@ -1473,6 +1475,7 @@ test("a successful commit asks for persistent storage once; failures do not", as
 
   await commitPreparedLocalAssetImport(prepared, library, {storage});
   await commitPreparedLocalAssetImport(prepared, library, {storage});
+  await flushMicrotasks();
   assert.equal(persistCalls.length, 1);
   resetPersistentStorageRequestForTests();
 });
@@ -1531,4 +1534,69 @@ test("fitWithin scales to fit 256x256 without upscaling and keeps each side at l
   assert.deepEqual(fitWithin(8192, 1, 256), {width: 256, height: 1});
   assert.deepEqual(fitWithin(1, 8192, 256), {width: 1, height: 256});
   assert.deepEqual(fitWithin(8192, 6103, 256), {width: 256, height: 191});
+});
+
+test("commit resolves even when persist() never settles", async () => {
+  resetPersistentStorageRequestForTests();
+
+  let persistCalls = 0;
+  const storage = {
+    persisted: async () => false,
+    persist: () => {
+      persistCalls += 1;
+      return new Promise(() => {}); // e.g. a Firefox permission prompt left open
+    },
+  };
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const outcome = await Promise.race([
+    commitPreparedLocalAssetImport(prepared, library, {storage}),
+    new Promise((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+  ]);
+
+  assert.deepEqual(outcome, {ref: prepared.ref, created: true});
+  await flushMicrotasks();
+  assert.equal(persistCalls, 1);
+  resetPersistentStorageRequestForTests();
+});
+
+test("the persist-once flag is not consumed when persist is unavailable", async () => {
+  resetPersistentStorageRequestForTests();
+
+  await requestPersistentStorageOnce({storage: {}});
+
+  let persistCalls = 0;
+  const storage = {
+    persist: async () => {
+      persistCalls += 1;
+      return true;
+    },
+  };
+
+  await requestPersistentStorageOnce({storage});
+  await requestPersistentStorageOnce({storage});
+  assert.equal(persistCalls, 1);
+  resetPersistentStorageRequestForTests();
+});
+
+test("prepare wraps a hashing failure as a storage-error LocalAssetImportError", async () => {
+  const {deps, log} = makeDeps();
+  const boom = new Error("subtle is unavailable");
+  const subtle = {
+    digest: async () => {
+      throw boom;
+    },
+  };
+  const {file} = makeFile(PNG_10x20);
+
+  await assert.rejects(
+    prepareLocalAssetImport(file, "pose", {...deps, subtle}),
+    (error) =>
+      error instanceof LocalAssetImportError &&
+      error.code === "storage-error" &&
+      error.cause === boom,
+  );
+  assert.deepEqual(log.phases, ["reading", "validating", "hashing"]);
+  assert.equal(log.decode.length, 0);
 });

@@ -157,7 +157,19 @@ export const prepareLocalAssetImport = async (
   // 4. Identity (INV-3): hash of the original bytes.
   deps.onPhase?.("hashing");
 
-  const digest = await sha256Hex(bytes, deps.subtle);
+  let digest: string;
+
+  try {
+    digest = await sha256Hex(bytes, deps.subtle);
+  } catch (error) {
+    // An environment failure (for example no SubtleCrypto), not a file problem.
+    throw new LocalAssetImportError(
+      "storage-error",
+      "The image could not be fingerprinted in this browser.",
+      {cause: error},
+    );
+  }
+
   const ref = buildLocalAssetRef(category, digest);
   const blob = new Blob([bytes as BlobPart], {type: image.mimeType});
 
@@ -277,7 +289,9 @@ export const commitPreparedLocalAssetImport = async (
     // The channel is a best-effort refresh signal; the import succeeded.
   }
 
-  await requestPersistentStorageOnce(deps);
+  // Fire and forget: persist() can sit on a permission prompt (Firefox) and
+  // must never delay a successful import. It never rejects.
+  void requestPersistentStorageOnce(deps);
 
   return {ref: result.ref, created: result.created};
 };
