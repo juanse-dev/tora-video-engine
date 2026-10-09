@@ -102,3 +102,41 @@ export const createAssetLibraryChannel = (
     },
   };
 };
+
+let persistentStorageRequested = false;
+
+/**
+ * Best-effort, once per page session: asks the browser to keep this origin's
+ * storage (so the asset library is not evicted under pressure). Never throws,
+ * and a denied or failed request is not retried.
+ */
+export const requestPersistentStorageOnce = async (deps?: {
+  storage?: StorageManager;
+}): Promise<void> => {
+  if (persistentStorageRequested) {
+    return;
+  }
+
+  const storage = deps?.storage ?? globalThis.navigator?.storage;
+
+  if (storage === undefined || typeof storage.persist !== "function") {
+    return;
+  }
+
+  persistentStorageRequested = true;
+
+  try {
+    if (typeof storage.persisted === "function" && (await storage.persisted())) {
+      return;
+    }
+
+    await storage.persist();
+  } catch {
+    // Persistence is a courtesy request; the library works without it.
+  }
+};
+
+/** Test-only: forget that persistence was already requested. */
+export const resetPersistentStorageRequestForTests = (): void => {
+  persistentStorageRequested = false;
+};

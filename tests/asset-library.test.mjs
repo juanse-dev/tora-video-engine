@@ -9,6 +9,8 @@ import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import * as constants from "../src/web/assetLibrary/constants.ts";
 import {
   createAssetLibraryChannel,
+  requestPersistentStorageOnce,
+  resetPersistentStorageRequestForTests,
   withAssetLibraryLock,
 } from "../src/web/assetLibrary/coordination.ts";
 import {
@@ -20,11 +22,18 @@ import {
   renameLocalAsset,
 } from "../src/web/assetLibrary/library.ts";
 import {
+  commitPreparedLocalAssetImport,
+  importLocalAsset,
+  LocalAssetImportError,
+  prepareLocalAssetImport,
+} from "../src/web/assetLibrary/importAsset.ts";
+import {
   decodeAssetRow,
   decodeBlobRecord,
   decodePayloadMeta,
   decodeThumbnail,
 } from "../src/web/assetLibrary/records.ts";
+import {fitWithin} from "../src/web/assetLibrary/thumbnails.ts";
 import {
   buildJpeg,
   buildPng,
@@ -1027,4 +1036,499 @@ test("sha256Hex digests produce canonical refs for the library", async () => {
   await store.apply(importMutation(ref));
   assert.equal((await store.getAssetRow(ref)).status, "present");
   assert.equal((await store.getPayloadMeta(digest)).status, "present");
+});
+
+
+/* ------------------------------------------------------ import pipeline */
+
+const makeFile = (bytes, name = "hero.png") => {
+  const file = new File([bytes], name);
+  const calls = {arrayBuffer: 0};
+  const original = file.arrayBuffer.bind(file);
+
+  file.arrayBuffer = () => {
+    calls.arrayBuffer += 1;
+    return original();
+  };
+
+  return {file, calls};
+};
+
+const makeDeps = (overrides = {}) => {
+  const log = {decode: [], thumbnail: [], closed: 0, phases: []};
+  const deps = {
+    decode: async (blob) => {
+      log.decode.push(blob);
+      return {
+        width: overrides.decodedWidth ?? 10,
+        height: overrides.decodedHeight ?? 20,
+        close() {
+          log.closed += 1;
+        },
+      };
+    },
+    makeThumbnail: async (blob, width, height) => {
+      log.thumbnail.push({blob, width, height});
+      return validThumbnail();
+    },
+    onPhase: (phase) => log.phases.push(phase),
+    ...overrides.deps,
+  };
+
+  return {deps, log};
+};
+
+const PNG_10x20 = buildPng({width: 10, height: 20});
+
+const rejectsWithCode = (promise, code) =>
+  assert.rejects(
+    promise,
+    (error) => error instanceof LocalAssetImportError && error.code === code,
+  );
+
+test("prepare rejects oversized and empty files without reading their bytes", async () => {
+  const {deps, log} = makeDeps();
+  const big = makeFile(new Uint8Array(4));
+
+  Object.defineProperty(big.file, "size", {value: MAX_LOCAL_ASSET_BYTES + 1});
+  await rejectsWithCode(prepareLocalAssetImport(big.file, "pose", deps), "too-large");
+  assert.equal(big.calls.arrayBuffer, 0);
+
+  const empty = makeFile(new Uint8Array(0));
+
+  await rejectsWithCode(prepareLocalAssetImport(empty.file, "pose", deps), "empty");
+  assert.equal(empty.calls.arrayBuffer, 0);
+  assert.deepEqual(log.phases, []);
+  assert.equal(log.decode.length, 0);
+});
+
+test("prepare reports phases in order and builds the prepared import", async () => {
+  const {deps, log} = makeDeps();
+  const {file, calls} = makeFile(PNG_10x20, "IMG_0421.png");
+  const prepared = await prepareLocalAssetImport(file, "pose", deps);
+  const digest = await sha256Hex(PNG_10x20);
+
+  assert.deepEqual(log.phases, ["reading", "validating", "hashing"]);
+  assert.equal(calls.arrayBuffer, 1);
+  assert.equal(prepared.ref, buildLocalAssetRef("pose", digest));
+  assert.equal(prepared.defaultLabel, "IMG_0421");
+  assert.equal(prepared.originalFilename, "IMG_0421.png");
+  assert.deepEqual(prepared.payloadMeta, {
+    mimeType: "image/png",
+    byteSize: PNG_10x20.length,
+    width: 10,
+    height: 20,
+  });
+  assert.equal(prepared.blob.type, "image/png");
+  assert.deepEqual(new Uint8Array(await prepared.blob.arrayBuffer()), PNG_10x20);
+  assert.equal(prepared.thumbnail.mimeType, "image/png");
+  // Decode and thumbnail both work on the original bytes, with the header size.
+  assert.equal(log.decode.length, 1);
+  assert.equal(log.decode[0], prepared.blob);
+  assert.equal(log.thumbnail.length, 1);
+  assert.equal(log.thumbnail[0].blob, prepared.blob);
+  assert.equal(log.thumbnail[0].width, 10);
+  assert.equal(log.thumbnail[0].height, 20);
+  assert.equal(log.closed, 1);
+});
+
+test("prepare uses the injected SubtleCrypto and the requested category", async () => {
+  const {deps} = makeDeps();
+  const seen = [];
+  const subtle = {
+    digest: async (algorithm, data) => {
+      seen.push(algorithm);
+      return globalThis.crypto.subtle.digest(algorithm, data);
+    },
+  };
+  const {file} = makeFile(PNG_10x20);
+  const prepared = await prepareLocalAssetImport(file, "background", {...deps, subtle});
+
+  assert.deepEqual(seen, ["SHA-256"]);
+  assert.ok(prepared.ref.startsWith("local:background:sha256:"));
+});
+
+test("prepare stops at the first inspection failure and writes nothing", async () => {
+  const cases = [
+    ["unsupported-format", new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0])],
+    ["malformed", buildPng({width: 10, height: 10}).slice(0, 20)],
+    ["dimensions-too-large", buildPng({width: 8193, height: 16})],
+    ["too-many-pixels", buildPng({width: 7072, height: 7072})],
+  ];
+
+  for (const [code, bytes] of cases) {
+    const {deps, log} = makeDeps();
+    const {file} = makeFile(bytes);
+
+    await rejectsWithCode(prepareLocalAssetImport(file, "pose", deps), code);
+    // Rejected during validation: never hashed, decoded or thumbnailed.
+    assert.deepEqual(log.phases, ["reading", "validating"], code);
+    assert.equal(log.decode.length, 0, code);
+    assert.equal(log.thumbnail.length, 0, code);
+  }
+});
+
+test("prepare accepts a decoded size equal to or swapped from the header size", async () => {
+  for (const [width, height] of [
+    [10, 20],
+    [20, 10],
+  ]) {
+    const {deps, log} = makeDeps({decodedWidth: width, decodedHeight: height});
+    const {file} = makeFile(PNG_10x20);
+    const prepared = await prepareLocalAssetImport(file, "pose", deps);
+
+    // Payload metadata always records the header size, never the decoded one.
+    assert.equal(prepared.payloadMeta.width, 10);
+    assert.equal(prepared.payloadMeta.height, 20);
+    assert.equal(log.closed, 1);
+  }
+});
+
+test("prepare rejects any other decoded size as decode-failed and still closes the bitmap", async () => {
+  for (const [width, height] of [
+    [10, 21],
+    [11, 20],
+    [10, 10],
+    [1, 1],
+  ]) {
+    const {deps, log} = makeDeps({decodedWidth: width, decodedHeight: height});
+    const {file} = makeFile(PNG_10x20);
+
+    await rejectsWithCode(prepareLocalAssetImport(file, "pose", deps), "decode-failed");
+    assert.equal(log.closed, 1);
+    assert.equal(log.thumbnail.length, 0);
+  }
+});
+
+test("prepare maps decode errors to decode-failed", async () => {
+  const {deps, log} = makeDeps({
+    deps: {
+      decode: async () => {
+        throw new Error("The source image cannot be decoded.");
+      },
+    },
+  });
+  const {file} = makeFile(PNG_10x20);
+
+  await rejectsWithCode(prepareLocalAssetImport(file, "pose", deps), "decode-failed");
+  assert.equal(log.thumbnail.length, 0);
+});
+
+test("prepare maps thumbnail errors to thumbnail-failed", async () => {
+  const {deps} = makeDeps({
+    deps: {
+      makeThumbnail: async () => {
+        throw new Error("no canvas");
+      },
+    },
+  });
+  const {file} = makeFile(PNG_10x20);
+
+  await rejectsWithCode(
+    prepareLocalAssetImport(file, "pose", deps),
+    "thumbnail-failed",
+  );
+});
+
+test("prepare maps an unreadable file to a LocalAssetImportError", async () => {
+  const {deps} = makeDeps();
+  const file = {
+    name: "gone.png",
+    size: 100,
+    arrayBuffer: async () => {
+      throw new Error("NotReadableError");
+    },
+  };
+
+  await assert.rejects(
+    prepareLocalAssetImport(file, "pose", deps),
+    (error) => error instanceof LocalAssetImportError && error.code === "malformed",
+  );
+});
+
+test("default labels drop the last extension, trim and cap at 80 code points (D-12)", async () => {
+  const cases = [
+    ["IMG_0421.webp", "pose", "IMG_0421"],
+    [".png", "pose", "Untitled pose"],
+    [".png", "background", "Untitled background"],
+    ["   .png", "pose", "Untitled pose"],
+    ["", "background", "Untitled background"],
+    ["   ", "pose", "Untitled pose"],
+    ["my.photo.v2.jpeg", "pose", "my.photo.v2"],
+    ["no-extension", "pose", "no-extension"],
+    ["  padded name  .png", "pose", "padded name"],
+    [`${"a".repeat(100)}.png`, "pose", "a".repeat(80)],
+    [`${"😀".repeat(90)}.png`, "pose", "😀".repeat(80)],
+  ];
+
+  for (const [name, category, expected] of cases) {
+    const {deps} = makeDeps();
+    const {file} = makeFile(PNG_10x20, name);
+    const prepared = await prepareLocalAssetImport(file, category, deps);
+
+    assert.equal(prepared.defaultLabel, expected, JSON.stringify(name));
+    assert.equal(prepared.originalFilename, name);
+    // A default label must always satisfy the label rules.
+    assert.equal(normalizeLocalAssetLabel(prepared.defaultLabel).ok, true);
+  }
+});
+
+test("commit applies the import under the exclusive lock and announces the change", async () => {
+  const library = makeLibrary();
+  const heldDuringApply = [];
+  const realApply = library.store.apply.bind(library.store);
+
+  library.store.apply = async (mutation) => {
+    heldDuringApply.push(library.locks.held(constants.ASSET_LIBRARY_LOCK));
+    return realApply(mutation);
+  };
+
+  const {deps} = makeDeps();
+  const {file} = makeFile(PNG_10x20, "Hero.png");
+  const prepared = await prepareLocalAssetImport(file, "pose", deps);
+  const result = await commitPreparedLocalAssetImport(prepared, library, {
+    storage: undefined,
+  });
+
+  assert.deepEqual(result, {ref: prepared.ref, created: true});
+  assert.deepEqual(heldDuringApply, [{exclusive: true, shared: 0}]);
+  assert.deepEqual(
+    library.locks.requests.map(({name, mode}) => ({name, mode})),
+    [{name: constants.ASSET_LIBRARY_LOCK, mode: "exclusive"}],
+  );
+  assert.deepEqual(library.posted, [
+    {
+      type: "asset-library-changed",
+      refs: [prepared.ref],
+      digests: [prepared.ref.slice(prepared.ref.lastIndexOf(":") + 1)],
+    },
+  ]);
+
+  const mutation = library.store.applyCalls[0];
+
+  assert.equal(mutation.kind, "import");
+  assert.equal(mutation.ref, prepared.ref);
+  assert.equal(mutation.defaultLabel, "Hero");
+  assert.equal(mutation.originalFilename, "Hero.png");
+  assert.equal(mutation.blob, prepared.blob);
+  assert.equal(mutation.thumbnail, prepared.thumbnail);
+  assert.deepEqual(mutation.payloadMeta, prepared.payloadMeta);
+  assert.equal(new Date(mutation.createdAt).toISOString(), mutation.createdAt);
+  assert.equal((await library.store.getAssetRow(prepared.ref)).status, "present");
+});
+
+test("committing the same bytes again reports created=false and still announces", async () => {
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const first = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const second = await prepareLocalAssetImport(
+    makeFile(PNG_10x20, "other.png").file,
+    "pose",
+    deps,
+  );
+  const noStorage = {storage: undefined};
+
+  assert.equal(
+    (await commitPreparedLocalAssetImport(first, library, noStorage)).created,
+    true,
+  );
+  assert.equal(
+    (await commitPreparedLocalAssetImport(second, library, noStorage)).created,
+    false,
+  );
+  assert.equal(library.posted.length, 2);
+});
+
+test("commit maps quota failures to storage-full and other failures to storage-error", async () => {
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const noStorage = {storage: undefined};
+
+  const quota = makeLibrary();
+
+  quota.store.failNextApply();
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, quota, noStorage),
+    "storage-full",
+  );
+  assert.deepEqual(quota.posted, []);
+  assert.deepEqual(quota.locks.held(constants.ASSET_LIBRARY_LOCK), {
+    exclusive: false,
+    shared: 0,
+  });
+  assert.equal((await quota.store.getAssetRow(prepared.ref)).status, "absent");
+
+  const other = makeLibrary();
+
+  other.store.failNextApply(new Error("transaction aborted"));
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, other, noStorage),
+    "storage-error",
+  );
+  assert.deepEqual(other.posted, []);
+
+  const nonError = makeLibrary();
+
+  nonError.store.failNextApply("weird");
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, nonError, noStorage),
+    "storage-error",
+  );
+
+  // The same prepared import commits fine afterwards.
+  assert.equal(
+    (await commitPreparedLocalAssetImport(prepared, quota, noStorage)).created,
+    true,
+  );
+});
+
+test("a throwing channel does not fail a committed import", async () => {
+  const library = makeLibrary();
+
+  library.channel.post = () => {
+    throw new Error("channel closed");
+  };
+
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+
+  assert.equal(
+    (await commitPreparedLocalAssetImport(prepared, library, {storage: undefined}))
+      .created,
+    true,
+  );
+});
+
+test("importLocalAsset runs prepare then storing then commit", async () => {
+  const library = makeLibrary();
+  const {deps, log} = makeDeps();
+  const original = library.store.apply.bind(library.store);
+
+  library.store.apply = (mutation) => {
+    log.phases.push("apply");
+    return original(mutation);
+  };
+
+  const {file} = makeFile(PNG_10x20, "Pose.png");
+  const result = await importLocalAsset(file, "pose", library, {
+    ...deps,
+    storage: undefined,
+  });
+
+  assert.equal(result.created, true);
+  assert.deepEqual(log.phases, ["reading", "validating", "hashing", "storing", "apply"]);
+  assert.equal(library.store.applyCalls.length, 1);
+});
+
+test("importLocalAsset writes nothing when prepare fails", async () => {
+  const library = makeLibrary();
+  const {deps, log} = makeDeps({decodedWidth: 99, decodedHeight: 99});
+  const {file} = makeFile(PNG_10x20);
+
+  await rejectsWithCode(importLocalAsset(file, "pose", library, deps), "decode-failed");
+  assert.deepEqual(log.phases, ["reading", "validating", "hashing"]);
+  assert.equal(library.store.applyCalls.length, 0);
+  assert.deepEqual(library.posted, []);
+  assert.equal(library.locks.requests.length, 0);
+});
+
+test("importLocalAsset maps storage failures after the storing phase", async () => {
+  const library = makeLibrary();
+  const {deps, log} = makeDeps();
+
+  library.store.failNextApply();
+
+  const {file} = makeFile(PNG_10x20);
+
+  await rejectsWithCode(
+    importLocalAsset(file, "pose", library, {...deps, storage: undefined}),
+    "storage-full",
+  );
+  assert.deepEqual(log.phases, ["reading", "validating", "hashing", "storing"]);
+});
+
+test("a successful commit asks for persistent storage once; failures do not", async () => {
+  resetPersistentStorageRequestForTests();
+
+  const persistCalls = [];
+  const storage = {
+    persist: async () => {
+      persistCalls.push(1);
+      return true;
+    },
+  };
+  const {deps} = makeDeps();
+  const failing = makeLibrary();
+
+  failing.store.failNextApply();
+
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+
+  await assert.rejects(() =>
+    commitPreparedLocalAssetImport(prepared, failing, {storage}),
+  );
+  assert.equal(persistCalls.length, 0);
+
+  const library = makeLibrary();
+
+  await commitPreparedLocalAssetImport(prepared, library, {storage});
+  await commitPreparedLocalAssetImport(prepared, library, {storage});
+  assert.equal(persistCalls.length, 1);
+  resetPersistentStorageRequestForTests();
+});
+
+test("requestPersistentStorageOnce is best effort", async () => {
+  resetPersistentStorageRequestForTests();
+  // No storage manager: nothing to do, no throw.
+  await requestPersistentStorageOnce({storage: undefined});
+  resetPersistentStorageRequestForTests();
+
+  let calls = 0;
+  const rejecting = {
+    persist: async () => {
+      calls += 1;
+      throw new Error("denied");
+    },
+  };
+
+  await requestPersistentStorageOnce({storage: rejecting});
+  await requestPersistentStorageOnce({storage: rejecting});
+  assert.equal(calls, 1);
+  resetPersistentStorageRequestForTests();
+
+  const throwing = {
+    persist: () => {
+      throw new Error("sync failure");
+    },
+  };
+
+  await requestPersistentStorageOnce({storage: throwing});
+  resetPersistentStorageRequestForTests();
+
+  let skipped = 0;
+
+  await requestPersistentStorageOnce({
+    storage: {
+      persisted: async () => true,
+      persist: async () => {
+        skipped += 1;
+        return true;
+      },
+    },
+  });
+  assert.equal(skipped, 0, "an already persistent origin is not asked again");
+  resetPersistentStorageRequestForTests();
+});
+
+/* ------------------------------------------------------------ thumbnails */
+
+test("fitWithin scales to fit 256x256 without upscaling and keeps each side at least 1", () => {
+  assert.deepEqual(fitWithin(1000, 500, 256), {width: 256, height: 128});
+  assert.deepEqual(fitWithin(500, 1000, 256), {width: 128, height: 256});
+  assert.deepEqual(fitWithin(256, 256, 256), {width: 256, height: 256});
+  assert.deepEqual(fitWithin(100, 50, 256), {width: 100, height: 50});
+  assert.deepEqual(fitWithin(1, 1, 256), {width: 1, height: 1});
+  assert.deepEqual(fitWithin(8192, 1, 256), {width: 256, height: 1});
+  assert.deepEqual(fitWithin(1, 8192, 256), {width: 1, height: 256});
+  assert.deepEqual(fitWithin(8192, 6103, 256), {width: 256, height: 191});
 });
