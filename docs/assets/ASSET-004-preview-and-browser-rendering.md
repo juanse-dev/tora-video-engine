@@ -1,424 +1,259 @@
-# ASSET-004 — Preview and browser rendering integration
+# ASSET-004 — Preview and browser rendering with local assets
 
 > Status: **Proposed**
+>
+> Depends on: ASSET-001, ASSET-002. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
 ## Goal
 
-Render browser-local pose/background images through the same shared Remotion composition used by Player and browser MP4 export, using the runtime source transport already proven by ASSET-001 while keeping asset bytes/runtime sources outside Story data.
+Make the Player and the browser MP4 export draw local images for the Active Story, using `blob:` URLs (D-1) built from integrity-verified bytes. Missing or corrupt refs show placeholders in preview and block MP4. A Story over the aggregate budget does not mount the Player at all. Render preparation is race-safe against other tabs deleting assets.
 
-## Shared composition contract
+No asset-management UI here (ASSET-003). Tests seed the library directly.
 
-The current `ToraVideoProps` carries only:
+## Decisions specific to this spec
+
+- One orchestration function computes the Story's local-asset state for both preview and render. Render uses it with stricter rules.
+- The Player stays mounted while assets resolve; unresolved positions show the `pending` placeholder from ASSET-001. The Player is replaced by a message only when the Story is over budget.
+- Render lock order is fixed: global `WEB_RENDER_LOCK_NAME` first, then `ASSET_LIBRARY_LOCK` in **shared** mode for a short final check. Mutations only take `ASSET_LIBRARY_LOCK` (exclusive) and never the render lock, so there is no lock cycle.
+
+## Files
+
+| Action | Path | Purpose |
+| --- | --- | --- |
+| create | `src/web/localAssetState.ts` | `resolveStoryLocalAssets()` orchestration + state types + messages. |
+| create | `src/web/objectUrlPool.ts` | Ref-counted `digest → blob:` URL pool. |
+| create | `src/web/useStoryLocalAssets.ts` | React hook: runs resolution per Story generation, owns pool leases. |
+| modify | `src/web/components/Preview.tsx` | Accepts `localAssetState`; passes `localAssetSources` to the Player; over-budget/disabled messages. |
+| modify | `src/web/browserRender.ts` | `renderStoryMediaOnWeb` and `startBrowserRenderTransaction` accept local sources and a post-lock preparation hook. |
+| modify | `src/web/App.tsx` | Opens the library (`openAssetLibrary`), owns `IntegrityCache` + channel, wires state into Preview and render eligibility. |
+| create | `tests/local-asset-state.test.mjs`, `tests/object-url-pool.test.mjs`, extend `tests/web-browser-render.test.mjs` | Unit tests. |
+| create | `tests/browser/helpers/seedAssetLibrary.mjs` | Writes fixture records straight into IndexedDB from `page.evaluate` (using the v1 layout in ASSET-002), so tests can run before ASSET-003 exists. |
+| create | `tests/browser/local-asset-preview.spec.mjs`, `tests/browser/local-asset-render-race.spec.mjs` | Browser tests on the production build. |
+| modify | `tests/browser/browser-render-golden.spec.mjs` | Add the custom-asset MP4 golden. |
+
+## Interfaces
+
+### `src/web/localAssetState.ts`
 
 ~~~ts
-{
-  story: Story;
+export type LocalAssetRefState = {
+  usage: LocalAssetUsage; // from ASSET-001 (ref, category, digest, sceneIndexes)
+  status: "ready" | "missing" | "corrupt" | "unavailable";
+  detail: string | null; // diagnostic text, e.g. "hash mismatch"
+};
+
+export type StoryLocalAssetState =
+  | {kind: "none"} // Story has no local refs
+  | {kind: "pending"; usages: LocalAssetUsage[]}
+  | {kind: "over-budget"; usages: LocalAssetUsage[]; budget: Extract<LocalAssetBudgetResult, {ok: false}>; message: string}
+  | {
+      kind: "resolved";
+      refs: LocalAssetRefState[];
+      verified: ReadonlyMap<string, VerifiedPayload>; // digest → payload, only for ready digests
+      blobs: ReadonlyMap<string, Blob>;               // digest → blob, only for ready digests
+      allReady: boolean;
+    };
+
+export const resolveStoryLocalAssets = async (
+  story: Story,
+  library: AssetLibraryStatus,
+  cache: IntegrityCache,
+  deps?: {subtle?: SubtleCrypto},
+): Promise<Exclude<StoryLocalAssetState, {kind: "pending"}>>;
+
+/**
+ * Builds the post-lock step for startBrowserRenderTransaction (see "Render start sequence").
+ * Pure apart from its injected dependencies, so it is unit-testable with fakes.
+ */
+export const createLocalAssetRenderPreparation = (input: {
+  resolved: Extract<StoryLocalAssetState, {kind: "resolved"}>; // must have allReady
+  store: AssetLibraryStore;
+  locks: LockManager;
+  pool: ObjectUrlPool;
+}): (() => Promise<LocalAssetRenderPreparation>);
+
+/** Message for the render button area, or null when local assets allow rendering. */
+export const describeLocalAssetRenderBlock = (
+  state: StoryLocalAssetState,
+  library: AssetLibraryStatus,
+): string | null;
+~~~
+
+`resolveStoryLocalAssets` algorithm (each step only proceeds with what the previous step accepted):
+
+1. `usages = collectStoryLocalAssetUsages(story)`. Empty → `{kind: "none"}`.
+2. If `library.kind !== "ready"` → `resolved` with every ref `unavailable` (`detail` = library message), `allReady: false`. No store reads.
+3. For each usage, `store.getAssetRow(usage.ref)` — the ref itself is the key (INV-11): `absent` → `missing`; `corrupt` → `corrupt`; `present` → candidate.
+4. For each distinct digest with at least one candidate ref, `store.getPayloadMeta(digest)`: `absent` → its candidate refs become `missing`; `corrupt` → `corrupt`; `present` → record metadata.
+5. `budget = evaluateLocalAssetBudget(usages, metadataByDigest)`. If not ok → `over-budget` with `describeBudgetFailure(budget)`. **No blob has been read at this point** (D-10).
+6. `verifyPayloadsSequentially(store, digestsWithMetadata, cache)`. Failures mark every ref with that digest `missing`/`corrupt`. Other digests continue.
+7. Return `resolved` with `verified` and `blobs` for successful digests; `allReady` is true only if every ref is `ready`.
+
+`describeLocalAssetRenderBlock` returns, in priority order:
+
+- library `disabled`/`unavailable` and the Story has local refs → the library message;
+- `pending` → `"Checking local assets…"`;
+- `over-budget` → the budget message;
+- any non-ready ref → `"Browser render is blocked because N local asset(s) are unavailable in this browser."` (N = number of non-ready distinct refs);
+- otherwise `null`.
+
+### `src/web/objectUrlPool.ts`
+
+~~~ts
+export class ObjectUrlPool {
+  constructor(deps?: {create?: (blob: Blob) => string; revoke?: (url: string) => void});
+  /** Returns the existing URL for digest or creates one; increments its holder count. */
+  acquire(digest: string, blob: Blob): string;
+  /** Decrements; revokes the URL when the count reaches 0. */
+  release(digest: string): void;
+  /** Revokes everything (app teardown). */
+  dispose(): void;
 }
 ~~~
 
-v0.3 extends the runtime render props with an **ephemeral resolved local-source map**, conceptually:
+A "lease" is a set of digests acquired together (one for the current preview state, one per in-flight render). Repeated scene refs to one digest share one URL.
+
+### `src/web/useStoryLocalAssets.ts`
 
 ~~~ts
-type LocalAssetSourceMap =
-  Readonly<Record<LocalVisualAssetRef, string>>;
+export const useStoryLocalAssets = (
+  story: Story,
+  library: AssetLibraryStatus,
+  cache: IntegrityCache,
+  pool: ObjectUrlPool,
+  refreshToken: number, // bumped on asset-library-changed messages and window focus
+): {state: StoryLocalAssetState; sources: LocalAssetSourceMap | undefined};
+~~~
 
-type ToraVideoProps = {
-  story: Story;
+- Each `(story, library, refreshToken)` change starts a new generation. Results from older generations are ignored (and their leases released) — this guarantees a slow resolution for ref A cannot overwrite the result for ref C.
+- While a generation runs, return `state: {kind: "pending"}` and a source map that keeps the previous generation's URLs for refs that are still in the Story and maps every other local ref to `{kind: "pending"}`.
+- On `resolved`, acquire pool URLs for every ready digest and build `{[ref]: {kind: "url", url}}` for ready refs only (missing/corrupt refs have no entry → placeholder).
+- Release the previous lease in a `useEffect` cleanup **after** the new sources are committed, so the Player never sees a revoked URL.
+- `none` → `sources: undefined`.
+
+### `src/web/components/Preview.tsx`
+
+~~~ts
+type PreviewProps = {
+  story?: Story;
   localAssetSources?: LocalAssetSourceMap;
+  localAssetState?: StoryLocalAssetState;
 };
 ~~~
 
-The exact name/shape may differ, but these invariants are required:
-
-- Story remains unchanged;
-- source-map values are runtime image URLs only;
-- bundled refs do not need entries;
-- old callers with only `story` continue to work;
-- the map is never serialized into YAML or Story persistence.
-
-Using one runtime prop shape lets Player, browser renderer, Remotion Studio/CLI staging, and tests exercise the same `ToraVideo → StoryRenderer → Scene` component tree.
-
-## Runtime source resolution
-
-Render-critical components must resolve a Story ref as:
-
-~~~text
-bundled pose/background
-  → existing staticFile(...) source
-
-local pose/background
-  → localAssetSources[ref]
-
-local ref missing from source map
-  → explicit missing-asset visual
-~~~
-
-Do not make `Tora.tsx` or `Background.tsx` read IndexedDB directly.
-
-The composition must remain deterministic from its props.
-
-A small provider/context is acceptable to avoid threading the source map through every component, but it must be initialized from render props rather than global browser storage.
-
-## Bundled behavior
-
-Existing bundled render output must remain pixel/behavior compatible:
-
-- bundled Tora image path still comes from bundled catalog;
-- bundled background path still comes from bundled catalog;
-- `staticFile()` continues to be used for bundled repository assets;
-- pose uses `objectFit: contain`;
-- background uses `objectFit: cover`.
-
-## Browser source preparation
-
-Before mounting/rendering an Active Story, the web app:
-
-1. collects distinct local refs used by the Story;
-2. parses category + digest from each Story ref; those parsed values are authoritative;
-3. performs exact ASSET-002 `assets[ref]` lookups and validates any legacy/corrupt row shape against the requested primary key;
-4. classifies refs independently as present, missing, or corrupt; a bad row must never redirect resolution to another digest/category;
-5. computes the ASSET-001 aggregate browser **metadata preflight** without consulting the `blobs` store:
-   - ref count includes every distinct local Story ref, including missing/corrupt refs;
-   - byte/pixel sums include each distinct digest whose valid `payloadMeta` is currently available;
-6. if the preflight itself exceeds any aggregate limit, fail fast for the **whole Player/render path** before any Blob lookup;
-7. otherwise, continue resolving the subset of present refs even when other refs are missing/corrupt;
-8. obtain/verify Blobs for present distinct digests **sequentially, one at a time**;
-9. if one present digest fails integrity, classify every ref using that digest as corrupt/unavailable, continue verifying the remaining present digests, and never expose the failed bytes;
-10. defensively recompute source-byte/pixel totals from successfully verified descriptors and require equality with the metadata-preflight totals for those same verified digests;
-11. if the defensive totals disagree, fail closed as an internal/storage-consistency error;
-12. otherwise create runtime sources only for successfully verified refs and build a **partial** local-source map;
-13. expose `resolved[]` + missing/corrupt entries + over-budget state separately from Story state.
-
-Only refs used by the Active Story need runtime sources.
-
-Missing/corrupt refs therefore do **not** suppress otherwise valid local images in preview. They do keep Render MP4 ineligible until every required ref resolves and verifies.
-
-Do not load the entire My assets library into render props, and do not eagerly decode every distinct full-resolution image merely because the Story references it.
-
-## Player states
-
-### All assets resolved
-
-Mount the normal Player with the source map.
-
-### Resolution in progress
-
-Keep the Story visible as Active but show a bounded **Resolving local assets…** readiness state and do not start MP4 rendering.
-
-Do not briefly render a stale prior asset for the new ref.
-
-### Over aggregate browser asset budget
-
-A Story may be schema-valid and otherwise browser-policy-eligible while exceeding the local-asset aggregate budget from ASSET-001 during the **metadata preflight**:
-
-- >64 distinct category-scoped local refs; or
-- >256 MiB original source bytes across distinct local digests; or
-- >200 MP across distinct local digests.
-
-In that state:
-
-- preserve the Active/candidate Story and exact refs;
-- keep YAML export available for CLI use;
-- suppress the normal Player rather than mounting a partial/heavy source set;
-- disable Render MP4;
-- show which aggregate limit was exceeded;
-- because any payloadMeta-vs-bytes mismatch is corruption, normal over-budget classification happens at metadata preflight and performs zero original-Blob reads;
-- verified-descriptor recomputation is only a defensive equality assertion, not a second normal over-budget branch.
-
-This is distinct from a missing asset and must not be reported as schema-invalid.
-
-### Corrupt local asset
-
-A local ref whose asset row is identity-inconsistent, whose payload metadata is unusable, or whose retrieved original Blob fails ASSET-002 integrity verification is treated as unavailable for that ref/digest.
-
-Examples include:
-
-- Blob missing;
-- Blob size disagrees with `payloadMeta.byteSize`;
-- Blob bytes hash to a digest different from the requested Story ref.
-
-In that state:
-
-- never create a runtime source from the corrupt row/bytes;
-- never let a mismatched digest/category/image reach Player/render;
-- preserve the Story/ref unchanged;
-- show an explicit corrupt/missing local asset recovery state at affected visual positions;
-- continue resolving unrelated valid refs for partial preview while the Story remains within budget;
-- block MP4 rendering;
-- allow exact-file same-category reimport to repair the canonical asset row + backing records.
-
-A valid image-B Blob stored under digest-A is therefore detected as corruption, not rendered as asset A.
-
-### Missing local refs
-
-When the Story is within aggregate budget, the Player remains mounted with a **partial source map**: every successfully verified local ref renders normally, while every missing/corrupt visual position shows an explicit placeholder instead of stale/fallback imagery.
-
-Examples:
-
-~~~text
-Missing local pose
-abcd…7890
-~~~
-
-~~~text
-Missing local background
-abcd…7890
-~~~
-
-The caption/timing/editor may continue to function.
-
-## Missing placeholder requirements
-
-A missing placeholder:
-
-- is deterministic;
-- identifies category;
-- shows a shortened safe digest/ref identifier;
-- does not call network resources;
-- cannot be mistaken for the intended final video asset;
-- is used only for preview/defensive composition behavior.
-
-Production MP4 rendering with any missing/corrupt required asset is prohibited even though partial preview remains available.
-
-## Image readiness
-
-The existing Player blocks frame advancement while render-critical images/fonts are loading.
-
-Local runtime-source images must participate in the same readiness guarantee.
-
-Requirements:
-
-- first playback frame does not advance before required local images decode/load;
-- changing a local reference invalidates readiness for the new generation;
-- stale completion from an older local-asset generation cannot unblock a newer Story;
-- duplicate scenes using one local ref do not create unbounded duplicate storage reads/runtime sources.
-
-Use Remotion's supported image primitives where possible.
-
-## Browser render eligibility
-
-Extend the current render-input gating:
-
-~~~text
-schema-valid Active Story
-+ browser policy eligible
-+ local asset aggregate budget eligible
-+ no pending visual/YAML/import state
-+ browser render capability ready
-+ asset-library Web Locks coordination ready when Story contains local refs
-+ every required local ref present
-+ every required present payload integrity-verified
-=
-Render MP4 eligible
-~~~
-
-Missing assets produce a specific message such as:
-
-> Browser render is blocked because 2 local assets are unavailable in this browser.
-
-Do not collapse missing-asset or aggregate-asset-budget state into generic Story schema rejection. Both are explicit browser asset-readiness outcomes.
-
-## Web Locks capability degradation
-
-Local-asset Player preview and local-asset MP4 rendering have different coordination requirements.
-
-If `navigator.locks?.request` is unavailable:
-
-- ASSET-002 may still read existing durable IndexedDB entries;
-- Player may resolve/integrity-check those existing local assets and build the normal within-budget partial/full preview source map;
-- no asset-library mutations are allowed;
-- **Render MP4 is ineligible for any Story containing at least one local ref**, because the final shared asset-library snapshot barrier cannot be acquired;
-- do not fall back to an unlocked render snapshot;
-- do not claim a browser-render capability error as Story schema invalidity.
-
-Bundled-only rendering follows the existing v0.2 render capability rules.
-
-The UI should distinguish this state from missing/corrupt assets, e.g. “Local assets are read-only in this browser; MP4 rendering with local assets requires Web Locks support.”
-
-## Render start ordering
-
-Heavy local-asset preparation happens before taking either render-critical lock:
-
-0. if the Story contains local refs, require `navigator.locks?.request`; otherwise fail render capability before payload hashing/snapshot work;
-1. snapshot the current Active Story;
-2. re-evaluate browser Story policy;
-3. re-read/validate every required canonical asset row and `payloadMeta`, then defensively recheck metadata aggregate browser budget without consulting `blobs`;
-4. for **render**, require that no ref is missing/corrupt before proceeding to payload work;
-5. verify all required present digests sequentially (`MAX_CONCURRENT_INTEGRITY_CHECKS = 1`), deriving actual format/dimensions/size from each Blob and checking SHA-256;
-6. if any integrity failure appears, fail render readiness immediately after safely releasing that digest's transient resources; do not start MP4;
-7. defensively recompute byte/pixel totals from verified descriptors and require equality with metadata-preflight totals for the same digest set; any disagreement fails closed as corruption/internal consistency failure;
-8. release transient byte/hash/decode buffers before moving between digests; never fan out all Blob `arrayBuffer()`/digest operations.
-
-Then perform the lock hand-off in this strict order:
-
-9. acquire the global `tora-video-engine:web-fs-render` lock and keep it held through OPFS/render settlement;
-10. **while still holding the global render lock**, request `tora-video-engine:asset-library` in shared mode for the final snapshot critical section;
-11. while holding both locks, re-read every required canonical `assets[ref]` and its `payloadMeta[digest]`; require every row to still exist, remain identity-valid, and still exactly match the verified descriptor captured earlier;
-12. if any final revalidation fails, release the shared asset-library lock, abort/release the global render lock without touching OPFS/render output, discard prepared sources/descriptors, and require a fresh Render action/readiness cycle;
-13. while both locks are still held, create/reuse runtime sources from the already verified Blob handles and freeze the immutable Story + local-source map snapshot;
-14. release `tora-video-engine:asset-library` **only after** the source-map snapshot is immutable;
-15. continue with OPFS/render while retaining the global `web-fs-render` lock until normal render settlement/cleanup.
-
-For local-ref renders, acquisition of the global render lock is the start of the render transaction. Any asset mutation that commits while this tab is waiting for the global lock is therefore caught by the subsequent shared-lock final revalidation.
-
-Never acquire `asset-library` and then wait for `web-fs-render`; the required order is global render lock → shared asset-library lock. Asset-library mutation paths never acquire the global render lock, so this ordering introduces no lock cycle.
-
-Do not hold either render-critical lock merely while waiting for user asset import or during expensive hashing/decoding.
-
-## Render-preparation cross-tab barrier
-
-BroadcastChannel invalidation is eventual and is not sufficient to close the gap between early readiness checks and render snapshot creation.
-
-The final snapshot barrier is the dedicated ASSET-002 Web Lock:
-
-~~~text
-tora-video-engine:asset-library
-~~~
-
-Render preparation uses it in **shared** mode only for the short final revalidation/freeze section, and only **after the global `web-fs-render` lock has already been acquired**.
-
-All durable asset mutations use it in **exclusive** mode and never acquire the global render lock.
-
-This guarantees:
-
-- a delete/repair/rename that commits while render preparation is still hashing or waiting for the global render lock is visible to the final IndexedDB revalidation;
-- once the global render lock is acquired, the tab immediately establishes the shared asset-library snapshot barrier before touching OPFS/render;
-- an exclusive mutation requested after the shared lock is acquired waits until the immutable source-map snapshot has been frozen;
-- once the snapshot is frozen and the shared lock is released, later cross-tab deletion may change durable readiness but cannot alter the already-held in-flight Blob/runtime-source snapshot.
-
-The final revalidation must include every required canonical `assets[ref]`, not merely the shared digest payload, so deleting `local:pose:sha256:A` is detected even if `local:background:sha256:A` keeps the shared Blob alive.
-
-## Frozen render snapshot
-
-Once rendering begins:
-
-- Story snapshot is immutable;
-- local-source map is immutable;
-- runtime sources referenced by that snapshot remain valid until render settles and cleanup/download materialization completes;
-- library import/rename/delete/apply controls are disabled by the authoring lock;
-- a cross-tab delete of the durable IndexedDB entry must not invalidate an already-materialized Blob/runtime-source snapshot in the rendering tab.
-
-After render settlement, refresh readiness from durable library state.
-
-## Browser renderer props
-
-`renderMediaOnWeb()` must receive the same runtime local-source map as Player for the frozen Story snapshot.
-
-Conceptually:
+- Pass `inputProps={{story, localAssetSources}}` to the Player.
+- If `localAssetState.kind === "over-budget"`, render a message box (`role="status"`, `data-local-asset-over-budget`) with the budget message instead of the Player.
+- If any ref is non-ready, show a short status line under the Player (`data-local-asset-status`), e.g. `"2 local assets are missing in this browser. Scenes 1, 3 show placeholders."`.
+
+### Browser render changes (`src/web/browserRender.ts`)
 
 ~~~ts
-renderMediaOnWeb({
-  composition: {
-    ...
-    defaultProps: {
-      story,
-      localAssetSources,
-    },
+export const renderStoryMediaOnWeb = async (
+  story: Story,
+  options: {
+    // …existing options…
+    localAssetSources?: LocalAssetSourceMap;
+    component?: ComponentType<ToraVideoProps>;
   },
-  inputProps: {
-    story,
-    localAssetSources,
-  },
-  ...
-});
+) => …; // passes {story, localAssetSources} as both defaultProps and inputProps
+
+export type LocalAssetRenderPreparation =
+  | {ok: true; localAssetSources: LocalAssetSourceMap | undefined; release: () => void}
+  | {ok: false; message: string};
+
+// new optional option of startBrowserRenderTransaction:
+prepareLocalAssets?: () => Promise<LocalAssetRenderPreparation>;
 ~~~
 
-Do not fetch IndexedDB from inside render frames.
+`startBrowserRenderTransaction` calls `prepareLocalAssets` **immediately after the render lock lease is acquired and before the pre-render OPFS cleanup**. On `{ok: false}` it releases the lease and returns a new outcome `{kind: "assets-changed", message}` without touching OPFS. On success it passes `localAssetSources` to `renderStory` and calls `release()` after the post-render cleanup (whatever the outcome, including cancel and cleanup-blocked).
 
-## Runtime source transport
+## Render start sequence (App)
 
-ASSET-001 is the mandatory gate that proves the chosen browser runtime transport against pinned Remotion `4.0.529` with `allowHtmlInCanvas: false`.
+When the user clicks **Render MP4** and the Story contains local refs:
 
-ASSET-004 must consume that accepted transport; it must not reopen the transport decision implicitly.
+1. Button is enabled only when existing v0.2 conditions hold **and** `describeLocalAssetRenderBlock(state, library) === null`.
+2. Snapshot the Active Story (existing behavior).
+3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache)`. If not `resolved` with `allReady` → show the block message and stop.
+4. Call `startBrowserRenderTransaction(snapshot, {…, prepareLocalAssets: createLocalAssetRenderPreparation({resolved, store, locks, pool})})`. The returned function:
+   1. runs inside `withAssetLibraryLock(locks, "shared", …)`;
+   2. for every usage: `getAssetRow(ref)` must still be `present`, and `getPayloadMeta(digest)` must still be `present` and equal (mimeType, byteSize, width, height) to the payload verified in step 3. Re-checking the **row per ref** matters: deleting `local:pose:sha256:A` must be caught even if `local:background:sha256:A` keeps the bytes alive;
+   3. if anything changed → `{ok: false, message: "Local assets changed while preparing the render. Try again."}`;
+   4. otherwise acquire pool URLs from the blobs obtained in step 3 (one lease for this render), build the map, `Object.freeze` it, and return `{ok: true, localAssetSources, release}`;
+   5. the shared lock is released when the callback returns.
+5. During render the existing authoring lock keeps the Story and the asset UI read-only (ASSET-003 adds the asset controls to that lock).
+6. After settlement, `release()` the render lease and bump `refreshToken` so preview readiness reflects any deletion that happened during the render.
 
-If ASSET-001 accepted `blob:` object URLs, use them. If ASSET-001 had to choose a different ephemeral transport, use that proven transport while preserving the same Story refs and IndexedDB Blob storage.
+Stories without local refs skip steps 3–4's asset work (`prepareLocalAssets` returns `{ok: true, localAssetSources: undefined, release: () => {}}`).
 
-Under no outcome may runtime image bytes/base64 be persisted into Story/YAML.
+Why this is race-safe: a mutation that commits while step 3 runs, or while the tab waits for the global render lock, is seen by step 4.2. A mutation requested during step 4 waits for the shared lock. A mutation after step 4 changes IndexedDB but not the frozen map or the `Blob` objects the render already holds.
 
-## Runtime source lifecycle
+## Tasks
 
-Use a bounded source manager that:
-
-- creates one runtime source per needed Blob/digest where practical;
-- shares it across repeated scene refs;
-- preserves it for Player/render consumers;
-- releases/revokes obsolete sources only after no current consumer/render snapshot can use them;
-- releases all owned ephemeral sources on app teardown.
-
-When the accepted transport is `blob:`, this specifically means `URL.createObjectURL()` + bounded `URL.revokeObjectURL()` lifecycle.
-
-A deleted asset may keep an already-materialized runtime source alive only for the lifetime of an in-flight frozen render; new readiness checks see it as missing.
-
-## Browser download result
-
-No change to v0.2 output semantics except visual source origin.
-
-A custom-asset browser render must still produce:
-
-- H.264 MP4;
-- video-only in v0.3;
-- 1080 × 1920;
-- 30 FPS;
-- existing Story-derived duration;
-- same cancellation/OPFS cleanup guarantees.
+- [ ] **1. Orchestration.** `localAssetState.ts` (`resolveStoryLocalAssets`, `createLocalAssetRenderPreparation`, `describeLocalAssetRenderBlock`) + `tests/local-asset-state.test.mjs` (uses `tests/helpers/memoryAssetStore.mjs`).
+- [ ] **2. URL pool and hook.** `objectUrlPool.ts`, `useStoryLocalAssets.ts`, `tests/object-url-pool.test.mjs`.
+- [ ] **3. Preview wiring.** `Preview.tsx`, `App.tsx` (open library on mount, channel + focus → `refreshToken`, cache invalidation on messages), `tests/browser/helpers/seedAssetLibrary.mjs`, `tests/browser/local-asset-preview.spec.mjs`.
+- [ ] **4. Render wiring.** `browserRender.ts`, `App.tsx` render sequence, extend `tests/web-browser-render.test.mjs`, `tests/browser/local-asset-render-race.spec.mjs`.
+- [ ] **5. MP4 golden.** Extend `tests/browser/browser-render-golden.spec.mjs` with a Story using `pose-magenta.png` and `background-cyan.jpg` (seeded), render, and sample frames: magenta present in the pose area, cyan in the top half / yellow in the bottom half of the background, plus a bundled-only positive control. Check H.264, video-only, 1080×1920, 30 FPS, expected frame count.
 
 ## Tests
 
-Minimum unit/browser coverage:
+`tests/local-asset-state.test.mjs`
 
-- bundled-only Story renders without `localAssetSources`;
-- local pose resolves through runtime map and uses contain behavior;
-- local background resolves through runtime map and uses cover behavior;
-- missing pose/background render explicit placeholders in Player;
-- mixed Story with valid refs + one missing ref keeps valid local images resolved and shows a placeholder only for the missing position;
-- mixed Story with valid refs + one corrupt ref keeps unrelated valid local images resolved and shows a placeholder only for affected positions;
-- Render MP4 remains disabled for both mixed cases until all refs resolve/verify;
-- no silent bundled fallback;
-- distinct local refs are collected once per Story;
-- duplicate scene refs share resolved source;
-- aggregate budget counts refs and distinct digests correctly;
-- 64-ref / 256-MiB / 200-MP boundaries pass, while each +1/overflow case remains schema-valid/exportable but does not fetch original Blobs or mount Player/render;
-- many-scene fixture with unique near-limit refs fails closed at metadata-budget stage without reading any `blobs` records;
-- instrumentation proves a metadata-preflight over-budget Story consults only canonical `assets` keys/`payloadMeta`, with zero original-Blob store reads and no partial Player source map;
-- Blob keyed by digest A but containing valid image-B bytes fails integrity verification and never reaches Player/render;
-- Blob A with correct digest A plus payloadMeta dimensions deliberately changed from actual values is detected as corrupt/unavailable and never reaches runtime-source creation;
-- no test expects deliberately under-reported payloadMeta to survive integrity verification into a later over-budget state;
-- defensive verified-descriptor totals equal metadata-preflight totals for every successfully verified digest set;
-- integrity verification runs sequentially with at most one digest/≤25-MiB source payload materialized for hashing at once, including a fixture near the 256-MiB aggregate source-byte limit;
-- successful integrity verification is reused within the page session until a mutation/invalidation for that digest clears the cache;
-- Player waits for local image readiness before frame advancement;
-- rapid local ref A → B → C changes cannot let stale A/B loads unblock C;
-- Render MP4 is disabled while asset resolution is pending/missing;
-- render start defensively rechecks asset readiness;
-- delete of one required category ref from another tab during the sequential integrity phase **or while tab A waits for the global render lock** is caught by final canonical-row revalidation before snapshot freeze, even when the same digest remains registered in the other category;
-- a race test mutates a required ref exactly after heavy verification/snapshot preparation but before tab A acquires the global render lock; after A acquires the global lock, final shared-lock revalidation detects the change and render never touches OPFS/output;
-- exclusive cross-tab delete requested during the shared final snapshot critical section waits until snapshot freeze completes;
-- browser render receives the frozen Story + source-map snapshot;
-- asset mutation controls remain locked while rendering;
-- cross-tab delete **during render preparation, before snapshot freeze**, either becomes visible to final canonical-row revalidation or waits behind the shared asset-library lock; it cannot produce a snapshot for a deleted category ref;
-- deleting durable asset from another tab **after** snapshot freeze does not break the already-held Blob/runtime-source render snapshot;
-- after render settlement, durable deletion becomes missing state;
-- browser golden renders one custom pose and one custom background through normal web renderer;
-- custom-asset MP4 retains v0.2 dimensions/FPS/video-only metadata.
+- bundled-only Story → `none`, zero store reads;
+- library `disabled` → every ref `unavailable`, zero store reads;
+- all refs present and valid → `allReady`, one blob read per distinct digest even when 5 scenes share it;
+- mixed: valid A + missing B → A ready (in `verified`), B missing, `allReady: false`;
+- mixed: valid A + corrupt C (blob bytes of another image) → A ready, C corrupt;
+- row present but payloadMeta absent → `missing`; row value claiming another digest → `corrupt` and zero reads of that other digest;
+- pose row for digest D deleted but background row for D present → pose ref `missing`, background ref ready;
+- over budget by refs (65 refs, all missing metadata) → `over-budget`, zero blob reads;
+- over budget by bytes and by pixels (fake metadata) → `over-budget`, zero blob reads; exactly at limits → proceeds;
+- `describeLocalAssetRenderBlock` returns each message in the priority order above;
+- `createLocalAssetRenderPreparation`: unchanged library → `ok` with a frozen map containing one `url` entry per ready ref; pose row deleted after resolution (background row for the same digest kept) → `ok: false`; payloadMeta changed after resolution → `ok: false`; the asset lock is requested in `shared` mode (fake `LockManager`).
 
-## Acceptance criteria
+`tests/object-url-pool.test.mjs`
 
-- shared Remotion components support bundled and local refs without a second renderer;
-- local bytes remain outside Story/YAML;
-- Player can communicate missing refs without changing Story meaning;
-- Player supports partial resolution for missing/corrupt refs while preserving valid local images; browser MP4 cannot start until every required ref is present/integrity-verified;
-- aggregate-over-budget state suppresses the whole Player/render source map, and aggregate budget is revalidated from verified real dimensions/size after integrity checks;
-- ASSET-004 uses the ASSET-001-proven runtime transport and browser-render golden confirms resolved local images through the shared composition;
-- v0.2 bundled output remains intact.
+- same digest acquired twice → one `create`, revoked only after two releases;
+- `dispose` revokes all; releasing an unknown digest is a no-op.
+
+`tests/web-browser-render.test.mjs` (extend)
+
+- `renderStoryMediaOnWeb` passes `localAssetSources` in both `defaultProps` and `inputProps`;
+- `prepareLocalAssets` runs after `acquireLock` and before the first `cleanup` call (record call order);
+- `{ok: false}` → outcome `assets-changed`, lease released, `cleanup` and `renderStory` never called;
+- `release()` is called after post-cleanup on success, failure and cancel;
+- with a fake `LockManager` that records events, the order is: render lock granted → asset lock requested in `shared` mode → rows re-read → map frozen → asset lock released → `renderStory` called; the asset lock is never requested before the render lock. (That an exclusive request waits for a held shared lock is Web Locks behavior, already covered by the ASSET-002 harness test.)
+
+`tests/browser/local-asset-preview.spec.mjs` (production build, seeded IndexedDB, Story loaded through the YAML editor)
+
+- local pose + background render inside the Player (no placeholder elements; images have `blob:` sources);
+- deleting the seeded background record (raw IndexedDB) and reloading → `[data-missing-local-asset]` only for the background, pose still an image, render button disabled with the "unavailable" message;
+- seeding a corrupt blob (bytes of the other fixture) → placeholder for that ref only;
+- a Story with 65 distinct local refs (seed metadata only, no blobs) → over-budget message, no Player, and no reads from the `blobs` store (wrap `IDBObjectStore.prototype.get` in an init script to log store names);
+- changing the pose ref rapidly A → B → C through the YAML editor ends with C displayed;
+- `page.addInitScript` deleting `navigator.locks` → library disabled message; bundled reference Story still previews normally.
+
+`tests/browser/local-asset-render-race.spec.mjs` (two pages, one context)
+
+- page B holds `tora-video-engine:web-fs-render` (via `navigator.locks.request` in `page.evaluate`); page A clicks Render and waits; page B deletes the required pose row (exclusive asset lock) and then releases the render lock; page A reports "Local assets changed…" and no `__remotion_render:` OPFS entry was created;
+- page B deletes the pose row **after** page A's render has started (progress visible) → A's render still succeeds and its MP4 contains the pose;
+- after A's render completes, B's earlier deletion shows as missing in A without reload (refresh token).
+
+## Verify
+
+~~~bash
+npm test
+npm run lint
+npm run web:build
+npm run test:browser
+npm run test:harness
+npx playwright test --config=playwright.browser-render.config.mjs
+~~~
 
 ## Out of scope
 
-- audio;
-- remote URLs;
-- image transcoding;
-- animation/video assets;
-- cloud fetch during render.
+Import/rename/delete UI and the missing-asset recovery UX (ASSET-003); CLI (ASSET-005); audio; remote URLs; transcoding.
 
 ## Done when
 
-The same Active Story and shared component tree can preview bundled/browser-local images with partial resolution for missing/corrupt refs, block MP4 until all required refs verify, fail fast for whole-preview aggregate-budget overflow, and avoid consulting heavy Blob records when metadata preflight already rejects the Story.
+All tasks are ticked: the Player shows local images, explicit placeholders for missing/corrupt refs, and an over-budget message without reading blobs; browser MP4 renders seeded local images (golden passes); render preparation detects concurrent deletions; and bundled-only behavior and output are unchanged.

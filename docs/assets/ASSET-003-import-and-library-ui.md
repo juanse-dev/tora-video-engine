@@ -1,355 +1,194 @@
-# ASSET-003 — Import and local asset library UI
+# ASSET-003 — My assets UI: import, rename, delete and recovery
 
 > Status: **Proposed**
+>
+> Depends on: ASSET-002, ASSET-004. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
 ## Goal
 
-Extend the v0.2 asset catalog so users can discover and use both Tora's bundled images and their own browser-local images without confusing the two inventories.
+Extend the visual editor's asset catalog so a user can import, apply, rename and delete their own pose/background images, and recover a scene whose local asset is missing, without editing YAML. Bundled assets stay a separate, unchanged catalog.
 
-## Product vocabulary
+## Decisions specific to this spec
 
-The catalog presents two origins explicitly:
+- **Import applies.** A successful **Import pose** / **Import background** also applies the new ref to the selected scene through the normal `onChange` path (same as clicking a card). A failed import changes nothing.
+- **Current selection card.** When the selected scene uses a local ref, the My assets section always shows that ref as the first card ("Current"), even if it is not on the visible page. This is also where a missing ref is shown and repaired. Pages are ordered by hash (D-11), so this card is how the user finds what they just imported.
+- **Choose replacement** is not a separate flow: clicking any bundled or local card replaces the selected scene's ref, as today. The missing card says so.
+- **Dialogs** reuse the existing `.transition-panel` + `role="dialog"` pattern from `src/web/App.tsx`. No native `confirm()`.
+- **Render lock comes for free.** The editors are inside `<fieldset className="authoring-fieldset" disabled={authoringLocked}>` (`src/web/App.tsx`); all new buttons and file inputs live inside it, so they are disabled while an MP4 renders. Do not add a second lock mechanism.
+- The library handle is shared through a React context so `VisualEditor` does not need new props.
 
-- **Bundled** — shipped with Tora Video Engine;
-- **My assets** — stored only in this browser/site data.
+## Files
 
-Do not merge both into one unlabeled grid.
+| Action | Path | Purpose |
+| --- | --- | --- |
+| create | `src/web/assetLibraryContext.ts` | `AssetLibraryContext` value type + `createContext` (no JSX in this file). |
+| create | `src/web/useLocalAssetPage.ts` | Paging state per category + thumbnail object URLs for the visible page. |
+| create | `src/web/localAssetUi.ts` | Pure helpers: scene counts, copy text, matching-file evaluation. |
+| create | `src/web/components/MyAssetsSection.tsx` | One category's My assets block. |
+| create | `src/web/components/LocalAssetCard.tsx` | Card: thumbnail, label, origin badge, select, rename, delete. |
+| create | `src/web/components/MissingLocalAssetCard.tsx` | Missing/corrupt/unavailable current-selection card with repair actions. |
+| modify | `src/web/components/AssetCatalog.tsx` | Split each image category into **Bundled** and **My assets**. |
+| modify | `src/web/App.tsx` | Provide `AssetLibraryContext`. |
+| modify | `src/web/styles.css` | Styles for the new elements (reuse `.asset-card`, `.asset-grid`, `.transition-panel`). |
+| create | `tests/local-asset-ui.test.mjs`, `tests/browser/my-assets.spec.mjs` | Tests. |
 
-The UI should make the local-only nature of My assets understandable without requiring README knowledge.
+## Interfaces
 
-## Supported categories
+### `src/web/assetLibraryContext.ts`
 
-v0.3 custom imports are allowed only for:
+~~~ts
+export type AssetLibraryContextValue = {
+  status: AssetLibraryStatus;           // ASSET-002
+  locks: LockManager | undefined;
+  channel: {post(m: AssetLibraryMessage): void};
+  refreshToken: number;                 // ASSET-004; bump to refetch pages
+  bumpRefresh: () => void;
+  activeStory: Story;                   // for delete-in-use counts
+  localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
+};
 
-- pose / character image;
-- background.
-
-Animations remain bundled/editor-defined choices and are not imported files.
-
-## Catalog layout
-
-For the selected scene, the visual hierarchy should be conceptually:
-
-~~~text
-POSES
-
-Bundled
-[Formal] [Confused] [Panic] [Coffee]
-
-My assets
-[My cat] [Formal alt] [+ Import pose]
-
-
-BACKGROUNDS
-
-Bundled
-[Office] [Server room]
-
-My assets
-[Apartment] [Bogotá] [+ Import background]
+export const AssetLibraryContext = createContext<AssetLibraryContextValue | null>(null);
 ~~~
 
-Existing bundled cards keep their current behavior.
+### `src/web/localAssetUi.ts`
 
-Local cards display:
+~~~ts
+/** Number of scenes in the Active Story whose pose or background equals ref. */
+export const countScenesUsingRef = (story: Story, ref: LocalAssetRef): number;
 
-- the bounded derivative thumbnail from ASSET-002 — never the original full-resolution Blob;
-- display label;
-- local-origin indicator;
-- current-selection state;
-- actions for rename/delete.
+export type MatchingFileResult =
+  | {kind: "match"}                               // same category + same digest
+  | {kind: "different"; candidateRef: LocalAssetRef};
 
-## Catalog memory bounds
+export const evaluateMatchingFile = (
+  missingRef: LocalAssetRef,
+  candidateRef: LocalAssetRef,
+): MatchingFileResult;
 
-My assets may grow much larger than the number of images visible at once.
-
-The UI must consume the ASSET-002 derivative thumbnails **and page the metadata itself**:
-
-- never use original full-resolution local Blobs as card thumbnails;
-- query at most 50 local asset metadata rows per page/window;
-- mount/decode at most those 50 local thumbnail cards at once;
-- use ASSET-002 canonical primary-key prefix/range + cursor/keyset pagination rather than unbounded `getAll()`; do not add a redundant secondary category/order index;
-- obtain total library/category counts separately without materializing all metadata rows;
-- fetch the next metadata page only when navigation/windowing requires it;
-- release off-window thumbnail runtime/object URLs promptly;
-- opening My assets must not trigger original-Blob reads or whole-library metadata materialization.
-
-The catalog therefore has a bounded metadata working set and a bounded thumbnail working set.
-
-## Import entry points
-
-Provide category-aware import actions:
-
-- **Import pose**
-- **Import background**
-
-The category is selected by the entry point rather than inferred from image dimensions or filename.
-
-The file picker accepts static PNG/JPEG/WebP only as a hint, but ASSET-002 content validation remains authoritative. APNG and animated WebP are rejected even if the picker accepts their container family.
-
-One import action may process one file in v0.3. Batch import is optional and must not complicate error recovery.
-
-## Import feedback
-
-During import expose clear states:
-
-~~~text
-reading
-validating
-hashing
-storing
-ready
-error
+export const deleteConfirmationText = (label: string, category: LocalAssetCategory, sceneCount: number): string;
+export const localOnlyDisclosure = (origin: string): string;
 ~~~
 
-The UI does not need to expose every internal phase as a separate progress bar, but the operation must not appear frozen while hashing/decoding a large allowed file.
+Copy (exact strings, so tests can assert them):
 
-On success:
+- disclosure: `Stored only in this browser for ${origin}. Not uploaded or synced. Production, Deploy Previews and localhost each keep a separate library.`
+- delete, unused: `Delete "${label}" (${category}) from My assets?`
+- delete, in use: `"${label}" (${category}) is used by ${n} scene(s) in this Story. Deleting it leaves those scenes with a missing local asset, and MP4 rendering stays blocked until you re-import the same file or choose a replacement. Other exported YAML files may also use it.`
+- missing card: `Missing local ${category}` + `shortAssetId(ref)` + `Used by scene(s) ${list}.` + `Import the original file to restore it, or pick any other ${category} to replace it.`
+- corrupt card: same title as missing plus `The stored copy is damaged.`
+- disabled library: the `AssetLibraryStatus` message.
 
-- add/reuse the local asset in My assets;
-- make it selectable immediately;
-- if the same bytes/category already exist, focus/select the existing card and explain that the duplicate was reused/repaired from the newly validated bytes.
+### `useLocalAssetPage`
 
-On failure, keep the previous Story/library state intact and show an actionable error, including resource-limit failures (25 MiB, 8192 px per side, 50 MP) and animated-image rejection.
-
-## Initial labels
-
-Default the display label from the original filename without its extension.
-
-Example:
-
-~~~text
-IMG_0421.webp
-→
-IMG_0421
+~~~ts
+export const useLocalAssetPage = (
+  category: LocalAssetCategory,
+): {
+  entries: Array<LocalAssetEntry & {thumbnailUrl: string | null}>;
+  total: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  next(): void;
+  previous(): void;
+  loading: boolean;
+};
 ~~~
 
-Do not use the filename as identity.
+- Uses `listLocalAssetPage` / `countLocalAssets` (ASSET-002): one page of at most 50 rows and their thumbnails. Never reads `blobs`.
+- Creates thumbnail object URLs for the visible page only; revokes them when the page changes or the component unmounts.
+- Refetches the current page when `refreshToken` changes. If the page became empty (deletions), step back one page.
 
-## Rename
+## UI behavior
 
-A local asset can be renamed from its card/action menu.
-
-Rename:
-
-- edits browser-local metadata only;
-- does not rewrite Story/YAML;
-- does not change hash/ref;
-- does not affect other scenes using the same ref;
-- may use a label already used by another asset.
-
-Reject an empty/whitespace-only label.
-
-Reasonable UI length limits are allowed, but they must not affect the stable reference.
-
-## Delete
-
-Deletion is allowed.
-
-### Unused by current Story
-
-Ask for normal destructive confirmation.
-
-### Used by current Story
-
-Show a stronger warning containing the number of current scenes that reference it.
-
-Conceptually:
-
-> This local asset is used by 3 scenes. Deleting it will leave those scenes with a missing local asset and MP4 rendering will be blocked until the reference is resolved or replaced.
-
-Actions:
-
-- Cancel
-- Delete asset anyway
-
-Do not silently rewrite the affected scenes.
-
-The application cannot know whether exported YAML files outside the browser also reference this hash, so the confirmation should also avoid implying that only the current Story may be affected.
-
-## Applying a local asset
-
-Clicking a local pose/background card updates the selected scene through the **same visual draft/validation/browser-policy commit path** used by bundled assets.
-
-Do not create a second custom-asset Story state.
-
-The resulting Story stores the stable ref from ASSET-001.
-
-## Missing reference UX
-
-When the selected/current Story refers to a local asset absent from the current browser:
-
-- show a clearly distinct **Missing local asset** card/placeholder;
-- display category;
-- display enough of the stable reference to identify it safely;
-- identify affected scene(s);
-- never render the previous asset as if the reference resolved.
-
-Offer at least:
-
-- **Import matching file**
-- **Choose replacement**
-
-### Import matching file
-
-The user selects a local image.
-
-If its SHA-256 + **same category** produces the exact missing ref:
-
-- durable library entry is created/reused;
-- every scene referencing that ref resolves automatically;
-- no Story mutation is required.
-
-If the selected file hashes to a different ref:
-
-- do not pretend it repaired the original;
-- explain the mismatch;
-- offer to use it as a replacement instead.
-
-### Choose replacement
-
-Selecting another bundled/local asset intentionally changes the affected scene reference through normal editor state.
-
-If several scenes share the missing ref, v0.3 may replace only the selected scene by default. Bulk replacement is optional.
-
-## Preview placeholders
-
-A Story with unresolved local assets may still remain Active.
-
-The Player area must not show a stale prior image.
-
-Use an explicit placeholder appropriate to the category, for example:
+### Layout (inside `AssetCatalog`, for poses and for backgrounds)
 
 ~~~text
-Missing local pose
-local:pose:sha256:abcd…7890
+Tora poses
+  Bundled
+    [Formal] [Confused] [Panic] [Coffee]
+  My assets · 12            ← total count
+    Stored only in this browser …
+    [Current: My cat ✓] [+ Import pose]
+    [Alpha] [Beta] … (≤ 50)  [‹ Previous] [Next ›]
 ~~~
 
-or:
+- Section headings are text (`Bundled`, `My assets`), not color only. Local cards carry a visible `Local` badge.
+- Bundled cards keep their current markup, class names and behavior.
+- Local cards are `<button aria-pressed>` like bundled cards; clicking applies `onChange({pose: ref})` / `onChange({background: ref})`.
+- Card thumbnails come only from `thumbnails` (ASSET-002). A card whose thumbnail is missing shows a neutral box with the label; it never loads the original blob.
+- Corrupt rows (decoded `corrupt`) render as "Damaged entry" cards: not selectable; only Delete is offered.
+- Rename: a `Rename` button turns the label into a text input with `Save` / `Cancel`; validation from `normalizeLocalAssetLabel`; Enter saves, Escape cancels. `not-found` result → message "This asset was deleted in another tab." and refresh.
+- Delete: a `Delete` button opens a dialog with the right confirmation text and buttons `Cancel` / `Delete asset` (in use: `Delete asset anyway`). The Story is never modified.
 
-~~~text
-Missing local background
-local:background:sha256:abcd…7890
-~~~
+### Import
 
-ASSET-004 defines renderer behavior and MP4 blocking.
+- `Import pose` / `Import background` are `<label>` buttons wrapping a hidden `<input type="file" accept="image/png,image/jpeg,image/webp">` (accept is only a hint).
+- While importing, show the current phase (`Reading…`, `Checking…`, `Hashing…`, `Saving…`) in a `role="status"` line and disable both import buttons.
+- Success: apply the ref to the selected scene; show `Imported "${label}".` or, if `created` is false, `"${label}" was already in My assets; its stored copy was refreshed.`; bump `refreshToken`.
+- Failure: show the `LocalAssetImportError` message (`describeImageRejection` or storage message) in a `role="alert"` line; nothing else changes.
 
-## Local-only disclosure
+### Missing / corrupt / unavailable current selection
 
-Near My assets include concise product copy equivalent to:
+When the selected scene's pose (or background) is a local ref whose state in `localAssetState` is not `ready`:
 
-> Stored only in this browser. These assets are not uploaded or synchronized.
+- the Current card is a `MissingLocalAssetCard` (`data-missing-local-asset-card={ref}`, `role="group"`, with the missing copy above);
+- action **Import matching file** (file input for that category). After `prepareLocalAssetImport`:
+  - `match` → commit the import (repairs/restores; no Story change because the ref is identical); readiness refreshes and every scene using that ref resolves;
+  - `different` → dialog: `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.` with `Use it as replacement for this scene` (commit + apply to the selected scene only) and `Cancel` (nothing written);
+- the bundled grid and My assets grid stay usable for choosing a replacement.
 
-Do not claim permanence: browser/site data may be cleared or evicted.
+With library `disabled` / `unavailable`: no import, rename or delete controls; the disabled message is shown in each My assets block; the Current card still explains the ref is unavailable here.
 
-Also make origin-local behavior discoverable: production, Deploy Previews, and localhost have separate My assets libraries because browser storage is same-origin.
+### Story lifecycle never clears the library
 
-## Story lifecycle does not clear the library
+Reset project, YAML import/apply, editor mode switches, and Story deletion of scenes never delete assets. Only the Delete action does.
 
-My assets is a reusable browser library, not Story-owned state.
+## Tasks
 
-Therefore:
-
-- **Reset project** does not delete local assets;
-- importing/replacing the current Story does not delete local assets;
-- switching editor modes does not delete local assets;
-- deleting an asset happens only through an explicit asset-library action.
-
-A one-click **Clear entire asset library** operation is out of scope for v0.3.
-
-## My assets coordination capability
-
-When ASSET-002 reports that Web Locks is unavailable, My assets is explicitly **read-only**:
-
-- existing durable cards remain visible;
-- thumbnails/labels and Player preview remain available when their backing data passes readiness/integrity checks;
-- **Import pose**, **Import background**, matching-file repair, rename, delete, and any other asset-library write action are disabled;
-- disabled mutation controls expose an actionable explanation rather than failing after user input;
-- no import is represented as successful unless a coordinated durable entry can be committed;
-- Render MP4 with local refs is unavailable per ASSET-004.
-
-Applying an existing durable local card to a scene may still use the normal Story edit path if Story authoring is available; any Story persistence/session-only warning remains the existing v0.2 concern and must stay visible.
-
-Do not hide existing My assets merely because mutation capability is unavailable.
-
-## Storage errors
-
-If browser storage is unavailable/full:
-
-- import fails without changing the selected scene;
-- bundled assets remain usable;
-- existing in-memory/available local assets remain usable when possible;
-- show the storage error;
-- do not silently convert the import into an ephemeral session-only asset in v0.3.
-
-An asset selected for a Story must have a durable library entry first.
-
-## Render-time mutation guard
-
-While a browser MP4 render is in flight, local asset mutations that could invalidate the render snapshot must be disabled:
-
-- import;
-- rename;
-- delete;
-- applying another pose/background.
-
-This follows the v0.2 invariant that authoring cannot change while an MP4 result is being produced.
-
-## Accessibility
-
-- local/bundled origin must not rely only on color;
-- action buttons have accessible names;
-- selected cards use `aria-pressed` or equivalent;
-- missing-asset status is exposed to assistive technology;
-- destructive confirmation identifies the asset by label and category.
+- [ ] **1. Pure helpers + context.** `localAssetUi.ts`, `assetLibraryContext.ts`, App provides the context. `tests/local-asset-ui.test.mjs`.
+- [ ] **2. Catalog split + paging + cards.** `useLocalAssetPage.ts`, `MyAssetsSection.tsx`, `LocalAssetCard.tsx`, `AssetCatalog.tsx`, styles.
+- [ ] **3. Import, rename, delete flows.**
+- [ ] **4. Missing/corrupt recovery card.** `MissingLocalAssetCard.tsx`.
+- [ ] **5. Browser tests.** `tests/browser/my-assets.spec.mjs`.
 
 ## Tests
 
-Minimum browser-level coverage:
+`tests/local-asset-ui.test.mjs`
 
-- My assets section is separate from Bundled;
-- import pose and import background create category-correct entries;
-- supported asset becomes visible/selectable immediately;
-- duplicate import reuses/focuses existing entry and repairs missing/corrupt backing Blob/thumbnail without changing its ref/label;
-- applying local pose/background commits the stable ref to the Story;
-- rename changes label but not Story ref;
-- delete unused asset requires confirmation;
-- delete-in-use warns with affected current-scene count;
-- confirmed delete leaves exact Story refs intact and creates missing state;
-- Cancel delete preserves asset and Story;
-- exact-file same-category re-import repairs missing ref without Story mutation;
-- different-file import cannot masquerade as matching repair;
-- choose replacement intentionally changes the selected scene ref;
-- storage failure does not commit imported ref;
-- asset mutation controls are disabled during browser render;
-- local-only disclosure is visible;
-- production/Deploy Preview/localhost origin separation is communicated;
-- Reset project and Story import do not delete My assets;
-- catalog never uses originals as thumbnails, reads/mounts no more than one 50-entry metadata/thumbnail page at once, and releases off-window runtime sources;
-- opening a large My assets library does not issue an unbounded metadata `getAll()`, while total count remains available independently.
+- `countScenesUsingRef` counts scenes (not fields) and ignores the other category's ref with the same digest;
+- `evaluateMatchingFile`: same ref → `match`; same digest other category → `different`; other digest → `different`;
+- every copy function returns the exact strings above (including singular/plural handling chosen in implementation).
 
-## Acceptance criteria
+`tests/browser/my-assets.spec.mjs` (production build, fixtures from `tests/fixtures/local-assets/`, `page.setInputFiles`)
 
-- first-time user can understand which assets ship with Tora and which are local;
-- import/use/rename/delete requires no YAML editing;
-- labels and identity are clearly separated;
-- delete-in-use is possible but never silent;
-- missing refs are actionable;
-- local-only behavior is explained in-product;
-- with Web Locks unavailable, existing My assets remain visible/read-only while import/repair/rename/delete are disabled with an explicit capability message;
-- no IndexedDB write or ephemeral import occurs in read-only capability mode;
-- a large My assets library remains bounded by paged metadata + derivative thumbnails rather than whole-library metadata materialization or full-resolution grid decodes.
+- Bundled and My assets headings are both present for poses and backgrounds; bundled cards unchanged;
+- disclosure text includes the page origin;
+- import pose fixture → card appears as Current, scene pose becomes the local ref (check via YAML export or the YAML editor), Player shows the image;
+- import background fixture via the **extensionless** file → accepted;
+- import an APNG / a >25 MiB file / a GIF (generate in the test into a temp dir) → error message, Story unchanged, no new card;
+- importing the same pose file again → "already in My assets" message, still one card;
+- rename → label changes, Story YAML unchanged;
+- delete unused asset → confirmation → card gone;
+- delete in-use asset → dialog shows the scene count; Cancel keeps everything; confirm → Story ref unchanged, missing card + Player placeholder, render blocked;
+- Import matching file with the exact fixture → resolves with no Story change; with a different fixture → mismatch dialog; Cancel writes nothing; "Use it as replacement" changes only the selected scene;
+- 120 seeded pose rows: first page shows 50 cards, count shows 120, Next/Previous work, and (instrumented init script) no `blobs` reads and no `getAll` on `assets`;
+- during an MP4 render, import/rename/delete/select controls are disabled (fieldset);
+- Reset project and YAML import leave My assets intact;
+- with `navigator.locks` removed → disabled message, no import buttons, bundled flow works.
+
+## Verify
+
+~~~bash
+npm test
+npm run lint
+npm run web:build
+npm run test:browser
+~~~
 
 ## Out of scope
 
-- batch asset management;
-- folders/tags/search;
-- drag-and-drop reordering of asset library;
-- cloud sync;
-- sharing library entries;
-- global replacement across arbitrary exported Stories;
-- bulk/one-click clearing of the entire asset library.
+Batch import, folders/tags/search, drag-and-drop, bulk replacement across scenes or exported Stories, clearing the whole library, sharing.
 
 ## Done when
 
-A user can manage a reusable My assets library from the browser UI while bundled Tora assets remain a distinct, immutable catalog.
+All tasks are ticked and a user can import, apply, rename, delete and recover local assets from the visual editor, with bundled assets visibly separate and unchanged.

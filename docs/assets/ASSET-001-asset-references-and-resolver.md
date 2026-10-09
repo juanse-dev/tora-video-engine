@@ -1,389 +1,328 @@
-# ASSET-001 — Asset references and resolver
+# ASSET-001 — Asset references, persistence v2 and composition contract
 
 > Status: **Proposed**
+>
+> Depends on: v0.2 (current `main`). Read [README](./README.md) first: invariants (`INV-n`), constants and decisions (`D-n`) live there.
 
 ## Goal
 
-Extend the Story asset boundary so poses/backgrounds may refer either to Tora's bundled images or to deterministic local custom assets, without embedding bytes or introducing a second rendering model.
+Let a Story carry local pose/background refs through parse → validate → serialize → timeline → editor → persistence, and teach the shared Remotion composition to draw a local image from an ephemeral source map (or a placeholder when the source is absent). No storage, import UI or CLI scanning yet.
 
-This spec establishes identity/readiness, the v0.3 project-persistence version boundary, and a mandatory browser-render transport spike. Import/storage/UI are later specs.
+## Decisions specific to this spec
 
-## Backward compatibility
+- The Story-facing types widen: `Pose` and `Background` (exported from `src/story/types.ts`) now mean *bundled value **or** local ref*. New `BundledPose` / `BundledBackground` types name the closed bundled sets. Widening the existing names makes the TypeScript compiler point at every place that must be checked.
+- The `localAssetSources` prop is optional. Every existing caller that passes only `{story}` keeps working, and bundled output is pixel-identical.
+- The browser transport (`blob:`) is already proven (D-1). This spec does not build a harness page; ASSET-004 commits the MP4 golden that exercises it end-to-end.
 
-Existing Stories must remain valid unchanged:
+## Files
 
-~~~yaml
-pose: formal
-background: office
-~~~
+| Action | Path | Purpose |
+| --- | --- | --- |
+| create | `src/localAssets/limits.ts` | All `MAX_*` constants from the README table that live here. |
+| create | `src/localAssets/refs.ts` | Ref grammar, parse/build helpers, type guards. |
+| create | `src/localAssets/sources.ts` | `LocalAssetSource`, `LocalAssetSourceMap`, `STAGED_LOCAL_ASSETS_DIR`, `shortAssetId()`. |
+| create | `src/localAssets/readiness.ts` | Pure functions: collect refs/usages, evaluate aggregate budget. |
+| create | `src/components/visualAssetSource.tsx` | React context + `useVisualAssetSrc()` hook. |
+| create | `src/components/MissingAssetPlaceholder.tsx` | Deterministic placeholder for a missing local pose/background. |
+| modify | `src/story/schema.ts` | `PoseSchema` / `BackgroundSchema` accept local refs. |
+| modify | `src/story/types.ts` | Export `BundledPose`, `BundledBackground`, `LocalAssetRef`, etc. |
+| modify | `src/assets.ts` | Catalog exhaustive over `BundledPose` / `BundledBackground` only. |
+| modify | `src/Video.tsx` | `ToraVideoProps.localAssetSources?`; provide context. |
+| modify | `src/components/Tora.tsx`, `src/components/Background.tsx` | Resolve through `useVisualAssetSrc()`. |
+| modify | `src/web/persistence.ts`, `src/web/App.tsx` | Persistence envelope v1/v2. |
+| create | `tests/local-asset-refs.test.mjs`, `tests/local-asset-readiness.test.mjs`, `tests/local-asset-composition.test.mjs`, `tests/persistence-v2.test.mjs` | Unit tests. |
 
-The existing bundled values remain the canonical bundled references for v0.3.
+## Interfaces
 
-Do **not** rewrite old Stories to a new `bundled:` prefix.
-
-## Local reference grammar
-
-Local image references are content-addressed and category-scoped:
-
-~~~text
-local:pose:sha256:<64-lowercase-hex>
-local:background:sha256:<64-lowercase-hex>
-~~~
-
-Examples:
-
-~~~yaml
-pose: local:pose:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-background: local:background:sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
-~~~
-
-Requirements:
-
-- hash algorithm is SHA-256 over the **original file bytes**;
-- digest is serialized as exactly 64 lowercase hexadecimal characters;
-- category is part of the ref;
-- pose fields accept only bundled poses or `local:pose:...`;
-- background fields accept only bundled backgrounds or `local:background:...`;
-- malformed/uppercase/truncated/unknown-category local refs fail Story schema validation;
-- display label and original filename are never part of identity;
-- labels do not need to be unique;
-- two visually identical images with different encoded bytes intentionally produce different refs.
-
-The same original bytes may therefore yield two category-specific refs with the same digest.
-
-## Type boundary
-
-Split today's finite bundled types from the Story-facing reference types.
-
-Conceptually:
+### `src/localAssets/refs.ts`
 
 ~~~ts
-type BundledPose = "formal" | "confused" | "panic" | "coffee";
-type BundledBackground = "office" | "server-room";
+export const localAssetCategories = ["pose", "background"] as const;
+export type LocalAssetCategory = (typeof localAssetCategories)[number];
 
-type LocalPoseRef =
-  `local:pose:sha256:${LowercaseSha256}`;
+export type LocalPoseRef = `local:pose:sha256:${string}`;
+export type LocalBackgroundRef = `local:background:sha256:${string}`;
+export type LocalAssetRef = LocalPoseRef | LocalBackgroundRef;
 
-type LocalBackgroundRef =
-  `local:background:sha256:${LowercaseSha256}`;
+export const LOCAL_ASSET_REF_PATTERN =
+  /^local:(pose|background):sha256:[0-9a-f]{64}$/u;
+export const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
 
-type PoseRef = BundledPose | LocalPoseRef;
-type BackgroundRef = BundledBackground | LocalBackgroundRef;
+export const isLocalAssetRef = (value: string): value is LocalAssetRef;
+export const isLocalPoseRef = (value: string): value is LocalPoseRef;
+export const isLocalBackgroundRef = (value: string): value is LocalBackgroundRef;
+
+/** Returns null for anything that is not an exact canonical local ref. */
+export const parseLocalAssetRef = (
+  value: string,
+): {category: LocalAssetCategory; digest: string} | null;
+
+/** Throws if digest is not 64 lowercase hex. */
+export const buildLocalAssetRef = (
+  category: LocalAssetCategory,
+  digest: string,
+): LocalAssetRef;
+
+/** Primary-key prefix for one category, e.g. "local:pose:sha256:". */
+export const localAssetRefPrefix = (category: LocalAssetCategory): string;
 ~~~
 
-Exact implementation may use branded strings/Zod refinements rather than a literal `LowercaseSha256` type.
+### `src/story/schema.ts`
 
-The Story fields remain named `pose` and `background` in v0.3. Formal character-pack/multi-character modeling remains out of scope.
-
-## Catalog compatibility
-
-`src/assets.ts` currently assumes `Record<Pose, ...>`, which stops being correct once Story pose refs are open to valid local hashes.
-
-Refactor the bundled catalog so it is exhaustive over **BundledPose** / **BundledBackground**, not over every possible Story ref.
-
-The bundled catalog remains the source of truth for:
-
-- bundled id;
-- label;
-- preview/static path;
-- category.
-
-Local library metadata is a separate inventory and must not be merged into source-controlled bundled catalog constants.
-
-## Project persistence version boundary
-
-Existing bundled Story/YAML **content** remains valid unchanged, while v0.3 adds a persistence-envelope version that is required only once a Story actually contains local refs.
-
-The v0.3 reader supports both:
-
-~~~text
-v1 → bundled-only Story envelope
-v2 → Story envelope that may contain local refs
-~~~
-
-Promotion is **lazy and monotonic**, not eager.
-
-ASSET-001 owns the version boundary:
-
-- a valid persisted v1 bundled-only Story opens in v0.3 **without rewriting it to v2**;
-- while the durable slot is v1 and the Story remains bundled-only, normal v0.3 autosaves continue writing v1 so a rollback/older v0.2 build can still restore it normally;
-- importing assets into My assets alone does not promote project persistence; only attempting to durably persist a Story containing at least one local ref requires v2;
-- the persistence owner atomically promotes v1 → v2 on the first successful write whose Story contains a local ref;
-- if that promotion/write fails, the previous v1 durable envelope remains untouched and the new Active Story follows the existing unpersisted/loss-risk behavior;
-- once the durable slot is v2, later writes remain v2 even if all local refs are subsequently removed; there is no automatic downgrade;
-- v2 does not contain image bytes or asset-library metadata; it only permits the expanded Story refs;
-- malformed/unsupported v1/v2 recovery behavior remains protected;
-- an old v0.2 tab encountering a v2 envelope treats it as unsupported-version/recovery rather than claiming to understand and then schema-rejecting a local ref;
-- the existing physical Story/recovery storage slots remain shared;
-- the persistence Web Lock name remains **unversioned** while those physical slots are shared across old/new bundles;
-- only the tab that owns the existing persistence-writer lock may durably promote/write the shared envelope; secondary/session-only tabs must not perform a promotion write and must follow the existing ownership/retry/conflict rules.
-
-Conceptually, persistence chooses the required envelope version from both durable history and Story contents:
-
-~~~text
-required version =
-  max(current durable version,
-      Story contains any local ref ? 2 : 1)
-~~~
-
-The custom asset IndexedDB introduced by ASSET-002 has its own independent database schema version.
-
-Existing v0.2 YAML files do not require content migration. A user who only opens/edits bundled-only Stories in v0.3 does not lose v0.2 rollback compatibility.
-
-## Availability is not schema validity
-
-A local ref may be syntactically valid but absent from the current browser/checkout.
-
-That must **not** make the Story schema-invalid.
-
-Separate these concepts:
-
-~~~text
-schema validity
-      ↓
-browser authoring policy
-      ↓
-asset readiness
-      ↓
-preview/render readiness
-~~~
-
-A Story with an unavailable local ref:
-
-- remains parseable/serializable/exportable;
-- may remain the Active Story;
-- is persisted with the exact unresolved ref;
-- surfaces an explicit missing-asset state;
-- cannot start MP4 rendering until all required local refs resolve.
-
-This separation is necessary for YAML moved between computers/browsers.
-
-## Browser-local asset budget
-
-Per-file validation is not enough to make a Story safe for browser preview/render. A schema-valid Story may reference many different local files.
-
-Before reading full Blob payloads or creating runtime image sources, the browser must load only local **metadata** for the distinct refs/digests used by the Story and enforce these initial v0.3 aggregate **preflight** limits:
+Keep the exported `poses` / `backgrounds` arrays (they are the bundled sets). Replace the enum schemas:
 
 ~~~ts
-MAX_BROWSER_STORY_LOCAL_ASSET_REFS = 64
-MAX_BROWSER_STORY_LOCAL_ASSET_BYTES = 256 * 1024 * 1024
-MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS = 200_000_000
+export const BundledPoseSchema = z.enum(poses);
+export const BundledBackgroundSchema = z.enum(backgrounds);
+
+export const PoseSchema = z.custom<BundledPose | LocalPoseRef>(
+  (value) =>
+    typeof value === "string" &&
+    (BundledPoseSchema.safeParse(value).success || isLocalPoseRef(value)),
+  {message: "Pose must be formal, confused, panic, coffee, or local:pose:sha256:<64 lowercase hex>"},
+);
+
+export const BackgroundSchema = z.custom<BundledBackground | LocalBackgroundRef>(
+  (value) =>
+    typeof value === "string" &&
+    (BundledBackgroundSchema.safeParse(value).success || isLocalBackgroundRef(value)),
+  {message: "Background must be office, server-room, or local:background:sha256:<64 lowercase hex>"},
+);
 ~~~
 
-Accounting rules:
+Use `z.custom` exactly like this. Verified with the pinned `zod@4.6.5`: a `z.union([...], {error})` would report the inner regex error instead of this message. `StorySceneSchema` keeps using `PoseSchema` / `BackgroundSchema`; `BundledPose` / `BundledBackground` are `z.infer` of the bundled enums (define them before these schemas).
 
-- ref count uses **all** distinct category-scoped local refs in the Story, including currently missing/corrupt refs;
-- source bytes and decoded pixels are summed once per distinct digest whose valid metadata/verified descriptor is currently available because pose/background refs may share one binary;
-- bundled assets do not consume this custom-asset budget;
-- missing/corrupt metadata is asset-unready and keeps render ineligible, but does not force otherwise valid refs out of a within-budget preview;
-- the initial budget preflight is evaluated from IndexedDB metadata **before** fetching the original Blobs;
-- metadata is not trusted blindly: payload integrity must confirm exact format/size/dimension equality before runtime use;
-- for successfully verified digests, a defensive aggregate recomputation must equal the metadata-preflight byte/pixel totals for that same digest set; any disagreement is corruption/internal inconsistency, not a second normal over-budget state.
+### `src/story/types.ts`
 
-Exceeding this budget is a browser-only readiness/policy failure, not a Story schema error.
+Add exports: `BundledPose`, `BundledBackground` (inferred from the bundled schemas) and re-export `LocalAssetRef`, `LocalPoseRef`, `LocalBackgroundRef`, `LocalAssetCategory` from `src/localAssets/refs.ts`. `Pose` / `Background` are now the widened union types.
 
-The Story remains:
+### `src/assets.ts`
 
-- parseable;
-- persistable;
-- YAML-exportable;
-- editable/recoverable for CLI use.
-
-But the browser must:
-
-- suppress the normal Player/render path for that over-budget candidate/Story;
-- explain which aggregate limit was exceeded;
-- avoid loading the rejected Story's original local Blobs.
-
-CLI rendering is not bound by this browser aggregate budget; it still enforces the per-file source validation rules.
-
-## Shared asset-readiness boundary
-
-Introduce one environment-neutral way to enumerate and evaluate required visual refs.
-
-Suggested responsibilities:
+Change every `Record<Pose, …>` to `Record<BundledPose, …>` and every `Record<Background, …>` to `Record<BundledBackground, …>`. Add:
 
 ~~~ts
-collectStoryVisualAssetRefs(story): VisualAssetRef[]
-
-evaluateStoryAssetReadiness(
-  story,
-  resolver,
-): Promise<StoryAssetReadiness>
+export const isBundledPose = (value: string): value is BundledPose;
+export const isBundledBackground = (value: string): value is BundledBackground;
 ~~~
 
-A useful result shape is conceptually:
+Local assets are never added to these constants (INV-2).
+
+### `src/localAssets/sources.ts`
 
 ~~~ts
-type StoryAssetReadiness =
+export const STAGED_LOCAL_ASSETS_DIR = "__local-assets";
+
+export type LocalAssetSource =
+  | {kind: "url"; url: string}      // browser: blob: object URL
+  | {kind: "static"; path: string}  // CLI: path inside the temporary public dir
+  | {kind: "pending"};              // browser preview: still resolving (never passed to a render)
+
+export type LocalAssetSourceMap = Readonly<
+  Partial<Record<LocalAssetRef, LocalAssetSource>>
+>;
+
+/** "abcd…7890": first 4 and last 4 hex chars of the digest. */
+export const shortAssetId = (ref: LocalAssetRef): string;
+~~~
+
+Source-map values are runtime-only (INV-1). They are passed as props and never persisted or serialized.
+
+### Resolution function (in `src/localAssets/sources.ts`)
+
+Node unit tests run with `--experimental-strip-types`, which cannot load `.tsx`. Keep every decision in a pure `.ts` function and make the React pieces thin wrappers:
+
+~~~ts
+export type VisualAssetResolution =
+  | {kind: "image"; src: string}
+  | {kind: "pending"; category: LocalAssetCategory; ref: LocalAssetRef}
+  | {kind: "missing"; category: LocalAssetCategory; ref: LocalAssetRef};
+
+export const resolveVisualAssetSrc = (
+  category: LocalAssetCategory,
+  value: Pose | Background,
+  sources: LocalAssetSourceMap | undefined,
+  toStaticUrl: (path: string) => string, // pass Remotion's staticFile
+): VisualAssetResolution;
+~~~
+
+Resolution rules, in order:
+
+1. bundled value → `{kind: "image", src: toStaticUrl(<catalog previewPath>)}` (current behavior);
+2. local ref with `{kind: "url"}` source → `{kind: "image", src: source.url}`;
+3. local ref with `{kind: "static"}` source → `{kind: "image", src: toStaticUrl(source.path)}`;
+4. local ref with `{kind: "pending"}` source → `{kind: "pending", …}`;
+5. local ref without an entry → `{kind: "missing", …}`.
+
+### `src/components/visualAssetSource.tsx`
+
+~~~ts
+export const LocalAssetSourcesProvider: React.FC<{
+  sources: LocalAssetSourceMap | undefined;
+  children: React.ReactNode;
+}>;
+
+/** Reads the context and calls resolveVisualAssetSrc(category, value, sources, staticFile). */
+export const useVisualAssetSrc = (
+  category: LocalAssetCategory,
+  value: Pose | Background,
+): VisualAssetResolution;
+~~~
+
+The hook only reads React context initialized from props. It must not touch IndexedDB, `window`, the network, or the filesystem.
+
+### `src/components/MissingAssetPlaceholder.tsx`
+
+~~~ts
+export const MissingAssetPlaceholder: React.FC<{
+  category: LocalAssetCategory;
+  ref: LocalAssetRef;
+  variant: "missing" | "pending";
+}>;
+~~~
+
+Renders, filling its parent box:
+
+- solid `backgroundColor` `#1f2430` for backgrounds; for poses a centered box `#2b3140` at 60% width/height of its parent;
+- two lines of text, centered with flexbox: `Missing local pose` / `Missing local background` (variant `pending`: `Loading local pose…` / `Loading local background…`), then `shortAssetId(ref)`;
+- variant `missing`: `data-missing-local-asset={ref}`; variant `pending`: `data-pending-local-asset={ref}`; both `role="img"` with an `aria-label` repeating the visible text.
+
+Respect the web-renderer compatibility audit (`tests/web-renderer-compat.test.mjs`): no `background:` shorthand, `textAlign`, `zIndex`, `objectPosition`, `boxSizing`, `overflowWrap` or `wordBreak`. Use `fontFamily: "Inter, sans-serif"` as `src/Video.tsx` does.
+
+### `src/Video.tsx`
+
+~~~ts
+export type ToraVideoProps = {
+  story: Story;
+  localAssetSources?: LocalAssetSourceMap;
+};
+~~~
+
+Wrap `<StoryRenderer>` in `<LocalAssetSourcesProvider sources={localAssetSources}>`. `Tora` and `Background` call `useVisualAssetSrc` and render `<Img pauseWhenLoading …>` for `image`, or `<MissingAssetPlaceholder variant=…>` for `missing` / `pending`. Keep `objectFit: contain` (pose) and `cover` (background) exactly (INV-10).
+
+### `src/localAssets/readiness.ts`
+
+~~~ts
+export type LocalAssetUsage = {
+  ref: LocalAssetRef;
+  category: LocalAssetCategory;
+  digest: string;
+  sceneIndexes: number[]; // 0-based, ascending, a scene appears once per ref
+};
+
+/** Distinct local refs in first-appearance order (scene order, pose before background). */
+export const collectStoryLocalAssetUsages = (story: Story): LocalAssetUsage[];
+
+export const storyHasLocalAssetRefs = (story: Story): boolean;
+
+export type PayloadMetadata = {
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  byteSize: number;
+  width: number;
+  height: number;
+};
+
+export type LocalAssetBudgetResult =
+  | {ok: true; refCount: number; totalBytes: number; totalPixels: number}
   | {
-      ready: true;
-      resolved: ResolvedVisualAsset[];
-    }
-  | {
-      ready: false;
-      resolved: ResolvedVisualAsset[];
-      missing: MissingVisualAsset[];
-      overBudget?: BrowserAssetBudgetFailure;
+      ok: false;
+      refCount: number;
+      totalBytes: number;
+      totalPixels: number;
+      exceeded: Array<"refs" | "bytes" | "pixels">;
     };
+
+/**
+ * refCount = number of usages (missing/corrupt included).
+ * Bytes and pixels are summed once per distinct digest that has metadata.
+ * A value equal to its limit passes; one above fails.
+ */
+export const evaluateLocalAssetBudget = (
+  usages: readonly LocalAssetUsage[],
+  metadataByDigest: ReadonlyMap<string, PayloadMetadata>,
+): LocalAssetBudgetResult;
+
+export const describeBudgetFailure = (
+  result: Extract<LocalAssetBudgetResult, {ok: false}>,
+): string; // e.g. "Uses 70 local assets (limit 64)." — one sentence per exceeded limit
 ~~~
 
-Resolution must retain:
+These are pure; ASSET-004 wires them to storage.
 
-- exact Story ref;
-- category;
-- whether origin is bundled/local;
-- runtime source needed by the consuming environment when resolved.
+## Persistence envelope v1 / v2
 
-Do not put environment-specific Blob URLs, filesystem paths, or static URLs into the Story.
+Current state: `src/web/persistence.ts` writes `{version: 1, story}` and treats any other version as `unsupported-version` raw recovery. That is exactly how a v0.2 tab will treat a v2 envelope, so v0.2 needs no change.
 
-### Partial preview readiness
+Rules:
 
-Asset readiness supports partial resolution.
+1. Restore accepts `version: 1` and `version: 2`. Any other version stays `unsupported-version` recovery.
+2. A `version: 1` envelope whose story contains a local ref is `schema-invalid` recovery with message `"Stored project version 1 cannot contain local asset references."`.
+3. `RestoreResult` gains `durableVersion: 1 | 2 | null` (`null` when nothing was restored).
+4. The version written is `max(durableVersion ?? 1, storyHasLocalAssetRefs(story) ? 2 : 1)`. So bundled-only projects stay v1 (v0.2 rollback works), the first successful write containing a local ref promotes to v2, and v2 never downgrades.
+5. `serializePersistedEnvelope(story, durableVersion)` takes the current durable version and returns `{serialized, version}`.
+6. In `App.tsx`, keep a `durableVersion` state next to `durableStory`. Set it from every `restorePersistedProject` result (initial load, ownership acquisition rereads, conflict rereads) and from every successful write. Do not change it when a write fails, so a failed promotion leaves the stored v1 envelope untouched and the existing unpersisted/loss-risk warning appears.
+7. The persistence lock name `PERSISTENCE_WRITER_LOCK` and storage key do not change. Only the owner writes (already enforced by `persistStory`).
 
-If a Story is within the aggregate browser budget but some local refs are missing/corrupt:
+The asset IndexedDB (ASSET-002) has its own unrelated schema version.
 
-- `resolved[]` contains every successfully resolved ref;
-- `missing[]` contains each unavailable ref with a reason;
-- preview may use the resolved subset and placeholders for only the unavailable positions;
-- unrelated valid local refs must not be replaced with placeholders merely because another ref is unavailable;
-- MP4 render remains ineligible until `missing.length === 0`.
+## Tasks
 
-Aggregate over-budget is different: it suppresses the normal local Player/render source-map path for the whole Story.
-
-## Bundled resolver
-
-Bundled refs resolve deterministically from the source-controlled catalog and existing static paths.
-
-The v0.2 behavior for Tora's bundled assets must remain unchanged.
-
-## Local resolver contract
-
-A local resolver receives the exact local ref.
-
-The **requested ref itself is authoritative** for category + digest. Storage metadata may confirm availability, but it may never redirect that ref to another category or digest.
-
-The resolver either:
-
-- returns the environment's resolved image source + metadata for that exact ref; or
-- reports that exact ref as missing/corrupt/unavailable.
-
-For browser storage, an inconsistent asset row must fail closed before any payload lookup for a different digest.
-
-The browser and Node implementations may differ in how they produce a runtime source, but they must consume the same Story ref grammar.
-
-## Browser render transport gate
-
-Before ASSET-002/003 build the full local library, ASSET-001 must prove that the pinned Remotion `4.0.529` browser renderer can consume a local image through the intended runtime transport.
-
-Primary spike:
-
-~~~text
-bounded local Blob
-      ↓
-URL.createObjectURL()
-      ↓
-shared Remotion <Img>
-      ↓
-renderMediaOnWeb()
-      ↓
-valid MP4 containing the local image
-~~~
-
-Requirements:
-
-- use the pinned Remotion version;
-- use the normal v0.2 web-render path;
-- keep `allowHtmlInCanvas: false`;
-- do not embed image bytes/base64 into Story/YAML;
-- verify the rendered MP4 actually contains the local image, not only that render completes;
-- verify object-URL lifetime is sufficient for the render.
-
-If `blob:` succeeds reliably, it becomes the browser runtime transport used by later specs.
-
-If it fails, revise only the ephemeral runtime transport and re-prove the spike. The stable ref grammar, SHA-256 identity, IndexedDB storage choice, and missing-asset semantics stay unchanged.
-
-**ASSET-002/003 must not proceed until this gate passes or a replacement runtime transport is deliberately proven.**
-
-## Editor state implications
-
-Asset availability becomes another derived render-readiness input; it is **not** a pending visual draft.
-
-For example:
-
-~~~text
-valid Story + eligible browser policy + missing local image
-=
-Active Story preserved
-YAML export enabled
-visual editing enabled
-preview shows explicit missing state
-Render MP4 disabled
-~~~
-
-Changing the selected pose/background still uses the existing visual draft → StorySchema → browser policy → Active Story commit path.
-
-## Serialization
-
-`serializeStorySource()` must preserve local refs exactly as scalar strings.
-
-Canonical YAML must not contain:
-
-- Blob URLs;
-- base64/data URLs;
-- image bytes;
-- local filesystem paths;
-- browser database keys other than the stable ref itself.
+- [ ] **1. Ref grammar, schema and types.** Create `limits.ts`, `refs.ts`; update `schema.ts`, `types.ts`, `assets.ts`; fix every TypeScript error the widening produces (expected in `renderPlan.ts`, `Scene.tsx`, `components/*`, `web/visualDraft.ts`, `web/components/AssetCatalog.tsx`). Where code indexes a bundled catalog with a Story value, guard with `isBundledPose` / `isBundledBackground`. Tests: `tests/local-asset-refs.test.mjs`.
+- [ ] **2. Composition contract.** Create `sources.ts`, `visualAssetSource.tsx`, `MissingAssetPlaceholder.tsx`; update `Video.tsx`, `Tora.tsx`, `Background.tsx`. Tests: `tests/local-asset-composition.test.mjs`; extend `tests/web-renderer-compat.test.mjs` to audit `MissingAssetPlaceholder.tsx` with the same forbidden-style list.
+- [ ] **3. Readiness and budget functions.** Create `readiness.ts`. Tests: `tests/local-asset-readiness.test.mjs`.
+- [ ] **4. Persistence v1/v2.** Update `persistence.ts` and `App.tsx`. Tests: `tests/persistence-v2.test.mjs`; keep `tests/web-yaml-persistence.test.mjs` and `tests/browser/yaml-persistence.spec.mjs` green.
 
 ## Tests
 
-Minimum automated coverage:
+`tests/local-asset-refs.test.mjs`
 
-- all existing bundled Story fixtures remain valid unchanged;
-- v1 bundled persisted project opens and bundled-only edits continue persisting as v1;
-- first successful persistence of a Story containing any local ref atomically promotes v1 → v2;
-- failed first-local-ref persistence preserves the prior v1 durable envelope and leaves the Active Story unpersisted;
-- once promoted, later bundled-only writes remain v2 rather than downgrading;
-- a v2 project containing local refs is never written using the v1 envelope version;
-- cross-version persistence keeps the existing unversioned writer lock;
-- only the persistence owner performs the v1 → v2 durable promotion; secondary tabs do not rewrite the shared envelope;
-- valid local pose ref parses;
-- valid local background ref parses;
-- pose rejects background-local ref;
-- background rejects pose-local ref;
-- malformed digest/category/case is rejected;
-- serialization round-trips local refs exactly;
-- bundled catalog remains exhaustive over bundled values only;
-- a schema-valid Story with missing local refs remains schema/policy-valid but asset-unready;
-- a mixed Story with resolved + missing refs returns both sets, preserves valid refs in preview, and remains render-ineligible;
-- the missing set is deduplicated when several scenes reference the same missing asset;
-- the same digest may appear as separate pose/background refs;
-- aggregate browser asset budget counts distinct refs and distinct digests correctly;
-- metadata-preflight overflow remains schema-valid/exportable and causes zero original-Blob reads;
-- metadata that under-reports or otherwise disagrees with the real payload fails integrity verification as corrupt/unavailable;
-- successful verified-descriptor totals equal metadata-preflight totals for the same digest set;
-- pinned web-render spike renders a local Blob/runtime source into an MP4 with the expected image.
+- every existing fixture (`stories/*.yaml`, `exampleStory`) still parses unchanged;
+- valid local pose ref parses in `pose`; valid local background ref parses in `background`;
+- `pose: local:background:sha256:…` and `background: local:pose:sha256:…` are rejected with the custom message;
+- rejected: uppercase hex, 63/65 hex chars, `sha1`, unknown category, leading/trailing spaces, `local:pose:sha256:` with no digest;
+- `parseLocalAssetRef` / `buildLocalAssetRef` round-trip; `buildLocalAssetRef` throws on bad digest;
+- `serializeStorySource` → `parseStorySource` round-trips local refs byte-identically and the YAML contains the ref as a plain scalar;
+- bundled catalogs have exactly the bundled keys (no local refs).
 
-## Acceptance criteria
+`tests/local-asset-composition.test.mjs` (Node cannot import `.tsx`; test the pure function and audit component sources as text, like `tests/web-renderer-compat.test.mjs` does)
 
-- no existing v0.2 Story/YAML content requires mutation;
-- persisted v1 bundled projects remain v1 until the first successful durable write containing a local ref, which promotes atomically to v2;
-- Story schema can safely represent local pose/background references;
-- Story/YAML contains references only, never bytes/runtime URLs;
-- bundled catalog stays closed and source-controlled;
-- local availability is explicitly separated from schema validity and supports partial preview resolution;
-- browser and CLI can implement different storage mechanisms behind the same resolver/readiness contract;
-- browser runtime source transport is proven against pinned Remotion before ASSET-002/003.
+- `resolveVisualAssetSrc` maps bundled pose/background to the same catalog path as before (pass an identity `toStaticUrl`);
+- local ref + `{kind: "url"}` → that URL; + `{kind: "static"}` → `toStaticUrl(path)`;
+- local ref + `{kind: "pending"}` → `{kind: "pending"}`; local ref without entry → `{kind: "missing"}` with the right category;
+- a pose ref never resolves from a background entry and vice versa (separate keys);
+- source audit: `Tora.tsx` and `Background.tsx` call `useVisualAssetSrc` and still contain `objectFit: "contain"` / `objectFit: "cover"`; `MissingAssetPlaceholder.tsx` contains `data-missing-local-asset`;
+- browser check (add one case to `tests/browser/player-readiness.spec.mjs` or a new `tests/browser/local-asset-composition.spec.mjs`): the bundled reference Story still shows no `[data-missing-local-asset]` element in the Player.
+
+`tests/local-asset-readiness.test.mjs`
+
+- usages deduplicate repeated refs and list scene indexes;
+- the same digest as pose and as background yields two usages;
+- budget: 64 refs pass / 65 fail; exactly 256 MiB pass / +1 byte fail; exactly 200 MP pass / +1 pixel fail;
+- missing metadata counts toward refs but not bytes/pixels;
+- two refs sharing a digest count its bytes/pixels once;
+- several limits exceeded at once are all listed in `exceeded`.
+
+`tests/persistence-v2.test.mjs`
+
+- v1 bundled envelope restores with `durableVersion: 1`;
+- serializing a bundled story with `durableVersion 1` writes v1; with a local ref writes v2; with `durableVersion 2` and bundled story writes v2;
+- v2 envelope with local refs restores with `durableVersion: 2`;
+- v1 envelope containing a local ref → `schema-invalid` recovery;
+- `version: 3` → `unsupported-version` recovery;
+- simulated v0.2 reader (`version !== 1` check) rejects a v2 envelope as unsupported (documents rollback behavior).
+
+## Verify
+
+~~~bash
+npm test
+npm run lint
+npm run web:build
+npm run test:browser
+~~~
 
 ## Out of scope
 
-- browser storage implementation;
-- import UI;
-- CLI local folder scanning;
-- remote URLs;
-- non-image assets;
-- formal character entities.
+Storage, import UI, CLI scanning, integrity verification, Player/render wiring (ASSET-002 to ASSET-005).
 
 ## Done when
 
-A Story can carry deterministic local image refs through parse → validate → serialize → timeline/editor state, bundled-only v1 persistence remains rollback-compatible until first local-ref use, aggregate browser asset budgets fail closed at metadata preflight while payload integrity requires exact metadata agreement before runtime-source creation, and the browser render transport gate is proven without putting asset bytes into Story data.
+All four tasks are ticked, a Story with local refs round-trips through YAML and persistence (promoting v1 → v2 only when needed), and the composition draws a provided local source or an explicit placeholder without any change to bundled output.

@@ -1,410 +1,205 @@
-# ASSET-005 — CLI local assets and missing-asset recovery
+# ASSET-005 — CLI local assets
 
 > Status: **Proposed**
+>
+> Depends on: ASSET-001, ASSET-002 tasks 1–2 (fixtures, `imageInspection.ts`, `hash.ts`). Independent of ASSET-003/004. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
 ## Goal
 
-Make a browser-exported Story that references custom images renderable from a local checkout by copying the same image files into simple gitignored folders.
-
-The CLI must resolve the **same content-addressed refs** defined by ASSET-001. No browser database export, manifest editing, YAML byte embedding, or source-code changes are required.
+Make `npm run video -- story.yaml` render a Story that uses local refs, by finding matching image files in a gitignored `local-assets/` folder by content, and add `npm run assets` to print copy-pasteable refs for the files there. No manifest, no browser export, no YAML bytes.
 
 ## User workflow
 
-Default local asset root:
-
 ~~~text
 local-assets/
-  poses/
-  backgrounds/
+  poses/        ← images usable as local:pose:sha256:…
+  backgrounds/  ← images usable as local:background:sha256:…
 ~~~
 
-Example:
-
-~~~text
-local-assets/
-  poses/
-    shiar-formal.png
-    shiar-confused.webp
-  backgrounds/
-    apartment.jpg
-    bogota-night.webp
+~~~bash
+npm run assets
+npm run video -- stories/my-story.yaml
 ~~~
 
-These directories are user-owned runtime data and must be gitignored by default.
+Browser → CLI: export YAML in the browser, copy the exact original image files into the matching category folder, render.
 
-They are intentionally separate from Tora's source-controlled bundled `public/` assets.
+## Decisions specific to this spec
 
-## Supported files
+- **Staging** (D-2): for Stories with local refs, the render uses a temporary public directory = copy of the repository `public/` + `__local-assets/<category>/<digest>.<ext>`, passed with `--public-dir`. The source map entries are `{kind: "static", path: "__local-assets/<category>/<digest>.<ext>"}`. Bundled-only Stories keep today's exact command line (no `--public-dir`).
+- **Validation** (D-4): `inspectImageBytes` + `sha256Hex` from `src/localAssets/`. No decoding in Node. If bytes pass header inspection but cannot be decoded, the Remotion render fails and the command exits non-zero (existing behavior for render failures).
+- **Root override:** the root is `process.env.TORA_LOCAL_ASSETS_ROOT ?? LOCAL_ASSETS_ROOT` (`"local-assets"`), resolved from the current working directory. Tests and CI use the override; users normally don't.
+- **Category folders are authoritative.** Files under `poses/` can only satisfy `local:pose:…`; under `backgrounds/` only `local:background:…`. The same file may be copied into both.
+- **Content first.** Every regular file is a candidate regardless of extension; extensions are ignored.
+- **One file at a time.** Inspection is strictly sequential; at most one file's bytes are in memory.
+- **Deterministic order.** Within a category, files are visited in ascending order of their `/`-separated relative path (plain string comparison). Subfolders are scanned recursively.
+- **Symlinks are skipped** (classified with `lstat`). The tree is assumed not to change during one command; detectable changes between `lstat` and the opened handle reject that file. Defending against an adversarial concurrent process is out of scope.
+- **Snapshot on match.** When a candidate matches a required digest, its in-memory bytes are written to the staging dir **before** moving to the next file. The original path is never reopened, so later edits to the source cannot change what renders.
 
-CLI local assets follow the same v0.3 source rules as browser imports:
+## Files
 
-- static PNG (APNG rejected);
-- JPEG (`.jpg` / `.jpeg`);
-- static WebP (animated WebP rejected);
-- source size >0 and ≤25 MiB;
-- width ≤8192 px;
-- height ≤8192 px;
-- total decoded pixels ≤50 MP.
+| Action | Path | Purpose |
+| --- | --- | --- |
+| create | `scripts/localAssets.ts` | Scanner, render resolver/stager, inventory, error formatting. |
+| create | `scripts/assets.ts` | `npm run assets` entry point. |
+| modify | `scripts/render.ts` | Resolve and stage local assets before spawning Remotion. |
+| modify | `scripts/renderSupport.ts` | `buildRenderArgs(outputPath, propsPath, publicDir?)`. |
+| modify | `package.json` | `"assets": "node --experimental-strip-types scripts/assets.ts"`, `"test:cli-e2e": "node --experimental-strip-types --test tests/cli-local-assets.e2e.mjs"`. |
+| modify | `.gitignore` | Ignore `local-assets/*` but keep `local-assets/README.md`. |
+| create | `local-assets/README.md` | How to use the folders (short). |
+| modify | `README.md` (root) | Document `local-assets/`, `npm run assets`, and the browser → CLI flow. |
+| modify | `.github/workflows/ci.yml` | Run `npm run test:cli-e2e` after the existing render steps. |
+| create | `tests/cli-local-assets.test.mjs`, `tests/cli-local-assets.e2e.mjs`, `stories/ci-local-assets.yaml` | Tests and e2e Story. |
 
-Every regular file under the relevant local asset directory is a **content candidate**, regardless of filename extension.
-
-The CLI must be content-first exactly like the browser:
-
-- extension and inferred MIME are hints only;
-- a valid PNG/JPEG/WebP with no extension or with an incorrect extension is still accepted if its bytes pass validation;
-- an invalid payload with a supported-looking extension is rejected;
-- animated PNG/WebP, over-limit dimensions/pixels, and undecodable content are rejected from the bytes/content, not from naming.
-
-The CLI may use file size from `stat` to reject zero-byte or >25 MiB files before reading their contents.
-
-## No manifest required
-
-The default v0.3 workflow must not require a user-maintained manifest.
-
-The CLI discovers content identity from local files:
-
-~~~text
-category + SHA-256(original bytes)
-~~~
-
-For the inventory/helper flow, that identity may be associated with the deterministic source path for display.
-
-For the render flow, a required match is **not** represented only by the mutable source path. The verified bytes are immediately copied into the render's private ephemeral staging area, and the runtime source map points at that staged snapshot.
-
-This is what makes an exported browser Story portable without embedding bytes while preserving the content-addressed identity through render.
-
-## Category directories are authoritative
-
-Files under:
-
-~~~text
-local-assets/poses/
-~~~
-
-can satisfy only:
-
-~~~text
-local:pose:sha256:<digest>
-~~~
-
-Files under:
-
-~~~text
-local-assets/backgrounds/
-~~~
-
-can satisfy only:
-
-~~~text
-local:background:sha256:<digest>
-~~~
-
-Placing the same file in both categories is allowed. The bytes/ref digest is the same but the category-scoped Story refs differ.
-
-The implementation may scan category directories recursively so users can organize files into subfolders; nested path names are not part of identity.
-
-## CLI resolution order
-
-For `npm run video -- story.yaml`:
-
-1. parse/validate Story;
-2. apply existing deterministic output/stale-file safeguards;
-3. collect distinct local visual refs;
-4. if no local refs exist, preserve the v0.2 path with no local-folder requirement;
-5. create a private ephemeral staging directory for this render attempt;
-6. traverse relevant local asset category directories deterministically and inspect candidates with the bounded scanner defined below;
-7. when the currently materialized/validated bytes match a required same-category digest, write **those exact bytes immediately** to the private staging area before releasing that candidate buffer; record the staged snapshot, not the source path, as the resolved runtime source;
-8. stop scanning a category as soon as every ref required from that category has a staged snapshot;
-9. fail before launching Remotion if any required ref is missing or could not be snapshotted;
-10. invoke the shared Remotion composition with Story + the staged runtime source map;
-11. remove temporary staging data after render/failure.
-
-Do not make Remotion discover arbitrary local files itself.
-
-## Bounded CLI scanner
-
-CLI indexing must remain bounded even when `local-assets/` contains many large files.
-
-For v0.3:
+## Interfaces (`scripts/localAssets.ts`)
 
 ~~~ts
-MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1
+export const LOCAL_ASSETS_ROOT = "local-assets";
+export const categoryFolder = {pose: "poses", background: "backgrounds"} as const;
+
+export type CandidateResult =
+  | {relativePath: string; ok: true; ref: LocalAssetRef; digest: string; image: InspectedImage; bytes: Uint8Array}
+  | {relativePath: string; ok: false; reason: ImageRejection | "changed-during-scan" | "unreadable"};
+
+export type ScanDeps = {
+  lstat?: typeof import("node:fs/promises").lstat;
+  readdir?: typeof import("node:fs/promises").readdir;
+  open?: typeof import("node:fs/promises").open;
+  onCandidateStart?: (relativePath: string) => void; // test instrumentation
+  onCandidateEnd?: (relativePath: string) => void;
+};
+
+/**
+ * Yields candidate results one by one in deterministic order.
+ * The consumer must finish with a result (and drop `bytes`) before the generator reads the next file.
+ */
+export function scanCategory(
+  root: string,
+  category: LocalAssetCategory,
+  deps?: ScanDeps,
+): AsyncGenerator<CandidateResult>;
+
+export type StagedLocalAssets = {sources: LocalAssetSourceMap};
+
+export class MissingLocalAssetsError extends Error {} // message formatted as below
+
+/**
+ * Requires every local ref in the Story. Writes matches into
+ * `${publicDir}/${STAGED_LOCAL_ASSETS_DIR}/<category>/<digest>.<ext>`.
+ * Skips categories with no required refs; stops a category as soon as all its digests are staged.
+ * Throws MissingLocalAssetsError before anything is spawned.
+ */
+export const stageLocalAssetsForStory = async (
+  story: Story,
+  options: {root: string; publicDir: string; onStaged?: (ref: LocalAssetRef, stagedPath: string) => Promise<void> | void},
+  deps?: ScanDeps,
+): Promise<StagedLocalAssets>;
+
+export type InventoryLine =
+  | {relativePath: string; ref: LocalAssetRef}
+  | {relativePath: string; rejected: string}; // describeImageRejection or scan reason
+
+/** Inventories every candidate in both categories (no early stop). */
+export const inventoryLocalAssets = async (root: string, deps?: ScanDeps): Promise<{
+  rootExists: boolean;
+  poses: InventoryLine[];
+  backgrounds: InventoryLine[];
+}>;
 ~~~
 
-Traversal and inspection rules:
+### Per-candidate steps (`scanCategory`)
 
-- directory traversal is deterministic; sort eligible directory entries lexicographically by normalized relative path before processing;
-- classify entries with `lstat()` and skip symlinks per the security policy;
-- use file stat/size to reject zero-byte or >25 MiB candidates before materializing file contents;
-- open/read/validate/hash/decode **one regular-file candidate at a time**;
-- release its file handle, byte buffer, decoder state, and other per-file temporary resources before materializing the next candidate;
-- never use unbounded `Promise.all()`/parallel reads over discovered files;
-- lightweight path enumeration may exist in memory, but payload bytes/file handles/decoders remain bounded by the inspection concurrency.
+1. `lstat(path)`: symbolic link → skip silently (not yielded); directory → recurse (after sorting entries); not a regular file → skip.
+2. `checkLocalAssetByteSize(lstat.size)` → yield rejection without opening.
+3. `handle = await open(path, "r")`; `fstat = await handle.stat()`. If `!fstat.isFile()`, or `fstat.size !== lstat.size`, or (`lstat.ino !== 0` and (`fstat.dev !== lstat.dev` or `fstat.ino !== lstat.ino`)) → close, yield `changed-during-scan`.
+4. `bytes = await handle.readFile()`; close the handle (in `finally`).
+5. `inspectImageBytes(bytes)` → rejection or image; `digest = await sha256Hex(bytes)`; yield.
 
-### Render resolver early-stop
+Extension for staged files: `png` / `jpg` / `webp` from the inspected `mimeType`.
 
-For `npm run video -- story.yaml`:
-
-- build the required digest set per category first;
-- do not scan a category with zero required local refs;
-- when a candidate resolves a required digest, synchronously/awaitedly persist the exact already-verified candidate bytes into the render's private staging area **before** releasing the candidate payload;
-- use a deterministic staged filename derived from category + digest + detected format, not from the mutable source filename;
-- record the staged snapshot path/URL as the resolved runtime source; do not later reopen the original source path for staging;
-- once every required digest in that category has a successfully written staged snapshot, stop traversing/inspecting remaining candidates in that category;
-- if traversal ends with unresolved refs, report the normal missing-asset error before Remotion spawn.
-
-Because duplicate files with the same digest are byte-identical, deterministic traversal + first successfully snapshotted match is sufficient. Source-path selection remains deterministic for diagnostics, while render content comes only from the staged bytes that produced the digest.
-
-### Full helper inventory
-
-`npm run assets` intentionally inventories all eligible files so it can print refs for local authoring.
-
-It therefore cannot early-stop based on a Story, but it must use the same `MAX_CONCURRENT_CLI_ASSET_INSPECTIONS = 1` scanner and release each payload before moving to the next file.
-
-No aggregate CLI byte/pixel budget is introduced; the resource bound is on concurrent materialization, not total library size.
-
-## Hashing
-
-Use Node's SHA-256 over the exact original bytes.
-
-The digest must match browser Web Crypto SHA-256 byte-for-byte.
-
-Do not include:
-
-- filename;
-- relative path;
-- mtime;
-- category;
-- label
-
-in the hash.
-
-## Duplicate files
-
-If multiple files in one category have identical bytes/digest:
-
-- they represent the same local asset ref;
-- resolution is not ambiguous because content is identical;
-- choose one deterministic path (for example lexicographically first) or deduplicate during indexing;
-- do not fail the Story merely because duplicate copies exist.
-
-A diagnostic/debug message is acceptable but not required.
-
-## Missing-asset error
-
-Missing local refs are a pre-render error.
-
-The message must identify:
-
-- category;
-- digest/ref;
-- affected scene numbers/indexes;
-- directory that was searched;
-- how to repair the problem.
-
-Example:
+### Missing-asset error message (exact shape)
 
 ~~~text
 Cannot render Story: 1 local asset is missing.
 
 Pose:
-  local:pose:sha256:abcd...7890
+  local:pose:sha256:<full 64-char digest>
   used by scenes: 1, 3
   searched: local-assets/poses/
 
-Copy the matching PNG/JPEG/WebP into the local asset folder
-or replace the reference in the Story.
+Copy the original PNG/JPEG/WebP file into that folder (any filename),
+or replace the reference in the Story. Run `npm run assets` to list the refs
+of the files that are there.
 ~~~
 
-The CLI must fail **before spawning Remotion**.
+Group by category (Pose, then Background), refs in first-appearance order, scenes 1-based. Use the real root path (relative to cwd) in `searched:`. Plural: `N local assets are missing`.
 
-Existing stale-output removal guarantees remain intact.
-
-## Security/path safety
-
-Never convert arbitrary YAML text into a filesystem path.
-
-A local Story ref provides only:
-
-~~~text
-category + expected SHA-256
-~~~
-
-The CLI discovers files from the fixed local asset roots and matches by computed digest.
-
-### Symlink policy and filesystem-stability assumption
-
-v0.3 does not intentionally follow filesystem symlinks while scanning `local-assets/`.
-
-For the normal supported case, the local asset tree is assumed to be **quiescent for the duration of one CLI scan**: no editor, sync tool, script, or other process is expected to replace files/directories with symlinks between filesystem syscalls.
-
-Scanner requirements:
-
-- use `lstat()`/equivalent when classifying directory entries;
-- if an entry is observed as a symbolic link, skip it regardless of whether it targets a file or directory;
-- do not recurse through entries observed as symlinked directories;
-- do not read/hash entries observed as symlinked files;
-- for a file candidate, compare identity/metadata available from the pre-open classification with the opened handle's `fstat()`/equivalent **before reading bytes** where the platform exposes stable file identity (for example device/inode); if they disagree, close and reject that candidate;
-- if file size/type changes between classification and opened-handle validation, reject/fail that candidate rather than continuing with stale assumptions;
-- regular files/directories reached in a stable tree without observed symlink traversal remain eligible under the normal content-first rules.
-
-This protects ordinary local use and catches detectable file replacement races before payload reads, but v0.3 **does not claim adversarial race-hardening against a separate process concurrently mutating directory entries between syscalls on every supported OS/filesystem**.
-
-In particular, recursive directory traversal is not specified as an `openat(..., O_NOFOLLOW)`-style capability-secure walk across all platforms. Users/tools must not mutate the `local-assets/` tree concurrently with a render/index command if they require deterministic containment.
-
-If stronger race-resistant filesystem containment is required later, it should be introduced as a separately specified platform abstraction rather than implied by `lstat()` alone.
-
-Exported YAML still never contains machine-specific absolute paths.
-
-## Runtime staging
-
-The shared Remotion composition consumes an ephemeral runtime source map as defined by ASSET-004.
-
-For CLI/local rendering, the render setup exposes **snapshotted verified bytes** to the headless Remotion page using an ephemeral local/static staging mechanism.
-
-Requirements:
-
-- create a private staging directory before candidate resolution;
-- when a required digest is matched, write the exact in-memory bytes that were just validated/hashed directly into staging before releasing that buffer;
-- never resolve a required ref by remembering only the original source path and reopening it later;
-- source-file changes after a successful snapshot cannot change the staged render bytes;
-- if the staged write fails, that ref is unresolved and rendering fails before Remotion spawn;
-- do not copy custom files into tracked `public/`;
-- do not mutate the Story;
-- do not encode image bytes/base64 into YAML;
-- do not leave staging files after success/failure;
-- pass only staged runtime source URLs/paths that are valid for the render lifetime;
-- preserve the verified original bytes byte-for-byte in the staged snapshot.
-
-The exact Remotion staging mechanism may be chosen during implementation, but it must be covered end-to-end by tests rather than assuming `file://` works.
-
-## Local development
-
-The primary v0.3 requirement is the `npm run video -- story.yaml` CLI flow.
-
-If Remotion Studio is also taught to resolve `local-assets/`, it must reuse the same Node resolver/index rather than inventing a second local-file convention.
-
-Studio integration is optional for v0.3 unless required by implementation ergonomics.
-
-## Browser → CLI portability flow
-
-Expected manual workflow:
-
-~~~text
-Browser
-  1. import my-cat.png
-  2. Story gets local:pose:sha256:<digest>
-  3. export YAML
-
-Local checkout
-  4. copy YAML into project
-  5. copy exact my-cat.png into local-assets/poses/
-  6. npm run video -- story.yaml
-  7. CLI hashes file → same digest → resolves → renders
-~~~
-
-No synchronization service participates.
-
-## Replacement semantics
-
-If the user copies a **different** image into the folder, its hash differs and it does not repair the missing reference.
-
-To intentionally use the different image:
-
-- import/select it in browser and export updated YAML; or
-- update the YAML reference to the new file's correctly derived ref through a supported local inspection/helper flow.
-
-v0.3 does not match by filename similarity.
-
-## Required local ref discovery helper
-
-v0.3 must include a local command/helper for authoring Stories directly from a checkout after copying files into `local-assets/`.
-
-Expected UX:
-
-~~~bash
-npm run assets
-~~~
-
-Example output shape:
+### `npm run assets` output
 
 ~~~text
 local-assets/poses/my-cat.png
-  local:pose:sha256:<full-64-lowercase-hex-digest>
+  local:pose:sha256:<64 hex>
 
 local-assets/backgrounds/apartment.jpg
-  local:background:sha256:<full-64-lowercase-hex-digest>
+  local:background:sha256:<64 hex>
+
+local-assets/backgrounds/old.gif
+  skipped: Only static PNG, JPEG and WebP images are supported.
 ~~~
 
-Requirements:
+If the root does not exist: print `No local-assets/ folder found. Create local-assets/poses/ and local-assets/backgrounds/ and copy images into them.` and exit 0. Exit 0 when only some files are rejected; exit 1 only on unexpected errors.
 
-- print the **complete canonical ref**, not an abbreviated digest, so it is directly copy/pasteable into YAML;
-- use the same bounded validation/hash/index scanner as the render path;
-- reject/report unsupported, animated, oversized, over-dimension, or undecodable files consistently;
-- do not create a user-maintained manifest or make filenames part of identity.
+### `scripts/render.ts` changes
 
-The exact script name/output formatting may be refined during implementation, but this capability is required for v0.3.
+After `loadStory` (which already runs after stale-output removal):
+
+1. If `!storyHasLocalAssetRefs(story)` → unchanged v0.2 path.
+2. Otherwise: `publicDir = join(temporaryDirectory, "public")`; `cp("public", publicDir, {recursive: true})`; `staged = await stageLocalAssetsForStory(story, {root, publicDir})` (throws before spawn on missing); write props `{story, localAssetSources: staged.sources}`; `buildRenderArgs(outputPath, propsPath, publicDir)` adds `--public-dir=${publicDir}`.
+3. The existing `finally` removes the whole temporary directory (props + staged public dir) on success and failure.
+
+## Tasks
+
+- [ ] **1. Scanner + inventory + `npm run assets`.** `scanCategory`, `inventoryLocalAssets`, `scripts/assets.ts`, `.gitignore`, `local-assets/README.md`.
+- [ ] **2. Render staging.** `stageLocalAssetsForStory`, `MissingLocalAssetsError`, changes to `render.ts` / `renderSupport.ts`.
+- [ ] **3. End-to-end render + docs.** `stories/ci-local-assets.yaml` (two short scenes using the digests of `pose-magenta.png` and `background-cyan.jpg`), `tests/cli-local-assets.e2e.mjs`, CI step, root README.
 
 ## Tests
 
-Minimum automated coverage:
+`tests/cli-local-assets.test.mjs` (temp directories via `mkdtemp`; fixtures from `tests/fixtures/local-assets/`)
 
-- bundled-only Story does not require `local-assets/`;
-- pose/background directory indexing is category-aware;
-- SHA-256 matches browser test vectors;
-- nested regular files resolve if recursive scan is implemented;
-- valid PNG/JPEG/WebP bytes resolve even when the filename has no extension or an incorrect extension;
-- browser and CLI accept the same extensionless/misnamed valid-content fixture and compute the same ref;
-- unsupported/invalid-content files do not satisfy refs even when named `.png`, `.jpg`, or `.webp`;
-- APNG/animated WebP do not satisfy refs;
-- >25 MiB candidate is not hashed/accepted;
-- >8192 px/side or >50 MP candidates are not accepted;
-- same bytes under duplicate filenames resolve deterministically;
-- same bytes in background directory cannot satisfy a pose ref;
-- all required refs resolved → runtime source map contains each ref once;
-- missing ref lists affected scenes and searched category path;
-- missing ref fails before Remotion spawn;
-- stale output is not left after missing-asset failure;
-- staging does not mutate tracked `public/`;
-- staging is cleaned after success/failure;
-- end-to-end CLI fixture renders one custom pose and one custom background;
-- browser/Node hash of the same fixture bytes produces identical refs;
-- required asset helper prints complete canonical refs for valid files;
-- helper and render indexing apply the same format/resource validation;
-- instrumentation over a large near-limit fixture proves at most one candidate payload/file handle/decoder is materialized for inspection at a time;
-- render resolver skips categories with no required refs and stops a category immediately after all of its required digests are found;
-- helper still inventories all eligible candidates but retains concurrency 1;
-- deterministic lexical traversal chooses the same first successfully snapshotted source when duplicate byte-identical files exist;
-- required digest A is discovered from source bytes A, source file is then replaced/modified to bytes B before Remotion spawn, and render still consumes staged snapshot A (or the snapshot write fails closed) — never B under ref A;
-- staged snapshot bytes hash back to the required digest before the runtime source map is finalized in the test harness;
-- a stat/open identity mismatch detected before payload read rejects the candidate;
-- symlink-to-file present at classification time is skipped and not payload-read/hashed;
-- symlink-to-directory present at classification time is not traversed;
-- a regular nested file beside skipped symlinks still resolves normally;
-- concurrent adversarial directory-entry replacement between syscalls is documented as outside the v0.3 containment guarantee rather than tested as a promised cross-platform invariant.
+- bundled-only Story: `stageLocalAssetsForStory` is not called / root not required; `buildRenderArgs` without `publicDir` is identical to today;
+- pose fixture in `poses/` and background fixture in `backgrounds/` resolve to the refs computed by `sha256Hex` and to `createHash("sha256")` (browser/Node parity uses the same fixtures as ASSET-002);
+- the extensionless WebP fixture and a PNG renamed `photo.jpg` both resolve; a text file named `fake.png`, an APNG, a GIF, and a header claiming 9000×9000 are rejected in inventory and never satisfy a ref;
+- a 25 MiB + 1 byte file is rejected without `open` being called (spy via deps);
+- nested `poses/a/b/pic.png` resolves; the same bytes under `poses/a.png` and `poses/z.png` → staged once, inventory lists both, render is not ambiguous;
+- the background fixture placed only in `poses/` does not satisfy a background ref → `MissingLocalAssetsError` whose message matches the exact shape above (scenes, searched folder);
+- concurrency: instrumented `onCandidateStart`/`onCandidateEnd` never show more than one candidate in progress across 20 files;
+- early stop: with the required pose present as the first of 10 files, only 1 pose candidate is opened; no background candidate is opened when no background ref is required; inventory opens all files;
+- snapshot: `onStaged` overwrites the source file with other bytes; the staged file still hashes to the required digest;
+- identity change: a `deps.open` that returns a handle whose `stat()` reports a different `ino`/`size` → `changed-during-scan`;
+- symlinks (skip the test when `symlink` throws `EPERM`, as on Windows without developer mode): a symlink to a file and a symlink to a directory are not opened/traversed; a regular sibling still resolves;
+- staged files live under `publicDir/__local-assets/<category>/<digest>.<ext>` and nothing is written to the repository `public/`;
+- render failure and missing-asset failure both leave no temporary directory and no `output/<slug>.mp4`.
 
-## Acceptance criteria
+`tests/cli-local-assets.e2e.mjs` (real render; run in CI with `npm run test:cli-e2e`)
 
-- local custom assets require only copying supported files into the documented local folders plus using the built-in helper when a local-only author needs the canonical ref;
-- YAML remains machine-independent and contains no paths/bytes;
-- the same file resolves to the same ref in browser and Node regardless of filename extension;
-- missing assets fail early with actionable diagnostics;
-- bundled-only CLI behavior remains unchanged;
-- custom asset staging is ephemeral, deterministic, and created directly from the same verified bytes that produced each required digest;
-- render never reopens an original source path after digest resolution to obtain its staged bytes;
-- CLI skips symlinks observed during a quiescent scan and rejects detectable stat/open identity changes, while adversarial concurrent filesystem mutation remains explicitly out of scope for v0.3;
-- CLI payload inspection is bounded to one candidate at a time, while render resolution may early-stop once all required refs are snapshotted;
-- the required helper exposes full copy/pasteable refs without introducing a manifest.
+- set `TORA_LOCAL_ASSETS_ROOT` to a temp root with the two fixtures, run `node --experimental-strip-types scripts/render.ts stories/ci-local-assets.yaml`, expect exit 0 and `output/ci-local-assets.mp4`;
+- `npx remotion ffprobe` reports h264, 1080×1920, 30 fps, and the expected duration;
+- pixel check: `npx remotion ffmpeg -ss <t> -i <mp4> -vf "crop=8:8:<x>:<y>,scale=1:1" -frames:v 1 -pix_fmt rgb24 <tmp>.png` produces a 1×1 PNG; inflate its `IDAT`, skip the 1 filter byte, read RGB (for a single pixel every PNG filter leaves the bytes unchanged). Assert magenta in the pose area, cyan in the top background area (sample a point not covered by the pose or caption), and include a bundled-only control frame;
+- with an empty temp root → exit 1, stderr contains `Cannot render Story`, no MP4.
+
+## Verify
+
+~~~bash
+npm test
+npm run lint
+npm run test:cli-e2e
+npm run assets
+~~~
 
 ## Out of scope
 
-- watching folders for live changes;
-- cloud download;
-- browser-to-filesystem automatic sync;
-- user-maintained manifests;
-- source-controling personal assets by default;
-- arbitrary external asset directories.
+Watching folders, manifests, remote downloads, syncing with the browser, arbitrary asset directories other than the root override, Remotion Studio support, decoding images in Node, defending against concurrent adversarial filesystem changes.
 
 ## Done when
 
-A YAML exported from the browser can render locally after the user copies the exact referenced image files into the correct `local-assets/poses` and/or `local-assets/backgrounds` category. Required render refs are backed by staged snapshots written from the same bytes that produced their digests, so later source-path mutation cannot silently change render content. A local-only author can obtain the exact YAML refs from the required helper command without creating a manifest.
+All tasks are ticked: a YAML exported from the browser renders from the CLI after copying the exact files into `local-assets/<category>/`; missing files fail before Remotion starts with the documented message; `npm run assets` prints complete refs; bundled-only renders are unchanged.
