@@ -4,6 +4,8 @@ import {
   type LocalAssetRef,
 } from "../../localAssets/refs.ts";
 import {ASSET_LIBRARY_CHANNEL, ASSET_LIBRARY_LOCK} from "./constants.ts";
+import {openIndexedDbAssetStore} from "./indexedDbStore.ts";
+import type {AssetLibraryStore} from "./store.ts";
 
 export const withAssetLibraryLock = <T>(
   locks: LockManager,
@@ -139,4 +141,90 @@ export const requestPersistentStorageOnce = async (deps?: {
 /** Test-only: forget that persistence was already requested. */
 export const resetPersistentStorageRequestForTests = (): void => {
   persistentStorageRequested = false;
+};
+
+// --- Library status and opening (ASSET-002 task 6) ---------------------------
+
+export type AssetLibraryStatus =
+  | {kind: "disabled"; message: string} // no Web Locks (D-3)
+  | {kind: "unavailable"; message: string} // no indexedDB, or open failed
+  | {kind: "ready"; store: AssetLibraryStore};
+
+const WEB_LOCKS_REQUIRED_MESSAGE =
+  "My assets needs a browser with Web Locks support. Local assets in this Story can't be shown or rendered here.";
+const UPGRADE_BLOCKED_MESSAGE =
+  "Close other Tora tabs to finish updating My assets.";
+const STORAGE_UNAVAILABLE_MESSAGE =
+  "My assets couldn't be opened in this browser. Check that site storage is allowed (not blocked), then reload the page. Local assets in this Story can't be shown or rendered until then.";
+const NEWER_VERSION_MESSAGE =
+  "My assets was updated by a newer version of Tora. Reload this page to continue.";
+
+/**
+ * Resolves with the first status. If the database open is blocked by another
+ * tab, that status is `unavailable` ("Close other Tora tabs...") and the open
+ * keeps waiting inside the exclusive library lock; its outcome (`ready`, or
+ * `unavailable` on failure) is then reported through `onStatusChange`, which
+ * also receives the blocked status itself.
+ */
+export const openAssetLibrary = async (deps?: {
+  locks?: LockManager;
+  indexedDB?: IDBFactory;
+  /** Later status changes, e.g. blocked upgrade -> ready. App stores each in useState. */
+  onStatusChange?: (status: AssetLibraryStatus) => void;
+}): Promise<AssetLibraryStatus> => {
+  const locks =
+    deps?.locks ?? (typeof navigator === "undefined" ? undefined : navigator.locks);
+
+  if (typeof locks?.request !== "function") {
+    return {kind: "disabled", message: WEB_LOCKS_REQUIRED_MESSAGE};
+  }
+
+  const factory =
+    deps?.indexedDB ?? (typeof indexedDB === "undefined" ? undefined : indexedDB);
+
+  if (factory === undefined) {
+    return {kind: "unavailable", message: STORAGE_UNAVAILABLE_MESSAGE};
+  }
+
+  const onStatusChange = deps?.onStatusChange;
+
+  return new Promise<AssetLibraryStatus>((resolve) => {
+    let initialReported = false;
+    const report = (status: AssetLibraryStatus) => {
+      if (!initialReported) {
+        initialReported = true;
+        resolve(status);
+      } else {
+        onStatusChange?.(status);
+      }
+    };
+
+    openIndexedDbAssetStore({
+      indexedDB: factory,
+      locks,
+      onBlocked: () => {
+        const blocked: AssetLibraryStatus = {
+          kind: "unavailable",
+          message: UPGRADE_BLOCKED_MESSAGE,
+        };
+
+        if (!initialReported) {
+          initialReported = true;
+          resolve(blocked);
+        }
+
+        onStatusChange?.(blocked);
+      },
+    }).then(
+      (store) => report({kind: "ready", store}),
+      (error: unknown) =>
+        report({
+          kind: "unavailable",
+          message:
+            (error as {name?: unknown} | null)?.name === "VersionError"
+              ? NEWER_VERSION_MESSAGE
+              : STORAGE_UNAVAILABLE_MESSAGE,
+        }),
+    );
+  });
 };
