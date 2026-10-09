@@ -173,8 +173,8 @@ prepareLocalAssets?: () => Promise<LocalAssetRenderPreparation>;
 When the user clicks **Render MP4** and the Story contains local refs:
 
 1. Button is enabled only when existing v0.2 conditions hold **and** `describeLocalAssetRenderBlock(state, library) === null`.
-2. Snapshot the Active Story (existing behavior).
-3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache)`. If not `resolved` with `allReady` → show the block message and stop.
+2. Snapshot the Active Story and enter the existing `rendering` phase exactly as `startBrowserRender` in `src/web/App.tsx` does today (`renderInFlightRef`, `AbortController`, `setRenderUi({phase: "rendering", …})`). From this point `authoringLocked` is true, so the Story and every asset control are frozen for the **whole** preparation, not only the encode. Use the message `"Checking local assets…"` while step 3 runs.
+3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache)`. Check `controller.signal.aborted` between digests (Cancel Render works during preparation). If not `resolved` with `allReady`, or cancelled → leave the rendering phase through the existing failure/cancel paths (which unlock authoring) and show the block message.
 4. Call `startBrowserRenderTransaction(snapshot, {…, prepareLocalAssets: createLocalAssetRenderPreparation({resolved, store, locks, pool})})`. The returned function:
    1. runs inside `withAssetLibraryLock(locks, "shared", …)`;
    2. for every usage: `getAssetRow(ref)` must still be `present`, and `getPayloadMeta(digest)` must still be `present` and equal (mimeType, byteSize, width, height) to the payload verified in step 3. Re-checking the **row per ref** matters: deleting `local:pose:sha256:A` must be caught even if `local:background:sha256:A` keeps the bytes alive;
@@ -225,6 +225,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - `prepareLocalAssets` runs after `acquireLock` and before the first `cleanup` call (record call order);
 - `{ok: false}` → outcome `assets-changed`, lease released, `cleanup` and `renderStory` never called;
 - `release()` is called after post-cleanup on success, failure and cancel;
+- (browser, `local-asset-preview.spec.mjs`) while a Story with local refs is in the "Checking local assets…" preparation step, the authoring fieldset is disabled, and Cancel Render returns to the editable state without creating OPFS entries;
 - with a fake `LockManager` that records events, the order is: render lock granted → asset lock requested in `shared` mode → rows re-read → map frozen → asset lock released → `renderStory` called; the asset lock is never requested before the render lock. (That an exclusive request waits for a held shared lock is Web Locks behavior, already covered by the ASSET-002 harness test.)
 
 `tests/browser/local-asset-preview.spec.mjs` (production build, seeded IndexedDB, Story loaded through the YAML editor)

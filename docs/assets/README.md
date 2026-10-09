@@ -44,6 +44,7 @@ Define each constant exactly once, in the file listed. Import it everywhere else
 | `MAX_BROWSER_STORY_LOCAL_ASSET_BYTES` | `256 * 1024 * 1024` | `src/localAssets/limits.ts` |
 | `MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS` | `200_000_000` | `src/localAssets/limits.ts` |
 | `MAX_THUMBNAIL_DIMENSION` | `256` | `src/web/assetLibrary/constants.ts` |
+| `MAX_THUMBNAIL_BYTES` | `512 * 1024` | `src/web/assetLibrary/constants.ts` |
 | `LOCAL_ASSET_PAGE_SIZE` | `50` | `src/web/assetLibrary/constants.ts` |
 | `MAX_LOCAL_ASSET_LABEL_LENGTH` | `80` (code points, after trim) | `src/web/assetLibrary/constants.ts` |
 | `ASSET_DB_NAME` | `"tora-video-engine-assets"` | `src/web/assetLibrary/constants.ts` |

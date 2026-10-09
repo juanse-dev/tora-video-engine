@@ -118,6 +118,7 @@ Decoder rules (INV-11):
 
 - `undefined` → `absent`.
 - Required fields with the wrong type, non-finite or non-positive numbers, unknown `mimeType` → `corrupt`.
+- Thumbnails are bounded on **read**, not only when generated: `decodeThumbnail` returns `corrupt` unless `width` and `height` are ≤ `MAX_THUMBNAIL_DIMENSION` and `blob.size` ≤ `MAX_THUMBNAIL_BYTES` (`512 * 1024`, add it to `src/web/assetLibrary/constants.ts`). The catalog card additionally sets fixed CSS dimensions on the `<img>` and, after load, treats `naturalWidth`/`naturalHeight` > 256 as corrupt (hide the image, show the neutral box). Exact-file reimport regenerates the thumbnail.
 - If the value contains a redundant identity field (`ref`, `category`, `digest`), it must equal what the key implies; otherwise `corrupt`. A mismatching field is never used to look anything else up.
 - New writes never include identity fields; the key is the identity.
 
@@ -166,7 +167,7 @@ export interface AssetLibraryStore {
 
 Mutation semantics (all inside one transaction; any error aborts everything):
 
-- **import** — read `assets[ref]`. If it decodes `present`, keep its `label` and `createdAt`; otherwise use `defaultLabel` and `createdAt` from the mutation. Always write `originalFilename` from the mutation, and overwrite `payloadMeta[digest]`, `blobs[digest]`, `thumbnails[digest]` with the fresh values. This repairs any missing/corrupt backing data. `created` is `true` only if the row was `absent`.
+- **import** — read `assets[ref]`. If it decodes `present`, keep its `label` and `createdAt`; otherwise use `defaultLabel` and `createdAt` from the mutation. Always write `originalFilename` from the mutation, and overwrite `payloadMeta[digest]`, `blobs[digest]`, `thumbnails[digest]` with the fresh values. This repairs any missing/corrupt backing data. `created` is `true` only if the row was `absent`. The existing row is read **inside this transaction** (after the exclusive lock is held), never captured during the unlocked prepare step, so a rename committed by another tab while this tab was hashing is preserved.
 - **rename** — if `assets[ref]` is absent → `not-found` (never recreate). Otherwise write the row with the new label, preserving the other fields (if the row was corrupt, write `originalFilename: ""` and `createdAt` = now).
 - **delete** — if absent → `not-found`. Delete `assets[ref]`. Derive the digest **from `ref`**, build the other category's ref; if `assets[otherRef]` does not exist, delete `payloadMeta`, `blobs` and `thumbnails` for that digest (`payloadRemoved: true`).
 
@@ -181,7 +182,8 @@ export const openIndexedDbAssetStore = async (deps?: {
 
 - Database `ASSET_DB_NAME`, version `ASSET_DB_VERSION`; object stores `assets`, `payloadMeta`, `blobs`, `thumbnails`, all with out-of-line keys. No indexes.
 - The `indexedDB.open` call that may create/upgrade the database runs while holding `ASSET_LIBRARY_LOCK` in **exclusive** mode. `onupgradeneeded` only creates missing stores (v1).
-- `onversionchange` → close the connection; later calls reject with an error whose message says the library was upgraded in another tab and the page must be reloaded.
+- `onversionchange` → close the connection immediately (so another tab's upgrade is never held up by this tab); later calls reject with an error whose message says the library was upgraded in another tab and the page must be reloaded.
+- `onblocked` on our own open (another tab still holds an older connection that did not close) → wait at most 5 seconds; if the open has not succeeded, abort it, release the exclusive lock, and return `unavailable` with `"Close other Tora tabs to finish updating My assets, then reload."`. v0.3 only ever opens version 1, so this path matters for future schema versions; implement and test it now so v0.3 tabs behave correctly when a later version upgrades.
 - `listAssets` uses `IDBKeyRange.bound(prefix, prefix + "\uffff")` (type the six-character escape `\uffff` in code), narrowed by the cursor with open bounds; `openCursor` with direction `next` (`after`) or `prev` (`before`, results reversed back to ascending); stops after `limit` rows. Never `getAll()` over `assets`.
 - Every primary key read from a cursor must pass `isLocalAssetRef` **and** belong to the requested category. Keys that fail are skipped (never returned as a `LocalAssetRef`) and do not count toward `limit`. `countAssets` therefore counts with `openKeyCursor` over the range, skipping non-canonical keys, instead of `store.count(range)`. App writes can never create such keys because every write key comes from `buildLocalAssetRef`.
 - Map `QuotaExceededError` (or a transaction aborted with it) to `LocalAssetLibraryError` code `storage-full`; other failures to `storage-error`.
@@ -376,6 +378,7 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 
 - import creates `assets[ref]`, `payloadMeta`, `blobs`, `thumbnails`; result `created: true`;
 - same bytes + same category again → `created: false`, label/createdAt preserved, `originalFilename` refreshed, backing records rewritten (start from a fake with the blob deleted, then verify it is restored);
+- a rename applied to the fake between `prepareLocalAssetImport` and `commitPreparedLocalAssetImport` survives the duplicate re-import (label not reverted);
 - same bytes in the other category → second row, single payload/blob/thumbnail;
 - importing over a corrupt row (value `{label: 1}` or `{digest: "<other>"}`) rewrites it canonically;
 - rename changes only the label; rename of a deleted ref → `not-found` and does not recreate it; empty/whitespace/81-code-point labels rejected by `normalizeLocalAssetLabel`;
@@ -398,6 +401,9 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 `tests/harness/asset-library-indexeddb.spec.mjs` (harness, real Chrome IndexedDB)
 
 - open creates the 4 stores; import/rename/delete round-trip through real IndexedDB;
+- a connection opened in page A closes itself when page B opens the same database with version 2 (harness opens v2 directly), and page A's next call reports the reload message;
+- page B's v2 open while page A holds a connection that ignores `versionchange` (harness hook) returns `unavailable` with the close-other-tabs message after the timeout;
+- a stored thumbnail of 300×300 or larger than 512 KiB decodes as `corrupt` and the card shows the neutral box;
 - reload the page → data still there;
 - a transaction that throws mid-way (harness hook) leaves no partial record;
 - paging over 120 rows reads one page at a time (verify through the store API, not internals);
