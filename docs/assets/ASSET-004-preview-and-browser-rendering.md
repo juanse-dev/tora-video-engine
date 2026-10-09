@@ -52,6 +52,7 @@ export type StoryLocalAssetState =
       verified: ReadonlyMap<string, VerifiedPayload>; // digest → payload, only for ready digests
       blobs: ReadonlyMap<string, Blob>;               // digest → blob, only for ready digests
       allReady: boolean;
+      failureMessage: string | null; // set only by resolveStoryLocalAssetsForPreview when reading failed
     };
 
 export const resolveStoryLocalAssets = async (
@@ -91,6 +92,8 @@ export const describeLocalAssetRenderBlock = (
 7. Return `resolved` with `verified` and `blobs` for successful digests; `allReady` is true only if every ref is `ready`.
 
 `describeLocalAssetRenderBlock` returns, in priority order:
+
+- `resolved` with a non-null `failureMessage` → that message (e.g. the ASSET-002 "library was upgraded in another tab, reload" text);
 
 - library `disabled`/`unavailable` and the Story has local refs → the library message;
 - `pending` → `"Checking local assets…"`;
@@ -141,7 +144,7 @@ export const resolveStoryLocalAssetsForPreview = async (
 ): Promise<Exclude<StoryLocalAssetState, {kind: "pending"}>>;
 ~~~
 
-On a non-abort error it returns `resolved` with every usage `unavailable`, `detail` = the error message, `allReady: false`, empty `verified`/`blobs`. The render block message then explains the problem (for a closed connection: the ASSET-002 reload message).
+On a non-abort error it returns `resolved` with every usage `unavailable`, `detail` = the error message, `failureMessage` = the error message, `allReady: false`, empty `verified`/`blobs`. `describeLocalAssetRenderBlock` shows `failureMessage` first, and the Preview status line shows it too, so the user sees the recovery instruction (for a closed connection: reload the page). `resolveStoryLocalAssets` itself always sets `failureMessage: null`.
 
 ### `src/web/components/Preview.tsx`
 
@@ -226,7 +229,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - `describeLocalAssetRenderBlock` returns each message in the priority order above;
 - an already-aborted signal makes `resolveStoryLocalAssets` reject with `AbortError` before any store read; aborting mid-verification stops before the next digest;
 - the preview hook (`useStoryLocalAssets`) aborts the previous generation's signal when a new generation starts;
-- `resolveStoryLocalAssetsForPreview` with a store whose reads reject (simulating a connection closed by `versionchange`) resolves — does not reject — to every ref `unavailable` with the error message as `detail`; with an aborted signal it still rejects with `AbortError`;
+- `resolveStoryLocalAssetsForPreview` with a store whose reads reject (simulating a connection closed by `versionchange`) resolves — does not reject — to every ref `unavailable` with the error message as `detail` and `failureMessage`, and `describeLocalAssetRenderBlock` returns that message (not the generic unavailable text); with an aborted signal it still rejects with `AbortError`;
 - `createLocalAssetRenderPreparation`: unchanged library → `ok` with a frozen map containing one `url` entry per ready ref; pose row deleted after resolution (background row for the same digest kept) → `ok: false`; payloadMeta changed after resolution → `ok: false`; the asset lock is requested in `shared` mode (fake `LockManager`).
 
 `tests/object-url-pool.test.mjs`

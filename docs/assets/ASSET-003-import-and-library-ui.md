@@ -15,6 +15,7 @@ Extend the visual editor's asset catalog so a user can import, apply, rename and
 - **Choose replacement** is not a separate flow: clicking any bundled or local card replaces the selected scene's ref, as today. The missing card says so.
 - **Dialogs** reuse the existing `.transition-panel` + `role="dialog"` pattern from `src/web/App.tsx`. No native `confirm()`.
 - **Render lock comes for free.** The editors are inside `<fieldset className="authoring-fieldset" disabled={authoringLocked}>` (`src/web/App.tsx`); all new buttons and file inputs live inside it, so they are disabled while an MP4 renders. Do not add a second lock mechanism.
+- **Imports lock authoring too.** `VisualEditor` binds the catalog's `onChange` to the numeric `selectedScene` index, so the Story structure must not change while an import is reading/hashing/saving. App gets an `assetImportInFlight` state (set through the context, see below). Rename the current expression to `renderAuthoringLocked` and define `authoringLocked = renderAuthoringLocked || assetImportInFlight`; every existing use of `authoringLocked` (the fieldset, Open YAML/visual, YAML import, Reset, Render) then also locks during an import. Keep `renderAuthoringLocked` for render-only logic such as `renderNeedsUnloadWarning`. Because nothing can move, delete or reselect scenes meanwhile, the import result is applied to the same `selectedScene` it started from.
 - The library handle is shared through a React context so `VisualEditor` does not need new props.
 
 ## Files
@@ -45,6 +46,7 @@ export type AssetLibraryContextValue = {
   bumpRefresh: () => void;
   activeStory: Story;                   // for delete-in-use counts
   localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
+  setAssetImportInFlight: (inFlight: boolean) => void; // locks authoring during imports
 };
 
 export const AssetLibraryContext = createContext<AssetLibraryContextValue | null>(null);
@@ -123,7 +125,7 @@ Tora poses
 ### Import
 
 - `Import pose` / `Import background` are `<label>` buttons wrapping a hidden `<input type="file" accept="image/png,image/jpeg,image/webp">` (accept is only a hint).
-- While importing, show the current phase (`Reading…`, `Checking…`, `Hashing…`, `Saving…`) in a `role="status"` line and disable both import buttons.
+- While importing (including Import matching file), call `setAssetImportInFlight(true)` before reading the file and `false` in a `finally` after the result is applied or the error shown. Show the current phase (`Reading…`, `Checking…`, `Hashing…`, `Saving…`) in a `role="status"` line; text stays visible because a disabled fieldset only disables its controls.
 - Success: apply the ref to the selected scene; show `Imported "${label}".` or, if `created` is false, `"${label}" was already in My assets; its stored copy was refreshed.`; bump `refreshToken`.
 - Failure: show the `LocalAssetImportError` message (`describeImageRejection` or storage message) in a `role="alert"` line; nothing else changes.
 
@@ -174,6 +176,7 @@ Reset project, YAML import/apply, editor mode switches, and Story deletion of sc
 - Import matching file with the exact fixture → resolves with no Story change; with a different fixture → mismatch dialog; Cancel writes nothing; "Use it as replacement" changes only the selected scene;
 - 120 seeded pose rows: first page shows 50 cards, count shows 120, Next/Previous work, and (instrumented init script) no `blobs` reads and no `getAll` on `assets`;
 - during an MP4 render, import/rename/delete/select controls are disabled (fieldset);
+- during an import (hold it with an init script that wraps `crypto.subtle.digest` in a promise released by `window.__releaseDigest()`), scene add/move/delete/select, Open YAML, Reset and Render are disabled; after release the imported ref lands on the scene that was selected when the import started;
 - Reset project and YAML import leave My assets intact;
 - with `navigator.locks` removed → disabled message, no import buttons, bundled flow works.
 
