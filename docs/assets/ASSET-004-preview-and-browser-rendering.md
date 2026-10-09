@@ -132,6 +132,16 @@ export const useStoryLocalAssets = (
 - On `resolved`, acquire pool URLs for every ready digest and build `{[ref]: {kind: "url", url}}` for ready refs only (missing/corrupt refs have no entry → placeholder).
 - Release the previous lease in a `useEffect` cleanup **after** the new sources are committed, so the Player never sees a revoked URL.
 - `none` → `sources: undefined`.
+- Failures never leave the hook in `pending`. The hook calls `resolveStoryLocalAssetsForPreview` (below), which never rejects except with `AbortError`; an `AbortError` from a superseded generation is ignored. Any lease acquired by the failed generation is released.
+
+~~~ts
+/** Preview wrapper: maps any non-abort error (closed IndexedDB connection after versionchange, read failure…) to a resolved state. */
+export const resolveStoryLocalAssetsForPreview = async (
+  ...args: Parameters<typeof resolveStoryLocalAssets>
+): Promise<Exclude<StoryLocalAssetState, {kind: "pending"}>>;
+~~~
+
+On a non-abort error it returns `resolved` with every usage `unavailable`, `detail` = the error message, `allReady: false`, empty `verified`/`blobs`. The render block message then explains the problem (for a closed connection: the ASSET-002 reload message).
 
 ### `src/web/components/Preview.tsx`
 
@@ -193,7 +203,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 
 ## Tasks
 
-- [ ] **1. Orchestration.** `localAssetState.ts` (`resolveStoryLocalAssets`, `createLocalAssetRenderPreparation`, `describeLocalAssetRenderBlock`) + `tests/local-asset-state.test.mjs` (uses `tests/helpers/memoryAssetStore.mjs`).
+- [ ] **1. Orchestration.** `localAssetState.ts` (`resolveStoryLocalAssets`, `resolveStoryLocalAssetsForPreview`, `createLocalAssetRenderPreparation`, `describeLocalAssetRenderBlock`) + `tests/local-asset-state.test.mjs` (uses `tests/helpers/memoryAssetStore.mjs`).
 - [ ] **2. URL pool and hook.** `objectUrlPool.ts`, `useStoryLocalAssets.ts`, `tests/object-url-pool.test.mjs`.
 - [ ] **3. Preview wiring.** `Preview.tsx`, `App.tsx` (open library on mount, channel + focus → `refreshToken`, cache invalidation on messages), `tests/browser/helpers/seedAssetLibrary.mjs`, `tests/browser/local-asset-preview.spec.mjs`.
 - [ ] **4. Render wiring.** `browserRender.ts`, `App.tsx` render sequence, extend `tests/web-browser-render.test.mjs`, `tests/browser/local-asset-render-race.spec.mjs`.
@@ -216,6 +226,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - `describeLocalAssetRenderBlock` returns each message in the priority order above;
 - an already-aborted signal makes `resolveStoryLocalAssets` reject with `AbortError` before any store read; aborting mid-verification stops before the next digest;
 - the preview hook (`useStoryLocalAssets`) aborts the previous generation's signal when a new generation starts;
+- `resolveStoryLocalAssetsForPreview` with a store whose reads reject (simulating a connection closed by `versionchange`) resolves — does not reject — to every ref `unavailable` with the error message as `detail`; with an aborted signal it still rejects with `AbortError`;
 - `createLocalAssetRenderPreparation`: unchanged library → `ok` with a frozen map containing one `url` entry per ready ref; pose row deleted after resolution (background row for the same digest kept) → `ok: false`; payloadMeta changed after resolution → `ok: false`; the asset lock is requested in `shared` mode (fake `LockManager`).
 
 `tests/object-url-pool.test.mjs`
