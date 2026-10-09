@@ -1,7 +1,8 @@
+import {backgrounds, poses} from "./story/schema.ts";
 import type {
   Animation,
-  Background,
-  Pose,
+  BundledBackground,
+  BundledPose,
 } from "./story/types.ts";
 
 export type AssetCategory = "pose" | "background" | "animation";
@@ -54,7 +55,7 @@ export const toraPoseCatalog = {
     previewPath: "characters/tora/coffee.png",
     storyValue: "coffee",
   },
-} as const satisfies Record<Pose, ImageAssetCatalogEntry<Pose>>;
+} as const satisfies Record<BundledPose, ImageAssetCatalogEntry<BundledPose>>;
 
 export const backgroundCatalog = {
   office: {
@@ -71,7 +72,7 @@ export const backgroundCatalog = {
     previewPath: "backgrounds/server-room.png",
     storyValue: "server-room",
   },
-} as const satisfies Record<Background, ImageAssetCatalogEntry<Background>>;
+} as const satisfies Record<BundledBackground, ImageAssetCatalogEntry<BundledBackground>>;
 
 export const animationCatalog = {
   fade: {
@@ -102,11 +103,19 @@ export const toraPoseAssets = Object.fromEntries(
     id,
     asset.previewPath,
   ]),
-) as Record<Pose, string>;
+) as Record<BundledPose, string>;
 
 export const backgroundAssets = Object.fromEntries(
   Object.entries(backgroundCatalog).map(([id, asset]) => [
     id,
     asset.previewPath,
   ]),
-) as Record<Background, string>;
+) as Record<BundledBackground, string>;
+
+export const isBundledPose = (value: string): value is BundledPose =>
+  (poses as readonly string[]).includes(value);
+
+export const isBundledBackground = (
+  value: string,
+): value is BundledBackground =>
+  (backgrounds as readonly string[]).includes(value);

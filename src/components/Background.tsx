@@ -1,5 +1,5 @@
 import {AbsoluteFill, Img, staticFile} from "remotion";
-import {backgroundAssets} from "../assets.ts";
+import {backgroundAssets, isBundledBackground} from "../assets.ts";
 import type {Background as BackgroundName} from "../story/types.ts";
 
 type BackgroundProps = {
@@ -7,6 +7,11 @@ type BackgroundProps = {
 };
 
 export const Background = ({background}: BackgroundProps) => {
+  // Local refs are drawn by a later task; never fall back to a bundled image.
+  if (!isBundledBackground(background)) {
+    return null;
+  }
+
   return (
     <AbsoluteFill>
       <Img

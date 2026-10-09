@@ -1,6 +1,6 @@
 import type {CSSProperties} from "react";
 import {Img, staticFile} from "remotion";
-import {toraPoseAssets} from "../assets.ts";
+import {isBundledPose, toraPoseAssets} from "../assets.ts";
 import type {Pose} from "../story/types.ts";
 
 type ToraProps = {
@@ -9,6 +9,11 @@ type ToraProps = {
 };
 
 export const Tora = ({pose, style}: ToraProps) => {
+  // Local refs are drawn by a later task; never fall back to a bundled image.
+  if (!isBundledPose(pose)) {
+    return null;
+  }
+
   return (
     <Img
       pauseWhenLoading
