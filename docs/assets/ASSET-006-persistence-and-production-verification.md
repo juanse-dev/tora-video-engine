@@ -16,17 +16,17 @@ Per-feature tests already live in their specs (inspection, library, integrity, r
 
 | Action | Path | Purpose |
 | --- | --- | --- |
-| create | `tests/browser/local-assets-persistence.spec.mjs` | Reload, restart and build A → B (uses persistent contexts). |
-| create | `tests/browser/local-assets-portability.spec.mjs` | Fresh-context YAML portability + v0.2 compatibility. |
-| create | `tests/browser/local-assets-cross-tab.spec.mjs` | Two-tab convergence. |
-| create | `playwright.persistence.config.mjs` | Config for specs that manage their own servers/contexts (no shared `webServer`). |
+| create | `tests/persistence/local-assets-persistence.spec.mjs` | Reload, restart and build A → B (persistent contexts; manages its own servers). |
+| create | `tests/browser/local-assets-portability.spec.mjs` | Fresh-context YAML portability + v0.2 compatibility (normal production-preview suite). |
+| create | `tests/browser/local-assets-cross-tab.spec.mjs` | Two-tab convergence (normal production-preview suite). |
+| create | `playwright.persistence.config.mjs` | `testDir: "tests/persistence"`, no shared `webServer`. Lives outside `tests/browser/` so `npm run test:browser` never runs it. |
 | modify | `package.json` | `"test:persistence": "playwright test --config=playwright.persistence.config.mjs"`. |
 | modify | `.github/workflows/ci.yml` | Run `npm run test:persistence`. |
 | modify | `docs/assets/README.md` + this file | Tick tasks, set statuses. |
 
 ### Tasks
 
-- [ ] **A1. Persistence: reload, restart, build A → B.** In `local-assets-persistence.spec.mjs`:
+- [ ] **A1. Persistence: reload, restart, build A → B.** In `tests/persistence/local-assets-persistence.spec.mjs`:
   - start `vite preview` yourself on a fixed port (e.g. 4180) from `dist/web`; use `chromium.launchPersistentContext(<tmp user-data-dir>)`;
   - import `pose-magenta.png` and `background-cyan.jpg` through the UI, apply both, record the refs from the YAML editor;
   - **reload**: Story, My assets cards (with thumbnails) and Player images return without re-import;
@@ -38,7 +38,7 @@ Per-feature tests already live in their specs (inspection, library, integrity, r
   - fresh context B (new profile) imports that YAML: Story is valid, both refs show the missing card and Player placeholders, render is blocked;
   - in B, **Import matching file** with the exact fixtures resolves both with no Story change; render becomes eligible;
   - the same YAML renders through the CLI: covered by ASSET-005 e2e using the same fixture digests — assert here that `stories/ci-local-assets.yaml` refs equal the refs produced in context A;
-  - v0.2 compatibility: every `stories/*.yaml` bundled Story imports, previews and exports byte-identically to v0.2 (compare against `serializeStorySource` output); a v1 envelope written by v0.2 code restores and stays v1 after bundled edits.
+  - v0.2 compatibility: the bundled Stories `stories/friday-deploy.yaml`, `stories/ci-smoke.yaml` and `stories/demo-reel.yaml` (explicit list — `stories/ci-local-assets.yaml` uses local refs and is excluded) each import, previews and exports byte-identically to v0.2 (compare against `serializeStorySource` output); a v1 envelope written by v0.2 code restores and stays v1 after bundled edits.
 - [ ] **A3. Cross-tab convergence.** In `local-assets-cross-tab.spec.mjs` (two pages, one context):
   - import in A appears in B's My assets without reload;
   - rename in A updates B's label; B's Story YAML is unchanged;

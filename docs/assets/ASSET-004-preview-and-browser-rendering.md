@@ -125,6 +125,7 @@ export const useStoryLocalAssets = (
 ): {state: StoryLocalAssetState; sources: LocalAssetSourceMap | undefined};
 ~~~
 
+- `library` must be referentially stable: App keeps the `AssetLibraryStatus` in `useState`, set when `openAssetLibrary` settles (and again only if the library later becomes unavailable). Never build it inline. The effect depends on `[story, library, refreshToken]`, where `story` is the Active Story object (its identity changes only when the Story changes).
 - Each `(story, library, refreshToken)` change starts a new generation. Results from older generations are ignored (and their leases released) — this guarantees a slow resolution for ref A cannot overwrite the result for ref C.
 - While a generation runs, return `state: {kind: "pending"}` and a source map that keeps the previous generation's URLs for refs that are still in the Story and maps every other local ref to `{kind: "pending"}`.
 - On `resolved`, acquire pool URLs for every ready digest and build `{[ref]: {kind: "url", url}}` for ready refs only (missing/corrupt refs have no entry → placeholder).
@@ -227,6 +228,7 @@ Why this is race-safe: a mutation that commits while step 3 runs, or while the t
 `tests/browser/local-asset-preview.spec.mjs` (production build, seeded IndexedDB, Story loaded through the YAML editor)
 
 - local pose + background render inside the Player (no placeholder elements; images have `blob:` sources);
+- the Player does not advance past frame 0 while a local image is still loading: `page.route` cannot intercept `blob:` URLs, so add an init script that overrides the `HTMLImageElement.prototype` `src` setter: values starting with `blob:` are queued and only applied after the test calls `window.__releaseBlobImages()`. Press play, assert `data-tora-frame` stays `0` while queued, release, then assert frames advance (same assertion style as `tests/browser/player-readiness.spec.mjs`);
 - deleting the seeded background record (raw IndexedDB) and reloading → `[data-missing-local-asset]` only for the background, pose still an image, render button disabled with the "unavailable" message;
 - seeding a corrupt blob (bytes of the other fixture) → placeholder for that ref only;
 - a Story with 65 distinct local refs (seed metadata only, no blobs) → over-budget message, no Player, and no reads from the `blobs` store (wrap `IDBObjectStore.prototype.get` in an init script to log store names);

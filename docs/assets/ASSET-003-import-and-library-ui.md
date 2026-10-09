@@ -132,9 +132,9 @@ Tora poses
 When the selected scene's pose (or background) is a local ref whose state in `localAssetState` is not `ready`:
 
 - the Current card is a `MissingLocalAssetCard` (`data-missing-local-asset-card={ref}`, `role="group"`, with the missing copy above);
-- action **Import matching file** (file input for that category). After `prepareLocalAssetImport`:
-  - `match` → commit the import (repairs/restores; no Story change because the ref is identical); readiness refreshes and every scene using that ref resolves;
-  - `different` → dialog: `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.` with `Use it as replacement for this scene` (commit + apply to the selected scene only) and `Cancel` (nothing written);
+- action **Import matching file** (file input for that category). Call `prepareLocalAssetImport` (nothing is written yet), then `evaluateMatchingFile(missingRef, prepared.ref)`:
+  - `match` → `commitPreparedLocalAssetImport(prepared, …)` (repairs/restores; no Story change because the ref is identical); readiness refreshes and every scene using that ref resolves;
+  - `different` → dialog: `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.` with `Use it as replacement for this scene` (`commitPreparedLocalAssetImport` + apply to the selected scene only) and `Cancel` (nothing written; drop the prepared bytes);
 - the bundled grid and My assets grid stay usable for choosing a replacement.
 
 With library `disabled` / `unavailable`: no import, rename or delete controls; the disabled message is shown in each My assets block; the Current card still explains the ref is unavailable here.

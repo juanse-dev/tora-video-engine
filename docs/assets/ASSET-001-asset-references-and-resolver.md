@@ -258,7 +258,7 @@ Rules:
 2. A `version: 1` envelope whose story contains a local ref is `schema-invalid` recovery with message `"Stored project version 1 cannot contain local asset references."`.
 3. `RestoreResult` gains `durableVersion: 1 | 2 | null` (`null` when nothing was restored).
 4. The version written is `max(durableVersion ?? 1, storyHasLocalAssetRefs(story) ? 2 : 1)`. So bundled-only projects stay v1 (v0.2 rollback works), the first successful write containing a local ref promotes to v2, and v2 never downgrades.
-5. `serializePersistedEnvelope(story, durableVersion)` takes the current durable version and returns `{serialized, version}`.
+5. Keep the existing API compatible: `PERSISTENCE_VERSION` stays exported (value `1`, the bundled-only envelope); add `PERSISTENCE_VERSION_LOCAL = 2` and `requiredPersistenceVersion(story, durableVersion: 1 | 2 | null): 1 | 2`; change `serializePersistedEnvelope(story, version: 1 | 2 = PERSISTENCE_VERSION): string` (new optional parameter, still returns a string). Existing callers and `tests/web-yaml-persistence.test.mjs` keep working unchanged. `App.persistStory` computes `version = requiredPersistenceVersion(story, durableVersion)` and passes it.
 6. In `App.tsx`, keep a `durableVersion` state next to `durableStory`. Set it from every `restorePersistedProject` result (initial load, ownership acquisition rereads, conflict rereads) and from every successful write. Do not change it when a write fails, so a failed promotion leaves the stored v1 envelope untouched and the existing unpersisted/loss-risk warning appears.
 7. The persistence lock name `PERSISTENCE_WRITER_LOCK` and storage key do not change. Only the owner writes (already enforced by `persistStory`).
 
@@ -308,7 +308,13 @@ The asset IndexedDB (ASSET-002) has its own unrelated schema version.
 - v2 envelope with local refs restores with `durableVersion: 2`;
 - v1 envelope containing a local ref → `schema-invalid` recovery;
 - `version: 3` → `unsupported-version` recovery;
-- simulated v0.2 reader (`version !== 1` check) rejects a v2 envelope as unsupported (documents rollback behavior).
+- simulated v0.2 reader (`version !== 1` check) rejects a v2 envelope as unsupported (documents rollback behavior);
+- `serializePersistedEnvelope(story)` with no version argument still returns a v1 string (backward compatibility).
+
+Browser (extend `tests/browser/yaml-persistence.spec.mjs`; local refs can be typed into the YAML editor before ASSET-002 exists — they show placeholders):
+
+- owner tab: applying a Story with a local ref writes `version: 2` to `localStorage`;
+- a second tab (secondary, not the persistence owner) applying a Story with a local ref leaves the stored envelope at `version: 1` and shows the existing session-only/unpersisted warning.
 
 ## Verify
 

@@ -35,11 +35,11 @@ No UI in this spec.
 | create | `tests/helpers/memoryAssetStore.mjs` | In-memory `AssetLibraryStore` with read counters and failure injection. |
 | create | `tests/helpers/imageBytes.mjs` | Builders for crafted PNG/JPEG/WebP headers (APNG, animated WebP, huge dimensions, truncated). |
 | create | `tests/fixtures/local-assets/` | Real decodable fixtures (see Task 1). |
-| create | `tests/browser/harness/asset-library.html` + `.ts` | Dev-server page exposing the IndexedDB store to Playwright. |
-| create | `playwright.harness.config.mjs` | Runs harness specs against `vite` dev server on port 4174. |
+| create | `tests/harness/asset-library.html` + `.ts` | Dev-server page exposing the IndexedDB store to Playwright. |
+| create | `playwright.harness.config.mjs` | `testDir: "tests/harness"`; runs harness specs against the `vite` dev server on port 4174 (page URL `/tests/harness/asset-library.html`). |
 | modify | `package.json` | Add `"test:harness": "playwright test --config=playwright.harness.config.mjs"`. |
 | modify | `.github/workflows/ci.yml` | Run `npm run test:harness` after `npm run test:browser`. |
-| create | `tests/image-inspection.test.mjs`, `tests/asset-library.test.mjs`, `tests/asset-integrity.test.mjs`, `tests/browser/asset-library-indexeddb.spec.mjs` | Tests. |
+| create | `tests/image-inspection.test.mjs`, `tests/asset-library.test.mjs`, `tests/asset-integrity.test.mjs`, `tests/harness/asset-library-indexeddb.spec.mjs` | Tests. Harness specs live outside `tests/browser/` so the default `playwright.config.mjs` (production preview) never runs them. |
 
 ## 1. Image inspection (`src/localAssets/imageInspection.ts`)
 
@@ -182,8 +182,8 @@ export const openIndexedDbAssetStore = async (deps?: {
 - Database `ASSET_DB_NAME`, version `ASSET_DB_VERSION`; object stores `assets`, `payloadMeta`, `blobs`, `thumbnails`, all with out-of-line keys. No indexes.
 - The `indexedDB.open` call that may create/upgrade the database runs while holding `ASSET_LIBRARY_LOCK` in **exclusive** mode. `onupgradeneeded` only creates missing stores (v1).
 - `onversionchange` → close the connection; later calls reject with an error whose message says the library was upgraded in another tab and the page must be reloaded.
-- `listAssets` uses `IDBKeyRange.bound(prefix, prefix + "￿")` (narrowed by the cursor with open bounds), `openCursor` with direction `next` (`after`) or `prev` (`before`, results reversed back to ascending), and stops after `limit` rows. Never `getAll()` over `assets`.
-- `countAssets` uses `store.count(range)`.
+- `listAssets` uses `IDBKeyRange.bound(prefix, prefix + "\uffff")` (type the six-character escape `\uffff` in code), narrowed by the cursor with open bounds; `openCursor` with direction `next` (`after`) or `prev` (`before`, results reversed back to ascending); stops after `limit` rows. Never `getAll()` over `assets`.
+- Every primary key read from a cursor must pass `isLocalAssetRef` **and** belong to the requested category. Keys that fail are skipped (never returned as a `LocalAssetRef`) and do not count toward `limit`. `countAssets` therefore counts with `openKeyCursor` over the range, skipping non-canonical keys, instead of `store.count(range)`. App writes can never create such keys because every write key comes from `buildLocalAssetRef`.
 - Map `QuotaExceededError` (or a transaction aborted with it) to `LocalAssetLibraryError` code `storage-full`; other failures to `storage-error`.
 
 ## 6. Coordination (`src/web/assetLibrary/coordination.ts`)
@@ -249,6 +249,13 @@ export const prepareLocalAssetImport = async (
   },
 ): Promise<PreparedLocalAssetImport>; // throws LocalAssetImportError
 
+/** Commits an already-prepared import under the exclusive lock and posts the change message. */
+export const commitPreparedLocalAssetImport = async (
+  prepared: PreparedLocalAssetImport,
+  library: {store: AssetLibraryStore; locks: LockManager; channel: {post(m: AssetLibraryMessage): void}},
+): Promise<{ref: LocalAssetRef; created: boolean}>;
+
+/** prepareLocalAssetImport + onPhase("storing") + commitPreparedLocalAssetImport. */
 export const importLocalAsset = async (
   file: File,
   category: LocalAssetCategory,
@@ -271,7 +278,7 @@ export class LocalAssetImportError extends Error {
 6. Thumbnail (default implementation in `thumbnails.ts`): decode with default orientation, scale to fit within 256×256 keeping aspect ratio (never upscale; each side ≥ 1), draw on an `OffscreenCanvas`, `convertToBlob({type: "image/webp", quality: 0.8})`; record the MIME type the browser actually produced (D-6). Failure → `thumbnail-failed`.
 7. `blob = new Blob([bytes], {type: image.mimeType})`; `payloadMeta = {mimeType, byteSize: bytes.length, width, height}`; `defaultLabel` per D-12.
 
-`importLocalAsset` then calls `onPhase("storing")`, applies the `import` mutation under the exclusive lock, posts the change message, and returns. Quota and transaction errors become `storage-full` / `storage-error`. The Story is never modified here; ASSET-003 decides whether to apply the ref.
+`commitPreparedLocalAssetImport` applies the `import` mutation under the exclusive lock, posts the change message, and returns. `importLocalAsset` is prepare → `onPhase("storing")` → commit. ASSET-003 calls prepare and commit separately when it must inspect the ref before writing (matching-file repair). Quota and transaction errors become `storage-full` / `storage-error`. The Story is never modified here; ASSET-003 decides whether to apply the ref.
 
 ## 8. Library operations (`src/web/assetLibrary/library.ts`)
 
@@ -313,8 +320,9 @@ export const verifyPayload = async (
 ): Promise<PayloadVerification>;
 
 export class IntegrityCache {
-  get(digest: string): VerifiedPayload | undefined;
-  set(payload: VerifiedPayload): void;
+  /** Keeps the verified Blob handle too, so a cache hit can still produce a runtime source. */
+  get(digest: string): {payload: VerifiedPayload; blob: Blob} | undefined;
+  set(payload: VerifiedPayload, blob: Blob): void;
   invalidate(digests: Iterable<string>): void;
   clear(): void;
 }
@@ -337,7 +345,7 @@ export const verifyPayloadsSequentially = async (
 5. `inspectImageBytes(bytes)` must succeed and its `mimeType`, `width`, `height` must equal `payloadMeta`, else `corrupt`.
 6. Drop the `bytes` reference before returning `{ok: true, payload, blob}`.
 
-`verifyPayloadsSequentially` uses a plain `for … of` with `await` (never `Promise.all`). A cache hit skips steps 2–5 but still requires `payloadMeta` to be present and equal to the cached payload (so a deleted digest is not served from cache). The cache lives in memory only, for the page session; the app invalidates it on local mutations and on `asset-library-changed` messages.
+`verifyPayloadsSequentially` uses a plain `for … of` with `await` (never `Promise.all`). A cache hit skips steps 2–5 and returns the cached `{payload, blob}`, but still requires `payloadMeta` to be present and equal to the cached payload (so a deleted digest is not served from cache). Holding the `Blob` handle is cheap: it references the stored bytes, it does not copy them. The cache lives in memory only, for the page session; the app invalidates it on local mutations and on `asset-library-changed` messages.
 
 Because verification requires `payloadMeta` to equal the real bytes, metadata-based budget totals (ASSET-001) equal real totals for every verified digest (D-10).
 
@@ -353,7 +361,7 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 - [ ] **3. Records, store interface, in-memory fake, library operations.** `records.ts`, `store.ts`, `library.ts`, `tests/helpers/memoryAssetStore.mjs`, `tests/asset-library.test.mjs`. The fake implements the exact semantics of §4 and counts reads per store (`reads.assets`, `reads.payloadMeta`, `reads.blobs`, `reads.thumbnails`), can inject raw values (to simulate corrupt rows) and can fail `apply` with a quota error.
 - [ ] **4. Import pipeline.** `importAsset.ts`, `thumbnails.ts`, more cases in `tests/asset-library.test.mjs` (inject `decode`/`makeThumbnail` fakes in Node).
 - [ ] **5. Integrity verification.** `integrity.ts`, `tests/asset-integrity.test.mjs`.
-- [ ] **6. IndexedDB adapter + coordination + harness.** `indexedDbStore.ts`, `coordination.ts`, harness page, `playwright.harness.config.mjs`, `tests/browser/asset-library-indexeddb.spec.mjs`, `package.json` script, CI step.
+- [ ] **6. IndexedDB adapter + coordination + harness.** `indexedDbStore.ts`, `coordination.ts`, harness page, `playwright.harness.config.mjs`, `tests/harness/asset-library-indexeddb.spec.mjs`, `package.json` script, CI step.
 
 ## Tests
 
@@ -375,7 +383,7 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 - quota failure in `apply` leaves the store unchanged and surfaces `storage-full`;
 - `prepareLocalAssetImport` rejects oversized files without calling `file.arrayBuffer()` (spy), accepts a decoded size equal to the header size or swapped (EXIF rotation), rejects any other decoded size as `decode-failed`, and calls `onPhase` in order;
 - default label rules (D-12): `IMG_0421.webp` → `IMG_0421`, `.png` → `Untitled pose`, long names truncated to 80 code points;
-- paging: with 120 pose rows and 3 background rows, page 1 of poses has 50 rows, `hasNext`, no background rows; next/previous navigation returns the right windows; `listAssets` never reads more than `limit + 1` rows (fake counter); `countAssets` returns 120 without listing.
+- paging: with 120 pose rows, 3 background rows and 2 non-canonical keys inside the pose prefix (uppercase digest, 10-char digest), page 1 of poses has 50 canonical rows, `hasNext`, no background rows, and the non-canonical keys never appear and are not counted; next/previous navigation returns the right windows; `listAssets` never reads more than `limit + 1` rows (fake counter); `countAssets` returns 120 without listing.
 
 `tests/asset-integrity.test.mjs`
 
@@ -387,7 +395,7 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 - sequential: a fake whose `blob.arrayBuffer()` tracks concurrency proves at most 1 in flight for 11 digests (simulating ~256 MiB with 23 MiB fake payload sizes — sizes may be faked via `size`/`arrayBuffer` stubs, no real 256 MiB allocation);
 - cache hit avoids a second blob read; `invalidate([digest])` forces a re-read; a cached digest whose `payloadMeta` was deleted is not served.
 
-`tests/browser/asset-library-indexeddb.spec.mjs` (harness, real Chrome IndexedDB)
+`tests/harness/asset-library-indexeddb.spec.mjs` (harness, real Chrome IndexedDB)
 
 - open creates the 4 stores; import/rename/delete round-trip through real IndexedDB;
 - reload the page → data still there;
