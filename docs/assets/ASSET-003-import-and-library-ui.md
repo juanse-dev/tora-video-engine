@@ -115,7 +115,7 @@ Tora poses
 - Section headings are text (`Bundled`, `My assets`), not color only. Local cards carry a visible `Local` badge.
 - Bundled cards keep their current markup, class names and behavior.
 - A local card is a **non-interactive wrapper** (`<div className="asset-card local-asset-card">`) containing, as siblings: one selection `<button type="button" aria-pressed>` (thumbnail + label + `Local` badge; clicking applies `onChange({pose: ref})` / `onChange({background: ref})`), and a separate actions row with `Rename` and `Delete` buttons. Never nest buttons or inputs inside the selection button. Management buttons do not trigger selection (they are not descendants of the selection button, so no click bubbles into it).
-- Card thumbnails come only from `thumbnails` (ASSET-002). A card whose thumbnail is missing shows a neutral box with the label; it never loads the original blob.
+- Card thumbnails come only from `loadThumbnailForDisplay` (ASSET-002), which inspects the real thumbnail bytes before an object URL exists. A card whose thumbnail is missing or corrupt shows a neutral box with the label; it never loads the original blob.
 - Corrupt rows (decoded `corrupt`) render as "Damaged entry" cards: not selectable; only Delete is offered.
 - Rename: the `Rename` button replaces the selection button's label area with a sibling text input plus `Save` / `Cancel` buttons (the selection button is hidden while editing); validation from `normalizeLocalAssetLabel`; Enter saves, Escape cancels. `not-found` result → message "This asset was deleted in another tab." and refresh.
 - Delete: a `Delete` button opens a dialog with the right confirmation text and buttons `Cancel` / `Delete asset` (in use: `Delete asset anyway`). The Story is never modified.

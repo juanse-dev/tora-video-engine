@@ -58,8 +58,8 @@ export const resolveStoryLocalAssets = async (
   story: Story,
   library: AssetLibraryStatus,
   cache: IntegrityCache,
-  deps?: {subtle?: SubtleCrypto},
-): Promise<Exclude<StoryLocalAssetState, {kind: "pending"}>>;
+  deps?: {subtle?: SubtleCrypto; signal?: AbortSignal},
+): Promise<Exclude<StoryLocalAssetState, {kind: "pending"}>>; // rejects with an AbortError when signal aborts
 
 /**
  * Builds the post-lock step for startBrowserRenderTransaction (see "Render start sequence").
@@ -86,7 +86,7 @@ export const describeLocalAssetRenderBlock = (
 3. For each usage, `store.getAssetRow(usage.ref)` — the ref itself is the key (INV-11): `absent` → `missing`; `corrupt` → `corrupt`; `present` → candidate.
 4. For each distinct digest with at least one candidate ref, `store.getPayloadMeta(digest)`: `absent` → its candidate refs become `missing`; `corrupt` → `corrupt`; `present` → record metadata.
 5. `budget = evaluateLocalAssetBudget(usages, metadataByDigest)`. If not ok → `over-budget` with `describeBudgetFailure(budget)`. **No blob has been read at this point** (D-10).
-6. `verifyPayloadsSequentially(store, digestsWithMetadata, cache)`. Failures mark every ref with that digest `missing`/`corrupt`. Other digests continue.
+6. `verifyPayloadsSequentially(store, digestsWithMetadata, cache, {subtle, signal})`; also call `signal?.throwIfAborted()` before steps 3, 4 and 6. Failures mark every ref with that digest `missing`/`corrupt`. Other digests continue.
 7. Return `resolved` with `verified` and `blobs` for successful digests; `allReady` is true only if every ref is `ready`.
 
 `describeLocalAssetRenderBlock` returns, in priority order:
@@ -126,7 +126,7 @@ export const useStoryLocalAssets = (
 ~~~
 
 - `library` must be referentially stable: App keeps the `AssetLibraryStatus` in `useState`, set when `openAssetLibrary` settles (and again only if the library later becomes unavailable). Never build it inline. The effect depends on `[story, library, refreshToken]`, where `story` is the Active Story object (its identity changes only when the Story changes).
-- Each `(story, library, refreshToken)` change starts a new generation. Results from older generations are ignored (and their leases released) — this guarantees a slow resolution for ref A cannot overwrite the result for ref C.
+- Each `(story, library, refreshToken)` change starts a new generation. Each generation owns an `AbortController`; starting a new one aborts the previous one, so stale verification stops early instead of hashing to completion. Results from older generations are ignored (and their leases released) — this guarantees a slow resolution for ref A cannot overwrite the result for ref C.
 - While a generation runs, return `state: {kind: "pending"}` and a source map that keeps the previous generation's URLs for refs that are still in the Story and maps every other local ref to `{kind: "pending"}`.
 - On `resolved`, acquire pool URLs for every ready digest and build `{[ref]: {kind: "url", url}}` for ready refs only (missing/corrupt refs have no entry → placeholder).
 - Release the previous lease in a `useEffect` cleanup **after** the new sources are committed, so the Player never sees a revoked URL.
@@ -174,7 +174,7 @@ When the user clicks **Render MP4** and the Story contains local refs:
 
 1. Button is enabled only when existing v0.2 conditions hold **and** `describeLocalAssetRenderBlock(state, library) === null`.
 2. Snapshot the Active Story and enter the existing `rendering` phase exactly as `startBrowserRender` in `src/web/App.tsx` does today (`renderInFlightRef`, `AbortController`, `setRenderUi({phase: "rendering", …})`). From this point `authoringLocked` is true, so the Story and every asset control are frozen for the **whole** preparation, not only the encode. Use the message `"Checking local assets…"` while step 3 runs.
-3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache)`. Check `controller.signal.aborted` between digests (Cancel Render works during preparation). If not `resolved` with `allReady`, or cancelled → leave the rendering phase through the existing failure/cancel paths (which unlock authoring) and show the block message.
+3. Heavy step, no locks held: `resolveStoryLocalAssets(snapshot, library, cache, {signal: controller.signal})`. The signal is checked before every digest, so Cancel Render during preparation stops after the current payload. If not `resolved` with `allReady`, or cancelled → leave the rendering phase through the existing failure/cancel paths (which unlock authoring) and show the block message.
 4. Call `startBrowserRenderTransaction(snapshot, {…, prepareLocalAssets: createLocalAssetRenderPreparation({resolved, store, locks, pool})})`. The returned function:
    1. runs inside `withAssetLibraryLock(locks, "shared", …)`;
    2. for every usage: `getAssetRow(ref)` must still be `present`, and `getPayloadMeta(digest)` must still be `present` and equal (mimeType, byteSize, width, height) to the payload verified in step 3. Re-checking the **row per ref** matters: deleting `local:pose:sha256:A` must be caught even if `local:background:sha256:A` keeps the bytes alive;
@@ -212,6 +212,8 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - over budget by refs (65 refs, all missing metadata) → `over-budget`, zero blob reads;
 - over budget by bytes and by pixels (fake metadata) → `over-budget`, zero blob reads; exactly at limits → proceeds;
 - `describeLocalAssetRenderBlock` returns each message in the priority order above;
+- an already-aborted signal makes `resolveStoryLocalAssets` reject with `AbortError` before any store read; aborting mid-verification stops before the next digest;
+- the preview hook (`useStoryLocalAssets`) aborts the previous generation's signal when a new generation starts;
 - `createLocalAssetRenderPreparation`: unchanged library → `ok` with a frozen map containing one `url` entry per ready ref; pose row deleted after resolution (background row for the same digest kept) → `ok: false`; payloadMeta changed after resolution → `ok: false`; the asset lock is requested in `shared` mode (fake `LockManager`).
 
 `tests/object-url-pool.test.mjs`

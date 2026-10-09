@@ -118,7 +118,7 @@ Decoder rules (INV-11):
 
 - `undefined` → `absent`.
 - Required fields with the wrong type, non-finite or non-positive numbers, unknown `mimeType` → `corrupt`.
-- Thumbnails are bounded on **read**, not only when generated: `decodeThumbnail` returns `corrupt` unless `width` and `height` are ≤ `MAX_THUMBNAIL_DIMENSION` and `blob.size` ≤ `MAX_THUMBNAIL_BYTES` (`512 * 1024`, add it to `src/web/assetLibrary/constants.ts`). The catalog card additionally sets fixed CSS dimensions on the `<img>` and, after load, treats `naturalWidth`/`naturalHeight` > 256 as corrupt (hide the image, show the neutral box). Exact-file reimport regenerates the thumbnail.
+- Thumbnails are bounded on **read**, not only when generated: `decodeThumbnail` returns `corrupt` unless `width` and `height` are ≤ `MAX_THUMBNAIL_DIMENSION` and `blob.size` ≤ `MAX_THUMBNAIL_BYTES` (`512 * 1024`, add it to `src/web/assetLibrary/constants.ts`). Record metadata alone does not bound what the Blob encodes, so before any object URL is created for a thumbnail, `loadThumbnailForDisplay(store, digest)` (in `library.ts`) reads the thumbnail bytes (≤ 512 KiB, cheap) and runs `inspectImageBytes` on them: the **real** format must be PNG or WebP, real width/height must be ≤ 256, and they must equal the record's `width`/`height`; otherwise the thumbnail is `corrupt` and no URL is created (the card shows the neutral box). Only a thumbnail that passes is turned into an object URL. Exact-file reimport regenerates the thumbnail.
 - If the value contains a redundant identity field (`ref`, `category`, `digest`), it must equal what the key implies; otherwise `corrupt`. A mismatching field is never used to look anything else up.
 - New writes never include identity fields; the key is the identity.
 
@@ -183,7 +183,7 @@ export const openIndexedDbAssetStore = async (deps?: {
 - Database `ASSET_DB_NAME`, version `ASSET_DB_VERSION`; object stores `assets`, `payloadMeta`, `blobs`, `thumbnails`, all with out-of-line keys. No indexes.
 - The `indexedDB.open` call that may create/upgrade the database runs while holding `ASSET_LIBRARY_LOCK` in **exclusive** mode. `onupgradeneeded` only creates missing stores (v1).
 - `onversionchange` → close the connection immediately (so another tab's upgrade is never held up by this tab); later calls reject with an error whose message says the library was upgraded in another tab and the page must be reloaded.
-- `onblocked` on our own open (another tab still holds an older connection that did not close) → wait at most 5 seconds; if the open has not succeeded, abort it, release the exclusive lock, and return `unavailable` with `"Close other Tora tabs to finish updating My assets, then reload."`. v0.3 only ever opens version 1, so this path matters for future schema versions; implement and test it now so v0.3 tabs behave correctly when a later version upgrades.
+- `onblocked` on our own open (another tab still holds an older connection that did not close): an `IDBOpenDBRequest` cannot be cancelled, so **keep holding the exclusive lock until the request settles** (success or error) — never release it while the request is alive. While blocked, `openAssetLibrary` reports status `{kind: "unavailable", message: "Close other Tora tabs to finish updating My assets."}` through an `onStatusChange` callback, and keeps waiting. If the request later succeeds, finish the upgrade inside the still-held lock and switch the status to `ready`; if it errors, release the lock and stay `unavailable`. v0.3 only ever opens version 1, so this path matters for future schema versions; implement and test it now.
 - `listAssets` uses `IDBKeyRange.bound(prefix, prefix + "\uffff")` (type the six-character escape `\uffff` in code), narrowed by the cursor with open bounds; `openCursor` with direction `next` (`after`) or `prev` (`before`, results reversed back to ascending); stops after `limit` rows. Never `getAll()` over `assets`.
 - Every primary key read from a cursor must pass `isLocalAssetRef` **and** belong to the requested category. Keys that fail are skipped (never returned as a `LocalAssetRef`) and do not count toward `limit`. `countAssets` therefore counts with `openKeyCursor` over the range, skipping non-canonical keys, instead of `store.count(range)`. App writes can never create such keys because every write key comes from `buildLocalAssetRef`.
 - Map `QuotaExceededError` (or a transaction aborted with it) to `LocalAssetLibraryError` code `storage-full`; other failures to `storage-error`.
@@ -199,6 +199,8 @@ export type AssetLibraryStatus =
 export const openAssetLibrary = async (deps?: {
   locks?: LockManager;
   indexedDB?: IDBFactory;
+  /** Later status changes, e.g. blocked upgrade → ready. App stores each in useState. */
+  onStatusChange?: (status: AssetLibraryStatus) => void;
 }): Promise<AssetLibraryStatus>;
 
 export const withAssetLibraryLock = <T>(
@@ -300,6 +302,8 @@ export const listLocalAssetPage: (store, category, cursor) => Promise<{
 export const countLocalAssets: (store, category) => Promise<number>;
 export const renameLocalAsset: (library, ref, label) => Promise<AssetLibraryMutationResult>;
 export const deleteLocalAsset: (library, ref) => Promise<AssetLibraryMutationResult>;
+export const loadThumbnailForDisplay: (store, digest) =>
+  Promise<{ok: true; blob: Blob} | {ok: false}>; // inspects real bytes; see §3 decoder rules
 export const normalizeLocalAssetLabel: (label: string) =>
   {ok: true; label: string} | {ok: false; message: string};
 ~~~
@@ -334,8 +338,8 @@ export const verifyPayloadsSequentially = async (
   store: AssetLibraryStore,
   digests: readonly string[],
   cache: IntegrityCache,
-  deps?: {subtle?: SubtleCrypto},
-): Promise<Map<string, PayloadVerification>>;
+  deps?: {subtle?: SubtleCrypto; signal?: AbortSignal},
+): Promise<Map<string, PayloadVerification>>; // throws signal.reason (an AbortError) if aborted
 ~~~
 
 `verifyPayload` steps:
@@ -347,7 +351,7 @@ export const verifyPayloadsSequentially = async (
 5. `inspectImageBytes(bytes)` must succeed and its `mimeType`, `width`, `height` must equal `payloadMeta`, else `corrupt`.
 6. Drop the `bytes` reference before returning `{ok: true, payload, blob}`.
 
-`verifyPayloadsSequentially` uses a plain `for … of` with `await` (never `Promise.all`). A cache hit skips steps 2–5 and returns the cached `{payload, blob}`, but still requires `payloadMeta` to be present and equal to the cached payload (so a deleted digest is not served from cache). Holding the `Blob` handle is cheap: it references the stored bytes, it does not copy them. The cache lives in memory only, for the page session; the app invalidates it on local mutations and on `asset-library-changed` messages.
+`verifyPayloadsSequentially` uses a plain `for … of` with `await` (never `Promise.all`). Before starting each digest it calls `signal?.throwIfAborted()`, so cancellation stops before the next payload is read (the payload already being hashed finishes, at most one ≤25 MiB file). A cache hit skips steps 2–5 and returns the cached `{payload, blob}`, but still requires `payloadMeta` to be present and equal to the cached payload (so a deleted digest is not served from cache). Holding the `Blob` handle is cheap: it references the stored bytes, it does not copy them. The cache lives in memory only, for the page session; the app invalidates it on local mutations and on `asset-library-changed` messages.
 
 Because verification requires `payloadMeta` to equal the real bytes, metadata-based budget totals (ASSET-001) equal real totals for every verified digest (D-10).
 
@@ -396,14 +400,15 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 - correct bytes but `payloadMeta` width/height/mimeType/byteSize falsified → `corrupt`;
 - an asset row claiming `digest: B` under key `local:pose:sha256:A`: ASSET-004 never asks for B — assert here that `decodeAssetRow` returns `corrupt` and that the fake recorded zero reads for B;
 - sequential: a fake whose `blob.arrayBuffer()` tracks concurrency proves at most 1 in flight for 11 digests (simulating ~256 MiB with 23 MiB fake payload sizes — sizes may be faked via `size`/`arrayBuffer` stubs, no real 256 MiB allocation);
+- aborting the signal while digest 2 of 5 is being verified throws an `AbortError` after digest 2 and never reads digests 3–5;
 - cache hit avoids a second blob read; `invalidate([digest])` forces a re-read; a cached digest whose `payloadMeta` was deleted is not served.
 
 `tests/harness/asset-library-indexeddb.spec.mjs` (harness, real Chrome IndexedDB)
 
 - open creates the 4 stores; import/rename/delete round-trip through real IndexedDB;
 - a connection opened in page A closes itself when page B opens the same database with version 2 (harness opens v2 directly), and page A's next call reports the reload message;
-- page B's v2 open while page A holds a connection that ignores `versionchange` (harness hook) returns `unavailable` with the close-other-tabs message after the timeout;
-- a stored thumbnail of 300×300 or larger than 512 KiB decodes as `corrupt` and the card shows the neutral box;
+- page B's v2 open while page A holds a connection that ignores `versionchange` (harness hook): B reports the close-other-tabs `unavailable` status, the asset-library lock stays held by B (check with `navigator.locks.query()`), and after A closes its connection B's open completes and B becomes `ready`;
+- a stored thumbnail whose record claims 300×300, whose blob exceeds 512 KiB, or whose record claims 256×256 while its bytes encode a 4000×4000 image is `corrupt`: no object URL is created for it (spy on `URL.createObjectURL`) and the card shows the neutral box;
 - reload the page → data still there;
 - a transaction that throws mid-way (harness hook) leaves no partial record;
 - paging over 120 rows reads one page at a time (verify through the store API, not internals);
