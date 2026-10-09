@@ -38,6 +38,29 @@ describe("WEB-006 web-renderer compatibility audit", () => {
     assert.equal(source.includes("objectPosition"), false);
   });
 
+  it("keeps the missing-asset placeholder within web-renderer supported styles", async () => {
+    const source = await read("src/components/MissingAssetPlaceholder.tsx");
+
+    for (const unsupported of [
+      "background:",
+      "textAlign",
+      "zIndex",
+      "objectPosition",
+      "boxSizing",
+      "overflowWrap",
+      "wordBreak",
+    ]) {
+      assert.equal(
+        source.includes(unsupported),
+        false,
+        `MissingAssetPlaceholder must not rely on ${unsupported}`,
+      );
+    }
+
+    assert.match(source, /backgroundColor/);
+    assert.match(source, /data-missing-local-asset/);
+  });
+
   it("keeps scene layering in DOM order without z-index", async () => {
     const source = await read("src/Scene.tsx");
 

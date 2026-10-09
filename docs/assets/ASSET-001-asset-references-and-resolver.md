@@ -1,6 +1,6 @@
 # ASSET-001 — Asset references, persistence v2 and composition contract
 
-> Status: **Proposed**
+> Status: **Implemented**. Local refs round-trip through schema, YAML and persistence (v1 → v2 only when needed), and the shared composition draws a provided local source or an explicit missing/pending placeholder without changing bundled output.
 >
 > Depends on: v0.2 (current `main`). Read [README](./README.md) first: invariants (`INV-n`), constants and decisions (`D-n`) live there.
 
@@ -175,16 +175,18 @@ The hook only reads React context initialized from props. It must not touch Inde
 ~~~ts
 export const MissingAssetPlaceholder: React.FC<{
   category: LocalAssetCategory;
-  ref: LocalAssetRef;
+  assetRef: LocalAssetRef;
   variant: "missing" | "pending";
 }>;
 ~~~
 
+The prop is named `assetRef` because `ref` is reserved by React.
+
 Renders, filling its parent box:
 
 - solid `backgroundColor` `#1f2430` for backgrounds; for poses a centered box `#2b3140` at 60% width/height of its parent;
-- two lines of text, centered with flexbox: `Missing local pose` / `Missing local background` (variant `pending`: `Loading local pose…` / `Loading local background…`), then `shortAssetId(ref)`;
-- variant `missing`: `data-missing-local-asset={ref}`; variant `pending`: `data-pending-local-asset={ref}`; both `role="img"` with an `aria-label` repeating the visible text.
+- two lines of text, centered with flexbox: `Missing local pose` / `Missing local background` (variant `pending`: `Loading local pose…` / `Loading local background…`), then `shortAssetId(assetRef)`;
+- variant `missing`: `data-missing-local-asset={assetRef}`; variant `pending`: `data-pending-local-asset={assetRef}`; both `role="img"` with an `aria-label` repeating the visible text.
 
 Respect the web-renderer compatibility audit (`tests/web-renderer-compat.test.mjs`): no `background:` shorthand, `textAlign`, `zIndex`, `objectPosition`, `boxSizing`, `overflowWrap` or `wordBreak`. Use `fontFamily: "Inter, sans-serif"` as `src/Video.tsx` does.
 
@@ -266,10 +268,10 @@ The asset IndexedDB (ASSET-002) has its own unrelated schema version.
 
 ## Tasks
 
-- [ ] **1. Ref grammar, schema and types.** Create `limits.ts`, `refs.ts`; update `schema.ts`, `types.ts`, `assets.ts`; fix every TypeScript error the widening produces (expected in `renderPlan.ts`, `Scene.tsx`, `components/*`, `web/visualDraft.ts`, `web/components/AssetCatalog.tsx`). Where code indexes a bundled catalog with a Story value, guard with `isBundledPose` / `isBundledBackground`. Tests: `tests/local-asset-refs.test.mjs`.
-- [ ] **2. Composition contract.** Create `sources.ts`, `visualAssetSource.tsx`, `MissingAssetPlaceholder.tsx`; update `Video.tsx`, `Tora.tsx`, `Background.tsx`. Tests: `tests/local-asset-composition.test.mjs`; extend `tests/web-renderer-compat.test.mjs` to audit `MissingAssetPlaceholder.tsx` with the same forbidden-style list.
-- [ ] **3. Readiness and budget functions.** Create `readiness.ts`. Tests: `tests/local-asset-readiness.test.mjs`.
-- [ ] **4. Persistence v1/v2.** Update `persistence.ts` and `App.tsx`. Tests: `tests/persistence-v2.test.mjs`; keep `tests/web-yaml-persistence.test.mjs` and `tests/browser/yaml-persistence.spec.mjs` green.
+- [x] **1. Ref grammar, schema and types.** Create `limits.ts`, `refs.ts`; update `schema.ts`, `types.ts`, `assets.ts`; fix every TypeScript error the widening produces (expected in `renderPlan.ts`, `Scene.tsx`, `components/*`, `web/visualDraft.ts`, `web/components/AssetCatalog.tsx`). Where code indexes a bundled catalog with a Story value, guard with `isBundledPose` / `isBundledBackground`. Tests: `tests/local-asset-refs.test.mjs`.
+- [x] **2. Composition contract.** Create `sources.ts`, `visualAssetSource.tsx`, `MissingAssetPlaceholder.tsx`; update `Video.tsx`, `Tora.tsx`, `Background.tsx`. Tests: `tests/local-asset-composition.test.mjs`; extend `tests/web-renderer-compat.test.mjs` to audit `MissingAssetPlaceholder.tsx` with the same forbidden-style list.
+- [x] **3. Readiness and budget functions.** Create `readiness.ts`. Tests: `tests/local-asset-readiness.test.mjs`.
+- [x] **4. Persistence v1/v2.** Update `persistence.ts` and `App.tsx`. Tests: `tests/persistence-v2.test.mjs`; keep `tests/web-yaml-persistence.test.mjs` and `tests/browser/yaml-persistence.spec.mjs` green.
 
 ## Tests
 

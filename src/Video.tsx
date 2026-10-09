@@ -1,13 +1,16 @@
 import {AbsoluteFill} from "remotion";
 import {StoryRenderer} from "./StoryRenderer";
+import {LocalAssetSourcesProvider} from "./components/visualAssetSource.tsx";
+import type {LocalAssetSourceMap} from "./localAssets/sources.ts";
 import {useCaptionFont} from "./fonts.ts";
 import type {Story} from "./story/types";
 
 export type ToraVideoProps = {
   story: Story;
+  localAssetSources?: LocalAssetSourceMap;
 };
 
-export const ToraVideo = ({story}: ToraVideoProps) => {
+export const ToraVideo = ({story, localAssetSources}: ToraVideoProps) => {
   const previewFontError = useCaptionFont(story);
 
   if (previewFontError !== null) {
@@ -33,7 +36,9 @@ export const ToraVideo = ({story}: ToraVideoProps) => {
 
   return (
     <AbsoluteFill>
-      <StoryRenderer story={story} />
+      <LocalAssetSourcesProvider sources={localAssetSources}>
+        <StoryRenderer story={story} />
+      </LocalAssetSourcesProvider>
     </AbsoluteFill>
   );
 };

@@ -1087,3 +1087,93 @@ test("confirmed eligible import clears an existing persistence conflict", async 
     )
     .toContain("Imported after conflict");
 });
+
+const localPoseRef = `local:pose:sha256:${"a".repeat(64)}`;
+
+const applyLocalPoseRefViaYaml = async (page) => {
+  await page.getByRole("button", {name: "Open YAML"}).click();
+
+  const source = page.getByLabel("YAML source");
+  await expect(source).toContainText("title: Deploy Friday");
+
+  await source.fill(
+    (await source.inputValue()).replace("pose: formal", `pose: ${localPoseRef}`),
+  );
+  await page.getByRole("button", {name: "Apply YAML"}).click();
+  await expect(page.locator("[data-yaml-dirty=false]")).toBeVisible();
+};
+
+const readStoredVersion = (page) =>
+  page.evaluate(() => {
+    const raw = localStorage.getItem("tora-video-engine:project");
+    return raw === null ? null : JSON.parse(raw).version;
+  });
+
+test("owner tab promotes the persistence envelope to version 2 when a local ref is applied", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  await expect.poll(() => readStoredVersion(page)).toBe(1);
+
+  await applyLocalPoseRefViaYaml(page);
+
+  const missingPlaceholder = page.locator(
+    ".preview-frame [data-missing-local-asset]",
+  );
+  await expect(missingPlaceholder).toHaveCount(1);
+  await expect(missingPlaceholder).toHaveAttribute(
+    "data-missing-local-asset",
+    localPoseRef,
+  );
+
+  await expect.poll(() => readStoredVersion(page)).toBe(2);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("tora-video-engine:project"),
+    ),
+  ).toContain(`pose:sha256:${"a".repeat(64)}`);
+
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "false",
+  );
+  expect(await readStoredVersion(page)).toBe(2);
+});
+
+test("secondary tab applying a local ref leaves the stored envelope at version 1", async ({
+  context,
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect.poll(() => readStoredVersion(page)).toBe(1);
+
+  const secondary = await context.newPage();
+  await secondary.goto("/", {waitUntil: "domcontentloaded"});
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "secondary",
+    {timeout: 10_000},
+  );
+
+  await applyLocalPoseRefViaYaml(secondary);
+
+  await expect(secondary.locator(".app-shell")).toHaveAttribute(
+    "data-loss-risk",
+    "true",
+  );
+  await expect(
+    secondary.getByText(/Another tab owns persistence/),
+  ).toBeVisible();
+
+  expect(await readStoredVersion(secondary)).toBe(1);
+  expect(
+    await secondary.evaluate(() =>
+      localStorage.getItem("tora-video-engine:project"),
+    ),
+  ).not.toContain("local:pose");
+});

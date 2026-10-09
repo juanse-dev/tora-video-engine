@@ -1,5 +1,6 @@
 import {StorySchema, type Story} from "../story/schema.ts";
 import {serializeStorySource} from "../story/serializeStory.ts";
+import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
 import {
   MAX_BROWSER_TITLE_CODE_UNITS,
   MAX_BROWSER_ACTIVE_SCENES,
@@ -12,10 +13,13 @@ export const PERSISTENCE_STORAGE_KEY = "tora-video-engine:project";
 export const PERSISTENCE_WRITER_LOCK =
   "tora-video-engine:persistence-writer";
 export const PERSISTENCE_VERSION = 1;
+export const PERSISTENCE_VERSION_LOCAL = 2;
 export const MAX_PERSISTED_ENVELOPE_CODE_UNITS = 1_048_576;
 
+export type PersistenceVersion = 1 | 2;
+
 export type PersistedEnvelope = {
-  version: typeof PERSISTENCE_VERSION;
+  version: PersistenceVersion;
   story: Story;
 };
 
@@ -45,6 +49,7 @@ export type RestoreResult = {
   restored: boolean;
   recovery: ProtectedRecovery | null;
   durableStory: Story | null;
+  durableVersion: PersistenceVersion | null;
   storageWarning: string | null;
 };
 
@@ -64,6 +69,7 @@ const rawRecovery = (
   restored: false,
   recovery: {kind: "raw", reason, raw, message},
   durableStory: null,
+  durableVersion: null,
   storageWarning: null,
 });
 
@@ -115,6 +121,7 @@ export const restorePersistedProject = (
       restored: false,
       recovery: null,
       durableStory: null,
+      durableVersion: null,
       storageWarning: null,
     };
   }
@@ -153,7 +160,10 @@ export const restorePersistedProject = (
 
   const envelope = parsed as Record<string, unknown>;
 
-  if (envelope.version !== PERSISTENCE_VERSION) {
+  if (
+    envelope.version !== PERSISTENCE_VERSION &&
+    envelope.version !== PERSISTENCE_VERSION_LOCAL
+  ) {
     return rawRecovery(
       fallback,
       raw,
@@ -185,6 +195,18 @@ export const restorePersistedProject = (
     );
   }
 
+  if (
+    envelope.version === PERSISTENCE_VERSION &&
+    storyHasLocalAssetRefs(parsedStory.data)
+  ) {
+    return rawRecovery(
+      fallback,
+      raw,
+      "schema-invalid",
+      "Stored project version 1 cannot contain local asset references.",
+    );
+  }
+
   const policy = dependencies.policy ?? evaluateBrowserStoryPolicy;
   const policyResult = policy(parsedStory.data);
 
@@ -200,6 +222,7 @@ export const restorePersistedProject = (
           "Stored Story is valid for the engine but exceeds browser authoring limits.",
       },
       durableStory: null,
+      durableVersion: null,
       storageWarning: null,
     };
   }
@@ -209,15 +232,30 @@ export const restorePersistedProject = (
     restored: true,
     recovery: null,
     durableStory: parsedStory.data,
+    durableVersion: envelope.version,
     storageWarning: null,
   };
 };
 
+/**
+ * Bundled-only projects stay v1 so a v0.2 rollback still reads them. The first
+ * write containing a local ref promotes to v2, and v2 never downgrades.
+ */
+export const requiredPersistenceVersion = (
+  story: Story,
+  durableVersion: PersistenceVersion | null,
+): PersistenceVersion =>
+  (durableVersion ?? PERSISTENCE_VERSION) === PERSISTENCE_VERSION_LOCAL ||
+  storyHasLocalAssetRefs(story)
+    ? PERSISTENCE_VERSION_LOCAL
+    : PERSISTENCE_VERSION;
+
 export const serializePersistedEnvelope = (
   story: Story,
+  version: PersistenceVersion = PERSISTENCE_VERSION,
 ): string => {
   const envelope: PersistedEnvelope = {
-    version: PERSISTENCE_VERSION,
+    version,
     story,
   };
   const serialized = JSON.stringify(envelope);

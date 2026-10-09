@@ -1,17 +1,32 @@
-import {AbsoluteFill, Img, staticFile} from "remotion";
-import {backgroundAssets} from "../assets.ts";
+import {AbsoluteFill, Img} from "remotion";
 import type {Background as BackgroundName} from "../story/types.ts";
+import {MissingAssetPlaceholder} from "./MissingAssetPlaceholder.tsx";
+import {useVisualAssetSrc} from "./visualAssetSource.tsx";
 
 type BackgroundProps = {
   background: BackgroundName;
 };
 
 export const Background = ({background}: BackgroundProps) => {
+  const asset = useVisualAssetSrc("background", background);
+
+  if (asset.kind !== "image") {
+    return (
+      <AbsoluteFill>
+        <MissingAssetPlaceholder
+          assetRef={asset.ref}
+          category={asset.category}
+          variant={asset.kind}
+        />
+      </AbsoluteFill>
+    );
+  }
+
   return (
     <AbsoluteFill>
       <Img
         pauseWhenLoading
-        src={staticFile(backgroundAssets[background])}
+        src={asset.src}
         style={{
           height: "100%",
           objectFit: "cover",

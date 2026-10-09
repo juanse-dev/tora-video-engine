@@ -1,6 +1,12 @@
 import {z} from "zod";
 import {isCaptionLayoutSupported} from "../captionLayout.ts";
 import {isCaptionTextSupported} from "../fontCoverage.ts";
+import {
+  isLocalBackgroundRef,
+  isLocalPoseRef,
+  type LocalBackgroundRef,
+  type LocalPoseRef,
+} from "../localAssets/refs.ts";
 import {scenePresets} from "../scenePresets.ts";
 import {VIDEO_FPS} from "../videoConfig.ts";
 import {
@@ -19,9 +25,35 @@ export const backgrounds = ["office", "server-room"] as const;
 export const animations = ["fade", "float", "slowZoom"] as const;
 
 export const SceneTypeSchema = z.enum(sceneTypes);
-export const PoseSchema = z.enum(poses);
-export const BackgroundSchema = z.enum(backgrounds);
+export const BundledPoseSchema = z.enum(poses);
+export const BundledBackgroundSchema = z.enum(backgrounds);
 export const AnimationSchema = z.enum(animations);
+
+export type BundledPose = z.infer<typeof BundledPoseSchema>;
+export type BundledBackground = z.infer<typeof BundledBackgroundSchema>;
+
+export const PoseSchema = z.custom<BundledPose | LocalPoseRef>(
+  (value) =>
+    typeof value === "string" &&
+    (BundledPoseSchema.safeParse(value).success || isLocalPoseRef(value)),
+  {
+    message:
+      "Pose must be formal, confused, panic, coffee, or local:pose:sha256:<64 lowercase hex>",
+  },
+);
+
+export const BackgroundSchema = z.custom<
+  BundledBackground | LocalBackgroundRef
+>(
+  (value) =>
+    typeof value === "string" &&
+    (BundledBackgroundSchema.safeParse(value).success ||
+      isLocalBackgroundRef(value)),
+  {
+    message:
+      "Background must be office, server-room, or local:background:sha256:<64 lowercase hex>",
+  },
+);
 
 export const StorySceneSchema = z
   .object({
