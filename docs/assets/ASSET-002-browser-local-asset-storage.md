@@ -118,6 +118,7 @@ Decoder rules (INV-11):
 
 - `undefined` → `absent`.
 - Required fields with the wrong type, non-finite or non-positive numbers, unknown `mimeType` → `corrupt`.
+- `decodePayloadMeta` also enforces INV-7 on the stored values: `byteSize` must be an integer `≤ MAX_LOCAL_ASSET_BYTES`, `width`/`height` integers `≤ MAX_LOCAL_ASSET_DIMENSION`, and `width × height ≤ MAX_LOCAL_ASSET_PIXELS`; otherwise `corrupt`.
 - Thumbnails are bounded on **read**, not only when generated: `decodeThumbnail` returns `corrupt` unless `width` and `height` are ≤ `MAX_THUMBNAIL_DIMENSION` and `blob.size` ≤ `MAX_THUMBNAIL_BYTES` (`512 * 1024`, add it to `src/web/assetLibrary/constants.ts`). Record metadata alone does not bound what the Blob encodes, so before any object URL is created for a thumbnail, `loadThumbnailForDisplay(store, digest)` (in `library.ts`) reads the thumbnail bytes (≤ 512 KiB, cheap) and runs `inspectImageBytes` on them: the **real** format must be PNG or WebP, real width/height must be ≤ 256, and they must equal the record's `width`/`height`; otherwise the thumbnail is `corrupt` and no URL is created (the card shows the neutral box). Only a thumbnail that passes is turned into an object URL. Exact-file reimport regenerates the thumbnail.
 - If the value contains a redundant identity field (`ref`, `category`, `digest`), it must equal what the key implies; otherwise `corrupt`. A mismatching field is never used to look anything else up.
 - New writes never include identity fields; the key is the identity.
@@ -346,7 +347,7 @@ export const verifyPayloadsSequentially = async (
 
 1. `payloadMeta[digest]` must be `present` (absent → `missing`, corrupt → `corrupt`).
 2. `blobs[digest]` must be `present` (absent → `missing`).
-3. `blob.size === payloadMeta.byteSize`, else `corrupt`.
+3. `blob.size === payloadMeta.byteSize` **and** `blob.size ≤ MAX_LOCAL_ASSET_BYTES`, else `corrupt` — checked from `blob.size` before any byte is read, so a corrupt record claiming e.g. 250 MiB is rejected without allocating it.
 4. `bytes = new Uint8Array(await blob.arrayBuffer())`; `sha256Hex(bytes) === digest`, else `corrupt`.
 5. `inspectImageBytes(bytes)` must succeed and its `mimeType`, `width`, `height` must equal `payloadMeta`, else `corrupt`.
 6. Drop the `bytes` reference before returning `{ok: true, payload, blob}`.
@@ -398,6 +399,8 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 - missing payloadMeta / missing blob → `missing`;
 - blob under digest A containing valid image-B bytes → `corrupt` (hash mismatch);
 - correct bytes but `payloadMeta` width/height/mimeType/byteSize falsified → `corrupt`;
+- corrupt record whose `payloadMeta.byteSize` and blob both claim 250 MiB (fake blob with `size` set and a spied `arrayBuffer`) → `corrupt` from `decodePayloadMeta`, and `arrayBuffer` is never called;
+- `payloadMeta` with 9000×9000 or 8000×8000 dimensions decodes as `corrupt`;
 - an asset row claiming `digest: B` under key `local:pose:sha256:A`: ASSET-004 never asks for B — assert here that `decodeAssetRow` returns `corrupt` and that the fake recorded zero reads for B;
 - sequential: a fake whose `blob.arrayBuffer()` tracks concurrency proves at most 1 in flight for 11 digests (simulating ~256 MiB with 23 MiB fake payload sizes — sizes may be faked via `size`/`arrayBuffer` stubs, no real 256 MiB allocation);
 - aborting the signal while digest 2 of 5 is being verified throws an `AbortError` after digest 2 and never reads digests 3–5;

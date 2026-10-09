@@ -82,7 +82,8 @@ export const describeLocalAssetRenderBlock = (
 `resolveStoryLocalAssets` algorithm (each step only proceeds with what the previous step accepted):
 
 1. `usages = collectStoryLocalAssetUsages(story)`. Empty → `{kind: "none"}`.
-2. If `library.kind !== "ready"` → `resolved` with every ref `unavailable` (`detail` = library message), `allReady: false`. No store reads.
+2. Ref-count budget first, independent of storage: `evaluateLocalAssetBudget(usages, new Map())`. If it fails (more than 64 refs) → `over-budget`. This applies even when the library is not ready, so the 64-ref cap holds without Web Locks or IndexedDB.
+2b. If `library.kind !== "ready"` → `resolved` with every ref `unavailable` (`detail` = library message), `allReady: false`. No store reads.
 3. For each usage, `store.getAssetRow(usage.ref)` — the ref itself is the key (INV-11): `absent` → `missing`; `corrupt` → `corrupt`; `present` → candidate.
 4. For each distinct digest with at least one candidate ref, `store.getPayloadMeta(digest)`: `absent` → its candidate refs become `missing`; `corrupt` → `corrupt`; `present` → record metadata.
 5. `budget = evaluateLocalAssetBudget(usages, metadataByDigest)`. If not ok → `over-budget` with `describeBudgetFailure(budget)`. **No blob has been read at this point** (D-10).
@@ -166,7 +167,7 @@ export type LocalAssetRenderPreparation =
 prepareLocalAssets?: () => Promise<LocalAssetRenderPreparation>;
 ~~~
 
-`startBrowserRenderTransaction` calls `prepareLocalAssets` **immediately after the render lock lease is acquired and before the pre-render OPFS cleanup**. On `{ok: false}` it releases the lease and returns a new outcome `{kind: "assets-changed", message}` without touching OPFS. On success it passes `localAssetSources` to `renderStory` and calls `release()` after the post-render cleanup (whatever the outcome, including cancel and cleanup-blocked).
+`startBrowserRenderTransaction` calls `prepareLocalAssets` **immediately after the render lock lease is acquired and before the pre-render OPFS cleanup**. On `{ok: false}` it releases the lease and returns a new outcome `{kind: "assets-changed", message}` without touching OPFS. If `prepareLocalAssets` **rejects** (IndexedDB read error, Web Lock request failure, abort), wrap the call in `try/catch`: release the lease, never touch OPFS, and return `{kind: "failure", error}` (or `{kind: "cancelled"}` when `signal.aborted`). The lease must never stay held after a failed preparation. On success it passes `localAssetSources` to `renderStory` and calls `release()` after the post-render cleanup (whatever the outcome, including cancel and cleanup-blocked).
 
 ## Render start sequence (App)
 
@@ -204,6 +205,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 
 - bundled-only Story → `none`, zero store reads;
 - library `disabled` → every ref `unavailable`, zero store reads;
+- library `disabled` with 65 distinct local refs → `over-budget` (ref cap enforced without storage), zero store reads;
 - all refs present and valid → `allReady`, one blob read per distinct digest even when 5 scenes share it;
 - mixed: valid A + missing B → A ready (in `verified`), B missing, `allReady: false`;
 - mixed: valid A + corrupt C (blob bytes of another image) → A ready, C corrupt;
@@ -226,6 +228,7 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 - `renderStoryMediaOnWeb` passes `localAssetSources` in both `defaultProps` and `inputProps`;
 - `prepareLocalAssets` runs after `acquireLock` and before the first `cleanup` call (record call order);
 - `{ok: false}` → outcome `assets-changed`, lease released, `cleanup` and `renderStory` never called;
+- `prepareLocalAssets` rejecting with an error → outcome `failure`, lease released, `cleanup` and `renderStory` never called; a second transaction afterwards acquires the lock normally (not `busy`); rejecting after abort → `cancelled`;
 - `release()` is called after post-cleanup on success, failure and cancel;
 - (browser, `local-asset-preview.spec.mjs`) while a Story with local refs is in the "Checking local assets…" preparation step, the authoring fieldset is disabled, and Cancel Render returns to the editable state without creating OPFS entries;
 - with a fake `LockManager` that records events, the order is: render lock granted → asset lock requested in `shared` mode → rows re-read → map frozen → asset lock released → `renderStory` called; the asset lock is never requested before the render lock. (That an exclusive request waits for a held shared lock is Web Locks behavior, already covered by the ASSET-002 harness test.)
