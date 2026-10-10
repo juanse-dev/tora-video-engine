@@ -23,6 +23,7 @@ import {
   buildImageHeader,
   buildJpeg,
   buildPng,
+  buildRiffWebp,
   buildSvgBytes,
   buildTextBytes,
   buildTruncatedCases,
@@ -373,6 +374,61 @@ test("malformed: png chunk length of 0xFFFFFFFF before IDAT does not overflow or
 test("malformed: png with a partial chunk header after IHDR", () => {
   const ihdr = buildPng({width: 10, height: 10, idat: false, iend: false});
   assert.equal(rejected(concatBytes(ihdr, new Uint8Array([0, 0, 0]))), "malformed");
+});
+
+// WebP first-chunk size field is a little-endian u32 at offset 16.
+const withWebpFirstChunkSize = (bytes, size) => {
+  const out = bytes.slice();
+  new DataView(out.buffer).setUint32(16, size, true);
+  return out;
+};
+
+for (const [name, build] of [
+  ["VP8", () => buildWebpVp8({width: 10, height: 10})],
+  ["VP8L", () => buildWebpVp8l({width: 10, height: 10})],
+]) {
+  test(`malformed: ${name} chunk declares more bytes than remain`, () => {
+    const bytes = build();
+    assert.equal(rejected(withWebpFirstChunkSize(bytes, bytes.length)), "malformed");
+    assert.equal(rejected(withWebpFirstChunkSize(bytes, 0xffffffff)), "malformed");
+  });
+
+  test(`malformed: ${name} chunk data cut short`, () => {
+    const bytes = build();
+    // Remove 2 bytes: the pad byte (if any) and at least one data byte.
+    assert.equal(rejected(truncate(bytes, bytes.length - 2)), "malformed");
+  });
+}
+
+test("accepted: VP8 chunk with an odd declared size and the final pad byte missing (R6)", () => {
+  const vp8 = buildWebpVp8({width: 10, height: 10});
+  const data = concatBytes(vp8.slice(20), new Uint8Array(1)); // 19 bytes: odd
+  const padded = buildRiffWebp(webpChunk("VP8 ", data));
+  assert.equal(padded.length, 20 + 20);
+  assert.deepEqual(accepted(truncate(padded, padded.length - 1)), {
+    mimeType: "image/webp",
+    width: 10,
+    height: 10,
+  });
+});
+
+test("accepted: VP8L chunk with an odd declared size and the final pad byte missing (R6)", () => {
+  const vp8l = buildWebpVp8l({width: 10, height: 10});
+  assert.deepEqual(accepted(truncate(vp8l, vp8l.length - 1)), {
+    mimeType: "image/webp",
+    width: 10,
+    height: 10,
+  });
+});
+
+test("malformed: VP8X file whose image chunk is truncated (covered by the trailing-chunk scan)", () => {
+  const vp8x = buildWebpVp8x({width: 10, height: 10});
+  assert.equal(rejected(truncate(vp8x, vp8x.length - 3)), "malformed");
+  const vp8Image = buildRiffWebp(
+    webpChunk("VP8X", concatBytes(new Uint8Array(4), new Uint8Array(6))),
+    webpChunk("VP8 ", new Uint8Array(18)),
+  );
+  assert.equal(rejected(truncate(vp8Image, vp8Image.length - 4)), "malformed");
 });
 
 const pngBeforeIdat = () =>

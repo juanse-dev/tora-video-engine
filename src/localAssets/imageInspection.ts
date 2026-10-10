@@ -228,6 +228,11 @@ const parseJpeg = (bytes: Uint8Array): ParsedHeader => {
 const WEBP_CHUNK_HEADER = 8; // type (4) + size (4)
 const WEBP_FIRST_CHUNK = 12;
 
+// The declared chunk data must lie entirely within the file. The pad byte of an
+// odd-sized final chunk is not part of the data, so its absence is tolerated.
+const webpChunkDataFits = (bytes: Uint8Array, dataStart: number, size: number) =>
+  dataStart + size <= bytes.length;
+
 const parseWebp = (bytes: Uint8Array): ParsedHeader => {
   if (bytes.length < WEBP_FIRST_CHUNK) {
     return MALFORMED;
@@ -246,7 +251,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
 
   if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8)) {
     // Frame tag (3) + start code (3) + width (2) + height (2).
-    if (size < 10 || dataStart + 10 > bytes.length) {
+    if (size < 10 || !webpChunkDataFits(bytes, dataStart, size)) {
       return MALFORMED;
     }
 
@@ -263,7 +268,11 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
 
   if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8L)) {
     // Signature (1) + packed width/height (4).
-    if (size < 5 || dataStart + 5 > bytes.length || bytes[dataStart] !== 0x2f) {
+    if (
+      size < 5 ||
+      !webpChunkDataFits(bytes, dataStart, size) ||
+      bytes[dataStart] !== 0x2f
+    ) {
       return MALFORMED;
     }
 
@@ -280,7 +289,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     // Flags (1) + reserved (3) + canvas width-1 (3) + canvas height-1 (3).
     // The chunk is exactly 10 bytes; any other size is a damaged file, and it
     // would otherwise let the chunk scan below skip past (or hide) an ANIM chunk.
-    if (size !== 10 || dataStart + 10 > bytes.length) {
+    if (size !== 10 || !webpChunkDataFits(bytes, dataStart, size)) {
       return MALFORMED;
     }
 
