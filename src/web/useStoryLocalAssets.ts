@@ -39,7 +39,7 @@ export const useStoryLocalAssets = (
     }
 
     return controller.start(story, library, (snapshot) =>
-      setSettled({snapshot, story, library, refreshToken}),
+      setSettled({snapshot, story, library}),
     );
   }, [controller, story, library, refreshToken]);
 
@@ -60,7 +60,7 @@ export const useStoryLocalAssets = (
 
   return useMemo(
     () =>
-      selectVisibleLocalAssets({story, library, refreshToken, usages, settled}),
-    [story, library, refreshToken, usages, settled],
+      selectVisibleLocalAssets({story, library, usages, settled}),
+    [story, library, usages, settled],
   );
 };

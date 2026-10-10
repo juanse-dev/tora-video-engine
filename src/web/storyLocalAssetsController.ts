@@ -1,5 +1,7 @@
 import {
   collectStoryLocalAssetUsages,
+  describeBudgetFailure,
+  evaluateLocalAssetBudget,
   type LocalAssetUsage,
 } from "../localAssets/readiness.ts";
 import type {LocalAssetRef} from "../localAssets/refs.ts";
@@ -59,38 +61,71 @@ export type SettledLocalAssets = {
   snapshot: StoryLocalAssetsSnapshot;
   story: Story;
   library: AssetLibraryStatus;
-  refreshToken: number;
 };
 
+const sameUsages = (
+  first: readonly LocalAssetUsage[],
+  second: readonly LocalAssetUsage[],
+): boolean =>
+  first.length === second.length &&
+  first.every((usage, index) => {
+    const other = second[index];
+
+    return (
+      usage.ref === other.ref &&
+      usage.sceneIndexes.length === other.sceneIndexes.length &&
+      usage.sceneIndexes.every(
+        (sceneIndex, position) => sceneIndex === other.sceneIndexes[position],
+      )
+    );
+  });
+
 /**
- * What the hook shows for the current inputs (R8, stale-while-revalidate):
+ * What the hook shows for the current inputs (R8/R12, stale-while-revalidate):
  * - a Story without local refs is `none`;
- * - a result for the same Story and library stays visible while a refresh-only
- *   generation (only `refreshToken` changed) runs, and is replaced when that
- *   generation settles;
- * - anything else (Story or library changed, library still opening, nothing
- *   settled yet) is `pending`, keeping previous URLs for refs that remain.
+ * - a Story over the ref cap is `over-budget` at once (no storage is needed to
+ *   know), so no Player is mounted for it;
+ * - a settled result stays visible while a new generation runs when the library
+ *   is the same object and the Story's local usages (refs and scene indexes)
+ *   are unchanged: a refresh, or an edit that does not touch local assets such
+ *   as a caption, never flickers the status or the placeholders;
+ * - anything else (refs, scene indexes or library changed, library still
+ *   opening, nothing settled yet) is `pending`, keeping previous URLs for refs
+ *   that remain.
  */
 export const selectVisibleLocalAssets = (input: {
   story: Story;
   library: AssetLibraryStatus | null;
-  refreshToken: number;
   usages: readonly LocalAssetUsage[];
   settled: SettledLocalAssets | null;
 }): {state: StoryLocalAssetState; sources: LocalAssetSourceMap | undefined} => {
-  const {story, library, usages, settled} = input;
+  const {library, usages, settled} = input;
+
+  if (usages.length === 0) {
+    return {state: {kind: "none"}, sources: undefined};
+  }
+
+  const refBudget = evaluateLocalAssetBudget(usages, new Map());
+
+  if (!refBudget.ok) {
+    return {
+      state: {
+        kind: "over-budget",
+        usages: [...usages],
+        budget: refBudget,
+        message: describeBudgetFailure(refBudget),
+      },
+      sources: undefined,
+    };
+  }
 
   if (
     settled !== null &&
     library !== null &&
-    settled.story === story &&
-    settled.library === library
+    settled.library === library &&
+    sameUsages(collectStoryLocalAssetUsages(settled.story), usages)
   ) {
     return {state: settled.snapshot.state, sources: settled.snapshot.sources};
-  }
-
-  if (usages.length === 0) {
-    return {state: {kind: "none"}, sources: undefined};
   }
 
   return {

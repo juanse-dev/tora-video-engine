@@ -455,7 +455,7 @@ test("a disposed controller can start again", async () => {
 const readyState = (n) =>
   resolvedState({ready: [[poseRef(n), "pose", n]]});
 
-const settledFor = (story, lib, refreshToken, n) => ({
+const settledFor = (story, lib, n) => ({
   snapshot: {
     state: readyState(n),
     sources: {[poseRef(n)]: {kind: "url", url: `blob:s/${n}`}},
@@ -463,7 +463,6 @@ const settledFor = (story, lib, refreshToken, n) => ({
   },
   story,
   library: lib,
-  refreshToken,
 });
 
 const select = (input) =>
@@ -472,11 +471,11 @@ const select = (input) =>
     ...input,
   });
 
-test("a refresh-only generation keeps the previous state and sources visible", () => {
+test("a caption-only or refresh-only generation keeps the previous state and sources visible", () => {
   const story = storyOf([[poseRef(1), "office"]]);
-  const settled = settledFor(story, library, 0, 1);
+  const settled = settledFor(story, library, 1);
 
-  const stale = select({story, library, refreshToken: 1, settled});
+  const stale = select({story, library, settled});
 
   assert.equal(stale.state, settled.snapshot.state);
   assert.equal(stale.sources, settled.snapshot.sources);
@@ -484,8 +483,8 @@ test("a refresh-only generation keeps the previous state and sources visible", (
 
 test("a settled result for the current token is shown as is", () => {
   const story = storyOf([[poseRef(1), "office"]]);
-  const settled = settledFor(story, library, 3, 1);
-  const shown = select({story, library, refreshToken: 3, settled});
+  const settled = settledFor(story, library, 1);
+  const shown = select({story, library, settled});
 
   assert.equal(shown.state, settled.snapshot.state);
   assert.equal(shown.sources, settled.snapshot.sources);
@@ -493,10 +492,9 @@ test("a settled result for the current token is shown as is", () => {
 
 test("a refresh that resolves to a different state replaces the stale one", () => {
   const story = storyOf([[poseRef(1), backgroundRef(2)]]);
-  const before = settledFor(story, library, 0, 1);
+  const before = settledFor(story, library, 1);
   const after = {
     ...before,
-    refreshToken: 1,
     snapshot: {
       state: resolvedState({
         ready: [[poseRef(1), "pose", 1]],
@@ -508,20 +506,20 @@ test("a refresh that resolves to a different state replaces the stale one", () =
   };
 
   assert.equal(
-    select({story, library, refreshToken: 1, settled: before}).state.allReady,
+    select({story, library, settled: before}).state.allReady,
     true,
   );
   assert.equal(
-    select({story, library, refreshToken: 1, settled: after}).state.allReady,
+    select({story, library, settled: after}).state.allReady,
     false,
   );
 });
 
 test("a Story change still shows pending, keeping URLs of refs that remain", () => {
   const story = storyOf([[poseRef(1), "office"]]);
-  const settled = settledFor(story, library, 0, 1);
+  const settled = settledFor(story, library, 1);
   const next = storyOf([[poseRef(1), backgroundRef(2)]]);
-  const pending = select({story: next, library, refreshToken: 0, settled});
+  const pending = select({story: next, library, settled});
 
   assert.equal(pending.state.kind, "pending");
   assert.deepEqual(pending.sources, {
@@ -532,15 +530,15 @@ test("a Story change still shows pending, keeping URLs of refs that remain", () 
 
 test("a library change shows pending, and an opening library is pending", () => {
   const story = storyOf([[poseRef(1), "office"]]);
-  const settled = settledFor(story, library, 0, 1);
+  const settled = settledFor(story, library, 1);
   const otherLibrary = {kind: "disabled", message: "off"};
 
   assert.equal(
-    select({story, library: otherLibrary, refreshToken: 0, settled}).state.kind,
+    select({story, library: otherLibrary, settled}).state.kind,
     "pending",
   );
   assert.equal(
-    select({story, library: null, refreshToken: 0, settled: null}).state.kind,
+    select({story, library: null, settled: null}).state.kind,
     "pending",
   );
 });
@@ -550,11 +548,60 @@ test("a Story without local refs is none, and no settled result means pending", 
   const local = storyOf([[poseRef(1), "office"]]);
 
   assert.deepEqual(
-    select({story: bundled, library, refreshToken: 0, settled: null}),
+    select({story: bundled, library, settled: null}),
     {state: {kind: "none"}, sources: undefined},
   );
   assert.equal(
-    select({story: local, library, refreshToken: 0, settled: null}).state.kind,
+    select({story: local, library, settled: null}).state.kind,
     "pending",
   );
+});
+
+test("a caption-only Story change keeps the settled state and sources", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 1);
+  const edited = {
+    ...story,
+    scenes: story.scenes.map((scene) => ({...scene, caption: "edited"})),
+  };
+  const shown = select({story: edited, library, settled});
+
+  assert.equal(shown.state, settled.snapshot.state);
+  assert.equal(shown.sources, settled.snapshot.sources);
+});
+
+test("a ref change shows pending even when other refs stay", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 1);
+  const swapped = storyOf([[poseRef(2), "office"]]);
+  const shown = select({story: swapped, library, settled});
+
+  assert.equal(shown.state.kind, "pending");
+  assert.deepEqual(shown.sources, {[poseRef(2)]: {kind: "pending"}});
+});
+
+test("a sceneIndexes change shows pending, keeping the URL of the ref", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 1);
+  const moved = storyOf([
+    ["formal", "office"],
+    [poseRef(1), "office"],
+  ]);
+  const shown = select({story: moved, library, settled});
+
+  assert.equal(shown.state.kind, "pending");
+  assert.deepEqual(shown.sources, {[poseRef(1)]: {kind: "url", url: "blob:s/1"}});
+});
+
+test("a Story over the ref cap is over-budget at once, without a pending Player", () => {
+  const refs = Array.from({length: 65}, (_, index) => poseRef(index + 1));
+  const story = storyOf(refs.map((ref) => [ref, "office"]));
+  const withoutSettled = select({story, library, settled: null});
+  const opening = select({story, library: null, settled: null});
+
+  for (const shown of [withoutSettled, opening]) {
+    assert.equal(shown.state.kind, "over-budget");
+    assert.deepEqual(shown.state.budget.exceeded, ["refs"]);
+    assert.equal(shown.sources, undefined);
+  }
 });
