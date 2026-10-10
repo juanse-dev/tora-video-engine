@@ -1,0 +1,50 @@
+title: Tora Video Engine Demo Reel
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    animation: fade
+    text: TORA VIDEO ENGINE
+    duration: 3.5
+  - type: dialogue
+    pose: confused
+    background: office
+    animation: float
+    text: Una historia entra como YAML. Sin tocar React.
+    duration: 4.5
+  - type: chaos
+    pose: panic
+    background: server-room
+    animation: slowZoom
+    text: CAMBIA EL FONDO. CAMBIA LA POSE.
+    duration: 3.5
+  - type: intro
+    pose: coffee
+    background: office
+    animation: float
+    text: Cada escena puede tener su propio ritmo.
+    duration: 3.5
+  - type: dialogue
+    pose: formal
+    background: server-room
+    animation: fade
+    text: "Texto corto o más largo: el caption se ajusta automáticamente dentro del espacio disponible."
+    duration: 5
+  - type: punchline
+    pose: panic
+    background: server-room
+    animation: float
+    text: También puedes sobreescribir la animación del preset.
+    duration: 4
+  - type: chaos
+    pose: confused
+    background: office
+    animation: fade
+    text: Duraciones distintas. Timeline derivada.
+    duration: 3.5
+  - type: punchline
+    pose: coffee
+    background: office
+    animation: slowZoom
+    text: Y todo termina en un MP4. Sin editar la timeline.
+    duration: 4.5
