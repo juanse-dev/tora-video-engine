@@ -18,4 +18,4 @@ local-assets/
 
 Files are matched by content (SHA-256), not by name or extension, so a renamed
 copy of the same image works. Only static PNG, JPEG and WebP images up to
-25 MiB and 8192 pixels per side are supported.
+25 MiB, 8192 pixels per side and 50 million pixels in total are supported.

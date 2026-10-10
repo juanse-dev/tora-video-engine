@@ -19,6 +19,7 @@ import {fileURLToPath} from "node:url";
 import {
   categoryFolderExists,
   displayRoot,
+  getLocalAssetsRoot,
   inventoryLocalAssets,
   LOCAL_ASSETS_ROOT,
   MissingLocalAssetsError,
@@ -111,6 +112,29 @@ after(async () => {
 describe("local asset constants", () => {
   it("defaults the root to local-assets", () => {
     assert.equal(LOCAL_ASSETS_ROOT, "local-assets");
+  });
+
+  it("treats an empty or whitespace TORA_LOCAL_ASSETS_ROOT as unset", () => {
+    const previous = process.env.TORA_LOCAL_ASSETS_ROOT;
+
+    try {
+      for (const value of ["", "   ", "	"]) {
+        process.env.TORA_LOCAL_ASSETS_ROOT = value;
+        assert.equal(getLocalAssetsRoot(), "local-assets");
+      }
+
+      process.env.TORA_LOCAL_ASSETS_ROOT = " custom/root ";
+      assert.equal(getLocalAssetsRoot(), "custom/root");
+
+      delete process.env.TORA_LOCAL_ASSETS_ROOT;
+      assert.equal(getLocalAssetsRoot(), "local-assets");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TORA_LOCAL_ASSETS_ROOT;
+      } else {
+        process.env.TORA_LOCAL_ASSETS_ROOT = previous;
+      }
+    }
   });
 });
 
@@ -717,15 +741,35 @@ describe("npm run assets", () => {
     assert.match(result.stdout, /^my\/assets\/backgrounds\/old\.gif$/mu);
   });
 
-  it("prints the not-found message and exits 0 without a root", async () => {
-    const root = join(await makeRoot(), "missing");
-    const result = runAssets(root);
+  it("prints the spec not-found message for the default root and exits 0", async () => {
+    const cwd = await makeRoot();
+    const result = runAssets(undefined, {cwd, useDefaultRoot: true});
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       result.stdout.trim(),
       "No local-assets/ folder found. Create local-assets/poses/ and local-assets/backgrounds/ and copy images into them.",
     );
+  });
+
+  it("names the configured root in the not-found message", async () => {
+    const root = join(await makeRoot(), "missing");
+    const result = runAssets(root);
+    const base = root.split("\\").join("/");
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout.trim(),
+      `No ${base}/ folder found. Create ${base}/poses/ and ${base}/backgrounds/ and copy images into them.`,
+    );
+  });
+
+  it("treats an empty TORA_LOCAL_ASSETS_ROOT as the default root", async () => {
+    const cwd = await makeRoot();
+    const result = runAssets("", {cwd});
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^No local-assets\/ folder found\./u);
   });
 
   it("notes missing category folders and exits 0", async () => {
@@ -777,16 +821,25 @@ describe("npm run assets", () => {
     );
   });
 
-  it("prints an empty-but-existing category folder as nothing", async () => {
+  it("says when an existing category folder has no files", async () => {
     const root = await makeRoot();
 
     await mkdir(join(root, "poses"));
     await mkdir(join(root, "backgrounds"));
 
     const result = runAssets(root);
+    const base = root.split("\\").join("/");
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, "");
+    assert.equal(
+      result.stdout,
+      [
+        `${base}/poses/ (no files)`,
+        "",
+        `${base}/backgrounds/ (no files)`,
+        "",
+      ].join("\n"),
+    );
   });
 });
 
@@ -1411,18 +1464,52 @@ describe("renderStory staging", () => {
 
 describe("bundled-only render args", () => {
   it("are unchanged when no public dir is given", () => {
-    const args = buildRenderArgs("output/x.mp4", "props.json");
+    const previous = process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
 
-    assert.ok(!args.some((arg) => arg.startsWith("--public-dir")));
-    assert.deepEqual(args, buildRenderArgs("output/x.mp4", "props.json", undefined));
+    delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+
+    try {
+      assert.deepEqual(buildRenderArgs("output/x.mp4", "props.json"), [
+        resolve("node_modules", "@remotion", "cli", "remotion-cli.js"),
+        "render",
+        "src/index.ts",
+        "ToraVideo",
+        "output/x.mp4",
+        "--codec=h264",
+        "--overwrite=true",
+        "--props=props.json",
+      ]);
+    } finally {
+      if (previous !== undefined) {
+        process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
+      }
+    }
   });
 
   it("appends --public-dir after the existing arguments when given", () => {
-    const without = buildRenderArgs("output/x.mp4", "props.json");
+    const previous = process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
 
-    assert.deepEqual(
-      buildRenderArgs("output/x.mp4", "props.json", "/tmp/tora/public"),
-      [...without, "--public-dir=/tmp/tora/public"],
-    );
+    delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+
+    try {
+      assert.deepEqual(
+        buildRenderArgs("output/x.mp4", "props.json", "/tmp/tora/public"),
+        [
+          resolve("node_modules", "@remotion", "cli", "remotion-cli.js"),
+          "render",
+          "src/index.ts",
+          "ToraVideo",
+          "output/x.mp4",
+          "--codec=h264",
+          "--overwrite=true",
+          "--props=props.json",
+          "--public-dir=/tmp/tora/public",
+        ],
+      );
+    } finally {
+      if (previous !== undefined) {
+        process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
+      }
+    }
   });
 });

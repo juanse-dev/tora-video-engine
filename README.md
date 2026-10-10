@@ -81,7 +81,7 @@ npm run assets
 npm run video -- stories/my-story.yaml
 ```
 
-- `npm run assets` lists every file in `local-assets/` with the `local:...` ref to paste into a Story, or why a file was skipped (not a static PNG/JPEG/WebP, over 25 MiB, over 8192 px per side, animated, damaged).
+- `npm run assets` lists every file in `local-assets/` with the `local:...` ref to paste into a Story, or why a file was skipped (not a static PNG/JPEG/WebP, over 25 MiB, over 8192 px per side or 50 million pixels in total, animated, damaged).
 - Browser to CLI: export the Story YAML from the web app, copy the exact original image files into `local-assets/poses/` or `local-assets/backgrounds/` (any filename, subfolders allowed, symbolic links are skipped), then run `npm run video`.
 - If a referenced image is missing, the render stops before Remotion starts and lists each missing ref, the scenes that use it and the folder that was searched. Nothing falls back to another image.
 - The images are copied into a temporary public directory for the render and removed afterwards; `public/` and the originals are never modified. Bundled-only Stories render exactly as before.
@@ -128,9 +128,12 @@ npm test
 npm run lint
 npm run web:build
 npm run test:browser
+npm run test:cli-e2e
 ```
 
-CI also verifies the static web artifact, runs the browser-render golden, exercises the production Player/browser flow, renders the CLI smoke/reference Story, and verifies that invalid input cannot leave a stale MP4 behind.
+`npm run test:cli-e2e` renders a Story from `local-assets/`-style folders for real; it needs Chrome (set `TORA_REMOTION_BROWSER_EXECUTABLE` if Remotion cannot find one).
+
+CI also verifies the static web artifact, runs the browser-render golden, exercises the production Player/browser flow, renders the CLI smoke/reference Story, renders a Story with local assets end to end (`npm run test:cli-e2e`), and verifies that invalid input cannot leave a stale MP4 behind.
 
 ## v0.1 story format
 

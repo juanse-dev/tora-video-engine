@@ -52,9 +52,12 @@ export type ScanDeps = {
   onCandidateEnd?: (relativePath: string) => void;
 };
 
-/** The root for this process: the test/CI override, else `local-assets`. */
+/**
+ * The root for this process: the test/CI override, else `local-assets`.
+ * An empty or whitespace-only override counts as unset.
+ */
 export const getLocalAssetsRoot = (): string =>
-  process.env.TORA_LOCAL_ASSETS_ROOT ?? LOCAL_ASSETS_ROOT;
+  process.env.TORA_LOCAL_ASSETS_ROOT?.trim() || LOCAL_ASSETS_ROOT;
 
 /**
  * The root as shown to people: relative to the current working directory

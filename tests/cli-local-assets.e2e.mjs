@@ -31,6 +31,9 @@ const remotionCli = join(
   "remotion-cli.js",
 );
 
+// A hung Remotion or ffmpeg process must fail the test instead of the CI job.
+const SPAWN_TIMEOUT_MS = 5 * 60_000;
+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 // Remotion's ffmpeg/ffprobe through the CLI entry with the current Node:
@@ -40,6 +43,7 @@ const remotion = (...args) =>
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    timeout: SPAWN_TIMEOUT_MS,
   });
 
 const renderCli = (localAssetsRoot) =>
@@ -50,6 +54,7 @@ const renderCli = (localAssetsRoot) =>
       cwd: repoRoot,
       env: {...process.env, TORA_LOCAL_ASSETS_ROOT: localAssetsRoot},
       encoding: "utf8",
+      timeout: SPAWN_TIMEOUT_MS,
     },
   );
 
@@ -147,7 +152,10 @@ describe("CLI render with local assets", () => {
   });
 
   after(async () => {
-    await rm(workDirectory, {recursive: true, force: true});
+    if (workDirectory) {
+      await rm(workDirectory, {recursive: true, force: true});
+    }
+
     await rm(outputPath, {force: true});
   });
 

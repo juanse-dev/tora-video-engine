@@ -211,14 +211,16 @@ All tasks are ticked: a YAML exported from the browser renders from the CLI afte
 
 ## Implementation notes
 
-Rulings made while implementing (R1–R7):
+Rulings made while implementing (R1–R9):
 
-- **R1:** local runs of the CLI e2e set `TORA_REMOTION_BROWSER_EXECUTABLE` to an installed Chrome; nothing lets Remotion download a browser (CI uses `/usr/bin/google-chrome`).
+- **R1:** the e2e is never run in a way that lets Remotion download a browser: local runs set `TORA_REMOTION_BROWSER_EXECUTABLE` to an installed Chrome and CI uses `/usr/bin/google-chrome`. A normal `npm run video` without that variable may download a browser the first time it renders.
 - **R2:** the e2e runs Remotion's `ffprobe`/`ffmpeg` through `process.execPath` plus the Remotion CLI entry, never a bare `npx` (not spawnable without a shell on Windows).
 - **R3:** `relativePath` in scan results and inventory lines is relative to the category folder; the printed line adds the root and category folder.
 - **R4:** printed paths (inventory lines and the `searched:` line of `MissingLocalAssetsError`) use the shared `displayRoot` helper, so with the default root they read `local-assets/<category>/`.
 - **R5:** the root and the category folders are checked with `stat` (a symlinked `poses/` works); entries inside keep `lstat` and symlinks there are skipped.
 - **R6:** `displayRoot` shows a root inside the working directory relative to it and a root outside it as an absolute path (no `../..` chains).
 - **R7:** `renderStory` lives in `scripts/renderStory.ts` with injectable dependencies; `render.ts` stays the entry point.
+- **R8:** an empty or whitespace `TORA_LOCAL_ASSETS_ROOT` counts as unset; the "No ... folder found" message names the root through `displayRoot` (the default root prints the spec text exactly); an existing category folder with no files prints `<root>/<category>/ (no files)`; the e2e spawns have a 5 minute timeout.
+- **R9:** cleanup of the temporary directory on a signal (Ctrl+C during Remotion) is deferred to a follow-up; the leak class predates this work and needs its own design (forwarding signals to the Remotion child) and tests.
 - Staged files use the category value as folder name: `__local-assets/pose/<digest>.<ext>` and `__local-assets/background/<digest>.<ext>`.
 - `stories/ci-local-assets.yaml` embeds the digests of the committed fixtures; the e2e fails with a clear message if the fixtures are regenerated without updating it.

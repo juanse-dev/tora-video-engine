@@ -31,8 +31,10 @@ const main = async (): Promise<void> => {
   const inventory = await inventoryLocalAssets(root);
 
   if (!inventory.rootExists) {
+    const shown = displayRoot(root);
+
     console.log(
-      "No local-assets/ folder found. Create local-assets/poses/ and local-assets/backgrounds/ and copy images into them.",
+      `No ${shown}/ folder found. Create ${shown}/poses/ and ${shown}/backgrounds/ and copy images into them.`,
     );
 
     return;
@@ -46,7 +48,11 @@ const main = async (): Promise<void> => {
 
   for (const [category, lines] of sections) {
     if (await categoryFolderExists(root, category)) {
-      output.push(...formatLines(root, category, lines));
+      output.push(
+        ...(lines.length === 0
+          ? [`${displayRoot(root)}/${categoryFolder[category]}/ (no files)`, ""]
+          : formatLines(root, category, lines)),
+      );
     } else {
       output.push(
         `${displayRoot(root)}/${categoryFolder[category]}/ (folder not found — create it and copy images into it)`,
