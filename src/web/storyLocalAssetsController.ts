@@ -15,6 +15,7 @@ import {
   unavailableState,
   type LocalAssetUrlPool,
   type SettledStoryLocalAssetState,
+  type StoryLocalAssetState,
 } from "./localAssetState.ts";
 
 /** A set of pool digests held together. `release` is idempotent. */
@@ -51,6 +52,51 @@ export const buildPendingSources = (
   }
 
   return sources;
+};
+
+/** A settled snapshot together with the inputs it was computed for. */
+export type SettledLocalAssets = {
+  snapshot: StoryLocalAssetsSnapshot;
+  story: Story;
+  library: AssetLibraryStatus;
+  refreshToken: number;
+};
+
+/**
+ * What the hook shows for the current inputs (R8, stale-while-revalidate):
+ * - a Story without local refs is `none`;
+ * - a result for the same Story and library stays visible while a refresh-only
+ *   generation (only `refreshToken` changed) runs, and is replaced when that
+ *   generation settles;
+ * - anything else (Story or library changed, library still opening, nothing
+ *   settled yet) is `pending`, keeping previous URLs for refs that remain.
+ */
+export const selectVisibleLocalAssets = (input: {
+  story: Story;
+  library: AssetLibraryStatus | null;
+  refreshToken: number;
+  usages: readonly LocalAssetUsage[];
+  settled: SettledLocalAssets | null;
+}): {state: StoryLocalAssetState; sources: LocalAssetSourceMap | undefined} => {
+  const {story, library, usages, settled} = input;
+
+  if (
+    settled !== null &&
+    library !== null &&
+    settled.story === story &&
+    settled.library === library
+  ) {
+    return {state: settled.snapshot.state, sources: settled.snapshot.sources};
+  }
+
+  if (usages.length === 0) {
+    return {state: {kind: "none"}, sources: undefined};
+  }
+
+  return {
+    state: {kind: "pending", usages: [...usages]},
+    sources: buildPendingSources(usages, settled?.snapshot.sources),
+  };
 };
 
 const isAbort = (error: unknown): boolean =>

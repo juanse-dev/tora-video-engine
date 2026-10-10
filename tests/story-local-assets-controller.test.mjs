@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
+import {collectStoryLocalAssetUsages} from "../src/localAssets/readiness.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {IntegrityCache} from "../src/web/assetLibrary/integrity.ts";
 import {ObjectUrlPool} from "../src/web/objectUrlPool.ts";
 import {
   buildPendingSources,
   createStoryLocalAssetsController,
+  selectVisibleLocalAssets,
 } from "../src/web/storyLocalAssetsController.ts";
 
 const digestOf = (n) => n.toString(16).padStart(64, "0");
@@ -446,4 +448,113 @@ test("a disposed controller can start again", async () => {
   assert.equal(snapshot.state.kind, "resolved");
   h.controller.dispose();
   assert.equal(h.revoked.length, 1);
+});
+
+// --- stale-while-revalidate (R8): selectVisibleLocalAssets ------------------
+
+const readyState = (n) =>
+  resolvedState({ready: [[poseRef(n), "pose", n]]});
+
+const settledFor = (story, lib, refreshToken, n) => ({
+  snapshot: {
+    state: readyState(n),
+    sources: {[poseRef(n)]: {kind: "url", url: `blob:s/${n}`}},
+    lease: {release() {}},
+  },
+  story,
+  library: lib,
+  refreshToken,
+});
+
+const select = (input) =>
+  selectVisibleLocalAssets({
+    usages: collectStoryLocalAssetUsages(input.story),
+    ...input,
+  });
+
+test("a refresh-only generation keeps the previous state and sources visible", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 0, 1);
+
+  const stale = select({story, library, refreshToken: 1, settled});
+
+  assert.equal(stale.state, settled.snapshot.state);
+  assert.equal(stale.sources, settled.snapshot.sources);
+});
+
+test("a settled result for the current token is shown as is", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 3, 1);
+  const shown = select({story, library, refreshToken: 3, settled});
+
+  assert.equal(shown.state, settled.snapshot.state);
+  assert.equal(shown.sources, settled.snapshot.sources);
+});
+
+test("a refresh that resolves to a different state replaces the stale one", () => {
+  const story = storyOf([[poseRef(1), backgroundRef(2)]]);
+  const before = settledFor(story, library, 0, 1);
+  const after = {
+    ...before,
+    refreshToken: 1,
+    snapshot: {
+      state: resolvedState({
+        ready: [[poseRef(1), "pose", 1]],
+        missing: [[backgroundRef(2), "background", 2]],
+      }),
+      sources: {[poseRef(1)]: {kind: "url", url: "blob:s/1"}},
+      lease: {release() {}},
+    },
+  };
+
+  assert.equal(
+    select({story, library, refreshToken: 1, settled: before}).state.allReady,
+    true,
+  );
+  assert.equal(
+    select({story, library, refreshToken: 1, settled: after}).state.allReady,
+    false,
+  );
+});
+
+test("a Story change still shows pending, keeping URLs of refs that remain", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 0, 1);
+  const next = storyOf([[poseRef(1), backgroundRef(2)]]);
+  const pending = select({story: next, library, refreshToken: 0, settled});
+
+  assert.equal(pending.state.kind, "pending");
+  assert.deepEqual(pending.sources, {
+    [poseRef(1)]: {kind: "url", url: "blob:s/1"},
+    [backgroundRef(2)]: {kind: "pending"},
+  });
+});
+
+test("a library change shows pending, and an opening library is pending", () => {
+  const story = storyOf([[poseRef(1), "office"]]);
+  const settled = settledFor(story, library, 0, 1);
+  const otherLibrary = {kind: "disabled", message: "off"};
+
+  assert.equal(
+    select({story, library: otherLibrary, refreshToken: 0, settled}).state.kind,
+    "pending",
+  );
+  assert.equal(
+    select({story, library: null, refreshToken: 0, settled: null}).state.kind,
+    "pending",
+  );
+});
+
+test("a Story without local refs is none, and no settled result means pending", () => {
+  const bundled = storyOf([["formal", "office"]]);
+  const local = storyOf([[poseRef(1), "office"]]);
+
+  assert.deepEqual(
+    select({story: bundled, library, refreshToken: 0, settled: null}),
+    {state: {kind: "none"}, sources: undefined},
+  );
+  assert.equal(
+    select({story: local, library, refreshToken: 0, settled: null}).state.kind,
+    "pending",
+  );
 });

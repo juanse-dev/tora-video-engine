@@ -7,17 +7,10 @@ import type {IntegrityCache} from "./assetLibrary/integrity.ts";
 import type {StoryLocalAssetState} from "./localAssetState.ts";
 import type {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
-  buildPendingSources,
   createStoryLocalAssetsController,
-  type StoryLocalAssetsSnapshot,
+  selectVisibleLocalAssets,
+  type SettledLocalAssets,
 } from "./storyLocalAssetsController.ts";
-
-type SettledResult = {
-  snapshot: StoryLocalAssetsSnapshot;
-  story: Story;
-  library: AssetLibraryStatus;
-  refreshToken: number;
-};
 
 /**
  * Thin React wrapper around `createStoryLocalAssetsController`.
@@ -38,7 +31,7 @@ export const useStoryLocalAssets = (
     () => createStoryLocalAssetsController({pool, cache}),
     [pool, cache],
   );
-  const [settled, setSettled] = useState<SettledResult | null>(null);
+  const [settled, setSettled] = useState<SettledLocalAssets | null>(null);
 
   useEffect(() => {
     if (library === null) {
@@ -64,29 +57,10 @@ export const useStoryLocalAssets = (
   useEffect(() => () => controller.dispose(), [controller]);
 
   const usages = useMemo(() => collectStoryLocalAssetUsages(story), [story]);
-  const current =
-    settled !== null &&
-    settled.story === story &&
-    settled.library === library &&
-    settled.refreshToken === refreshToken
-      ? settled
-      : null;
 
-  return useMemo(() => {
-    if (current !== null) {
-      return {
-        state: current.snapshot.state,
-        sources: current.snapshot.sources,
-      };
-    }
-
-    if (usages.length === 0) {
-      return {state: {kind: "none"} as const, sources: undefined};
-    }
-
-    return {
-      state: {kind: "pending", usages} as const,
-      sources: buildPendingSources(usages, settled?.snapshot.sources),
-    };
-  }, [current, settled, usages]);
+  return useMemo(
+    () =>
+      selectVisibleLocalAssets({story, library, refreshToken, usages, settled}),
+    [story, library, refreshToken, usages, settled],
+  );
 };
