@@ -492,6 +492,120 @@ h1 {
   color: #e2e8f0;
 }
 
+.asset-category h5 {
+  margin: 14px 0 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.my-assets-disclosure,
+.my-assets-status,
+.my-assets-empty {
+  margin: 0 0 10px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.my-assets-toolbar,
+.my-assets-paging {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.my-assets-toolbar .file-button,
+.my-assets-paging button,
+.local-asset-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  padding: 6px 10px;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.my-assets-toolbar .file-button {
+  position: relative;
+}
+
+.my-assets-paging button:disabled,
+.local-asset-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* A local card is a non-interactive wrapper around a selection button and an
+   actions row (siblings, never nested). */
+.local-asset-card {
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+}
+
+.local-asset-select {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.local-asset-thumbnail-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 8px;
+  overflow: hidden;
+  color: #94a3b8;
+  background: #070a0f;
+  font-size: 11px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.background-grid .local-asset-thumbnail-fallback {
+  aspect-ratio: 16 / 9;
+}
+
+.local-badge {
+  display: inline-block;
+  justify-self: start;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.local-asset-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.local-asset-placeholder {
+  padding: 0;
+}
+
+.local-asset-placeholder span {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .animation-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

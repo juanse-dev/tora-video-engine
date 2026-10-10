@@ -1,0 +1,330 @@
+import assert from "node:assert/strict";
+import {describe, it} from "node:test";
+import {createLocalAssetPageController} from "../src/web/localAssetPageController.ts";
+
+const digestOf = (n) => n.toString(16).padStart(64, "0");
+const refOf = (category, n) => `local:${category}:sha256:${digestOf(n)}`;
+const presentRow = (n) => ({
+  status: "present",
+  value: {
+    label: `Asset ${n}`,
+    originalFilename: `a${n}.png`,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+});
+
+const createFakeStore = (category, numbers, {corrupt = []} = {}) => {
+  const rows = new Map(
+    numbers.map((n) => [
+      refOf(category, n),
+      corrupt.includes(n) ? {status: "corrupt", reason: "bad"} : presentRow(n),
+    ]),
+  );
+  const sorted = () => [...rows.keys()].sort();
+
+  return {
+    rows,
+    async listAssets(_category, cursor, limit) {
+      const keys = sorted();
+      const picked =
+        cursor.before !== undefined
+          ? keys.filter((key) => key < cursor.before).slice(-limit)
+          : keys
+              .filter((key) => cursor.after === undefined || key > cursor.after)
+              .slice(0, limit);
+
+      return picked.map((ref) => ({ref, row: rows.get(ref)}));
+    },
+    async countAssets() {
+      return rows.size;
+    },
+    async getAssetRow(ref) {
+      return rows.get(ref) ?? {status: "absent"};
+    },
+  };
+};
+
+const createHarness = (store, options = {}) => {
+  const created = [];
+  const revoked = [];
+  const thumbnailLoads = [];
+  const controller = createLocalAssetPageController({
+    store,
+    category: "pose",
+    loadThumbnail:
+      options.loadThumbnail ??
+      (async (digest) => {
+        thumbnailLoads.push(digest);
+
+        return {ok: true, blob: new Blob([digest])};
+      }),
+    createUrl: (blob) => {
+      const url = `blob:test/${created.length}`;
+
+      created.push({url, blob});
+
+      return url;
+    },
+    revokeUrl: (url) => revoked.push(url),
+  });
+
+  return {controller, created, revoked, thumbnailLoads};
+};
+
+const live = (created, revoked) =>
+  created.map((entry) => entry.url).filter((url) => !revoked.includes(url));
+
+const numbers = (count) => Array.from({length: count}, (_, i) => i + 1);
+
+describe("ASSET-003 local asset page controller", () => {
+  it("loads the first page of 50 with the total, and thumbnails only for the visible page", async () => {
+    const store = createFakeStore("pose", numbers(120));
+    const {controller, created, revoked, thumbnailLoads} =
+      createHarness(store);
+
+    await controller.sync(null);
+
+    const snapshot = controller.getSnapshot();
+
+    assert.equal(snapshot.entries.length, 50);
+    assert.equal(snapshot.total, 120);
+    assert.equal(snapshot.hasPrevious, false);
+    assert.equal(snapshot.hasNext, true);
+    assert.equal(snapshot.loading, false);
+    assert.equal(thumbnailLoads.length, 50);
+    assert.equal(created.length, 50);
+    assert.ok(snapshot.entries.every((entry) => entry.thumbnailUrl !== null));
+    assert.deepEqual(revoked, []);
+  });
+
+  it("pages forward and back, revoking the previous page URLs", async () => {
+    const store = createFakeStore("pose", numbers(120));
+    const {controller, created, revoked} = createHarness(store);
+
+    await controller.sync(null);
+
+    const firstRefs = controller
+      .getSnapshot()
+      .entries.map((entry) => entry.ref);
+
+    await controller.next();
+
+    const second = controller.getSnapshot();
+
+    assert.equal(second.entries.length, 50);
+    assert.equal(second.hasPrevious, true);
+    assert.equal(second.hasNext, true);
+    assert.ok(second.entries.every((entry) => !firstRefs.includes(entry.ref)));
+    assert.equal(live(created, revoked).length, 50);
+    assert.equal(revoked.length, 50);
+
+    await controller.next();
+    assert.equal(controller.getSnapshot().entries.length, 20);
+    assert.equal(controller.getSnapshot().hasNext, false);
+
+    await controller.previous();
+    await controller.previous();
+
+    const back = controller.getSnapshot();
+
+    assert.deepEqual(
+      back.entries.map((entry) => entry.ref),
+      firstRefs,
+    );
+    assert.equal(back.hasPrevious, false);
+    assert.equal(live(created, revoked).length, 50);
+  });
+
+  it("does nothing on next at the last page and previous at the first", async () => {
+    const store = createFakeStore("pose", [1, 2, 3]);
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+    await controller.next();
+    await controller.previous();
+
+    assert.equal(controller.getSnapshot().entries.length, 3);
+  });
+
+  it("refresh keeps the URLs of digests that stay visible", async () => {
+    const store = createFakeStore("pose", [1, 2, 3]);
+    const {controller, created, revoked, thumbnailLoads} =
+      createHarness(store);
+
+    await controller.sync(null);
+    store.rows.set(refOf("pose", 4), presentRow(4));
+    await controller.refresh();
+
+    assert.equal(controller.getSnapshot().entries.length, 4);
+    assert.equal(controller.getSnapshot().total, 4);
+    assert.equal(created.length, 4); // only the new digest needed a URL
+    assert.equal(thumbnailLoads.length, 4);
+    assert.deepEqual(revoked, []);
+  });
+
+  it("steps back one page when the current page became empty", async () => {
+    const store = createFakeStore("pose", numbers(60));
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+    await controller.next();
+    assert.equal(controller.getSnapshot().entries.length, 10);
+
+    for (let n = 51; n <= 60; n += 1) {
+      store.rows.delete(refOf("pose", n));
+    }
+
+    await controller.refresh();
+
+    const snapshot = controller.getSnapshot();
+
+    assert.equal(snapshot.entries.length, 50);
+    assert.equal(snapshot.total, 50);
+    assert.equal(snapshot.hasPrevious, false);
+    assert.equal(snapshot.hasNext, false);
+  });
+
+  it("does not load thumbnails for corrupt rows", async () => {
+    const store = createFakeStore("pose", [1, 2, 3], {corrupt: [2]});
+    const {controller, thumbnailLoads} = createHarness(store);
+
+    await controller.sync(null);
+
+    const entries = controller.getSnapshot().entries;
+
+    assert.equal(entries[1].row.status, "corrupt");
+    assert.equal(entries[1].thumbnailUrl, null);
+    assert.deepEqual(thumbnailLoads, [digestOf(1), digestOf(3)]);
+  });
+
+  it("keeps a null thumbnail when loading it fails", async () => {
+    const store = createFakeStore("pose", [1, 2]);
+    const {controller, created} = createHarness(store, {
+      loadThumbnail: async (digest) =>
+        digest === digestOf(1)
+          ? {ok: false}
+          : {ok: true, blob: new Blob(["x"])},
+    });
+
+    await controller.sync(null);
+
+    const entries = controller.getSnapshot().entries;
+
+    assert.equal(entries[0].thumbnailUrl, null);
+    assert.notEqual(entries[1].thumbnailUrl, null);
+    assert.equal(created.length, 1);
+  });
+
+  it("revokes every URL on dispose and ignores later calls", async () => {
+    const store = createFakeStore("pose", [1, 2, 3]);
+    const {controller, created, revoked} = createHarness(store);
+
+    await controller.sync(null);
+    controller.dispose();
+    assert.equal(revoked.length, 3);
+    assert.deepEqual(live(created, revoked), []);
+
+    await controller.refresh();
+    assert.equal(created.length, 3);
+  });
+
+  it("a stale load never leaves a URL behind", async () => {
+    const store = createFakeStore("pose", [1, 2]);
+    const gates = [];
+    const {controller, created, revoked} = createHarness(store, {
+      loadThumbnail: (digest) =>
+        new Promise((resolve) => {
+          gates.push(() => resolve({ok: true, blob: new Blob([digest])}));
+        }),
+    });
+    const first = controller.sync(null);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(gates.length, 2);
+
+    const second = controller.refresh(); // supersedes the first
+
+    gates.splice(0).forEach((release) => release()); // first thumbnails resolve
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    gates.splice(0).forEach((release) => release()); // second thumbnails resolve
+    await second;
+
+    assert.equal(live(created, revoked).length, 2);
+    assert.equal(created.length, 2);
+  });
+
+  it("subscribers see snapshots and can unsubscribe", async () => {
+    const store = createFakeStore("pose", [1]);
+    const {controller} = createHarness(store);
+    const seen = [];
+    const unsubscribe = controller.subscribe((snapshot) =>
+      seen.push(snapshot.loading),
+    );
+
+    await controller.sync(null);
+    assert.ok(seen.length >= 2);
+    assert.equal(seen[seen.length - 1], false);
+
+    unsubscribe();
+
+    const count = seen.length;
+
+    await controller.refresh();
+    assert.equal(seen.length, count);
+  });
+
+  describe("pinned (current selection) ref", () => {
+    it("loads a ref that is not on the visible page", async () => {
+      const store = createFakeStore("pose", numbers(120));
+      const {controller} = createHarness(store);
+      const pinnedRef = refOf("pose", 120);
+
+      await controller.sync(pinnedRef);
+
+      const {pinned, entries} = controller.getSnapshot();
+
+      assert.equal(pinned.kind, "present");
+      assert.equal(pinned.entry.ref, pinnedRef);
+      assert.ok(pinned.entry.thumbnailUrl !== null);
+      assert.ok(!entries.some((entry) => entry.ref === pinnedRef));
+    });
+
+    it("shares the thumbnail URL when the pinned ref is also on the page", async () => {
+      const store = createFakeStore("pose", [1, 2, 3]);
+      const {controller, created} = createHarness(store);
+
+      await controller.sync(refOf("pose", 2));
+
+      const {pinned, entries} = controller.getSnapshot();
+
+      assert.equal(created.length, 3);
+      assert.equal(pinned.entry.thumbnailUrl, entries[1].thumbnailUrl);
+    });
+
+    it("reports a ref without a row as missing, and none without a pin", async () => {
+      const store = createFakeStore("pose", [1]);
+      const {controller} = createHarness(store);
+
+      await controller.sync(null);
+      assert.deepEqual(controller.getSnapshot().pinned, {kind: "none"});
+
+      await controller.sync(refOf("pose", 99));
+      assert.deepEqual(controller.getSnapshot().pinned, {kind: "missing"});
+    });
+
+    it("reports a corrupt pinned row as present with the corrupt row and no thumbnail", async () => {
+      const store = createFakeStore("pose", [1], {corrupt: [1]});
+      const {controller, thumbnailLoads} = createHarness(store);
+
+      await controller.sync(refOf("pose", 1));
+
+      const {pinned} = controller.getSnapshot();
+
+      assert.equal(pinned.kind, "present");
+      assert.equal(pinned.entry.row.status, "corrupt");
+      assert.equal(pinned.entry.thumbnailUrl, null);
+      assert.deepEqual(thumbnailLoads, []);
+    });
+  });
+});

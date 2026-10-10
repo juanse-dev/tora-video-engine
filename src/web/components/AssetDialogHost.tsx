@@ -7,7 +7,10 @@ import {
   runAssetDialogCallback,
 } from "../localAssetUi.ts";
 
-// Same look as the App transition panels (shared styles).
+// The dialogs share the App transition panels' styles. The class lives in one
+// constant because both dialog kinds use this single shell, and a literal
+// className here would add a false positive from the
+// @remotion/non-pure-animation lint rule, which reacts to "transition".
 const ASSET_DIALOG_CLASS_NAME = "transition-panel";
 
 type AssetDialogHostProps = {

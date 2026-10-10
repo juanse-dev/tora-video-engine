@@ -1,5 +1,6 @@
 import {createHash} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import {crc32, deflateSync} from "node:zlib";
 
 // Writes fixture records straight into IndexedDB (ASSET-002 v1 layout) from
 // page.evaluate, so browser tests can run without the ASSET-003 import UI.
@@ -8,7 +9,8 @@ import {readFile} from "node:fs/promises";
 //   assets:      `local:<category>:sha256:<digest>` -> {label, originalFilename, createdAt}
 //   payloadMeta: `<digest>` -> {mimeType, byteSize, width, height}
 //   blobs:       `<digest>` -> {blob}
-//   thumbnails:  not needed for preview/render and not seeded here.
+//   thumbnails:  `<digest>` -> {blob, mimeType, width, height}; only seeded when a
+//                record carries `thumbnail` (preview/render do not need them).
 
 const FIXTURE_DIR = new URL("../../fixtures/local-assets/", import.meta.url);
 
@@ -51,8 +53,45 @@ export const readFixture = async (name) => {
   };
 };
 
+const pngChunk = (type, data) => {
+  const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+  const length = Buffer.alloc(4);
+  const checksum = Buffer.alloc(4);
+
+  length.writeUInt32BE(data.length);
+  checksum.writeUInt32BE(crc32(body));
+
+  return Buffer.concat([length, body, checksum]);
+};
+
+/**
+ * A valid solid-colour RGB PNG (at most 256x256, see MAX_THUMBNAIL_DIMENSION),
+ * shaped as a seed `thumbnail` for fixtureRecord / metadataOnlyRecord.
+ */
+export const solidPngThumbnail = (width, height, [red, green, blue]) => {
+  const header = Buffer.alloc(13);
+
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8); // 8-bit RGB, deflate, no filter, no interlace
+
+  const row = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.from(Array.from({length: width}, () => [red, green, blue]).flat()),
+  ]);
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(Buffer.concat(Array.from({length: height}, () => row)))),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+
+  return {base64: png.toString("base64"), mimeType: "image/png", width, height};
+};
+
 /**
  * One seed record for `category`, backed by a fixture. Options:
+ * - `thumbnail`: a solidPngThumbnail() to store under the digest;
  * - `bytesFrom`: store another fixture's bytes under this fixture's digest (corrupt blob);
  * - `row: false`: write payload records without the asset row.
  */
@@ -64,17 +103,19 @@ export const fixtureRecord = (category, fixture, options = {}) => ({
   mimeType: fixture.meta.mimeType,
   row: options.row !== false,
   label: options.label ?? fixture.name,
+  thumbnail: options.thumbnail ?? null,
 });
 
 /** Metadata-only record: a row and payloadMeta, no blob (budget tests). */
-export const metadataOnlyRecord = (category, n, meta) => ({
+export const metadataOnlyRecord = (category, n, meta, options = {}) => ({
   ref: localAssetRef(category, syntheticDigest(n)),
   digest: syntheticDigest(n),
   meta,
   bytesBase64: null,
   mimeType: meta.mimeType,
   row: true,
-  label: `Synthetic ${n}`,
+  label: options.label ?? `Synthetic ${n}`,
+  thumbnail: options.thumbnail ?? null,
 });
 
 /**
@@ -99,7 +140,7 @@ export const seedAssetLibrary = async (page, records) => {
 
     await new Promise((resolve, reject) => {
       const transaction = database.transaction(
-        ["assets", "payloadMeta", "blobs"],
+        ["assets", "payloadMeta", "blobs", "thumbnails"],
         "readwrite",
       );
 
@@ -116,6 +157,22 @@ export const seedAssetLibrary = async (page, records) => {
         }
 
         transaction.objectStore("payloadMeta").put({...item.meta}, item.digest);
+
+        if (item.thumbnail !== null) {
+          const bytes = Uint8Array.from(atob(item.thumbnail.base64), (char) =>
+            char.charCodeAt(0),
+          );
+
+          transaction.objectStore("thumbnails").put(
+            {
+              blob: new Blob([bytes], {type: item.thumbnail.mimeType}),
+              mimeType: item.thumbnail.mimeType,
+              width: item.thumbnail.width,
+              height: item.thumbnail.height,
+            },
+            item.digest,
+          );
+        }
 
         if (item.bytesBase64 !== null) {
           const bytes = Uint8Array.from(atob(item.bytesBase64), (char) =>
