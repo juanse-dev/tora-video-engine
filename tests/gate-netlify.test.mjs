@@ -323,10 +323,13 @@ describe("GATE-001 G8 Netlify check", () => {
 });
 
 describe("GATE-001 G8 when the Netlify check applies", () => {
-  it("applies to *.netlify.app targets", () => {
+  it("applies to this project's site and its Deploy Preview or branch aliases", () => {
     for (const url of [
       "https://tora-video-engine.netlify.app",
       "https://deploy-preview-3--tora-video-engine.netlify.app",
+      "https://deploy-preview-28--tora-video-engine.netlify.app/",
+      "https://feat-x--tora-video-engine.netlify.app",
+      "https://TORA-VIDEO-ENGINE.netlify.app",
     ]) {
       assert.equal(netlifyApplicability({url, local: false}), null);
     }
@@ -339,6 +342,21 @@ describe("GATE-001 G8 when the Netlify check applies", () => {
     });
   });
 
+  it("skips another Netlify site instead of querying this project's", () => {
+    for (const url of [
+      "https://another-site.netlify.app",
+      "https://deploy-preview-3--another-site.netlify.app",
+      "https://evil--tora-video-engine.netlify.app.example.com",
+      "https://xtora-video-engine.netlify.app",
+      "https://not-tora-video-engine.netlify.app",
+    ]) {
+      assert.deepEqual(netlifyApplicability({url, local: false}), {
+        status: "skip",
+        detail: "not this project's Netlify site",
+      });
+    }
+  });
+
   it("skips hosts outside netlify.app instead of failing them", () => {
     for (const url of [
       "https://example.com",
@@ -348,7 +366,7 @@ describe("GATE-001 G8 when the Netlify check applies", () => {
     ]) {
       assert.deepEqual(netlifyApplicability({url, local: false}), {
         status: "skip",
-        detail: "not a Netlify site",
+        detail: "not this project's Netlify site",
       });
     }
   });

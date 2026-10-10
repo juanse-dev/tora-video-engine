@@ -167,7 +167,8 @@ export const checkNetlifyDeploy = async ({
 /**
  * Whether the check applies to a target at all. Returns null when it does, or
  * the "skip" result to record when it does not (a local target, or a host that
- * is not a Netlify site, which would otherwise always fail the commit check).
+ * is not this project's Netlify site, which would otherwise always fail the
+ * commit check or query the wrong site).
  *
  * @param {{url: string, local: boolean}} target
  * @returns {NetlifyResult | null}
@@ -182,10 +183,13 @@ export const netlifyApplicability = ({url, local}) => {
   try {
     host = new URL(url).hostname;
   } catch {
-    // Falls through to "not a Netlify site".
+    // Falls through to "not this project's Netlify site".
   }
 
-  return host.endsWith(".netlify.app")
+  // Only this project's site: the apex, or a Deploy Preview / branch-deploy
+  // alias (`<alias>--tora-video-engine.netlify.app`). Any other *.netlify.app
+  // host would otherwise be checked against Tora's site and deploys.
+  return host === NETLIFY_SITE || host.endsWith(`--${NETLIFY_SITE}`)
     ? null
-    : {status: "skip", detail: "not a Netlify site"};
+    : {status: "skip", detail: "not this project's Netlify site"};
 };

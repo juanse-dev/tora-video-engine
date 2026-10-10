@@ -7,7 +7,9 @@
 // check (G8) into state and renders .gate/<target>/report.md. Exits with
 // Playwright's code, or 1 when the Netlify check fails: with NETLIFY_AUTH_TOKEN
 // set, a failing check makes the exit code 1 even if every test passed. The
-// check only runs for *.netlify.app targets; other hosts record "skip".
+// check only runs for this project's Netlify site (tora-video-engine.netlify.app
+// or an <alias>--tora-video-engine.netlify.app Deploy Preview); other hosts
+// record "skip".
 //
 // A non-zero Playwright exit is stored in state (exitCode plus the first lines
 // of the failure) so the report lists it and its verdict is FAIL, even when no
