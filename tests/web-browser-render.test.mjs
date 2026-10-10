@@ -627,6 +627,39 @@ describe("ASSET-004 render transaction with local assets", () => {
     assert.equal(seen.inputProps.localAssetSources, lockedSources);
   });
 
+  it("refuses to render a local ref that has no url or static source (INV-5)", async () => {
+    const localStory = {
+      ...exampleStory,
+      scenes: exampleStory.scenes.map((scene, index) =>
+        index === 0 ? {...scene, pose: LOCAL_POSE} : scene,
+      ),
+    };
+    let rendered = 0;
+    const attempt = (localAssetSources) =>
+      renderStoryMediaOnWeb(localStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        localAssetSources,
+        render: async () => {
+          rendered += 1;
+
+          return {getBlob: async () => new Blob(["v"]), internalState: {}};
+        },
+      });
+
+    await assert.rejects(attempt(undefined), /local asset/i);
+    await assert.rejects(attempt({}), /local asset/i);
+    await assert.rejects(
+      attempt({[LOCAL_POSE]: {kind: "pending"}}),
+      /local asset/i,
+    );
+    assert.equal(rendered, 0);
+
+    await attempt(lockedSources);
+    await attempt({[LOCAL_POSE]: {kind: "static", path: "__local-assets/pose/x.png"}});
+    assert.equal(rendered, 2);
+  });
+
   it("runs prepareLocalAssets after the lock and before the first cleanup, then renders with its sources", async () => {
     const events = [];
     const received = [];

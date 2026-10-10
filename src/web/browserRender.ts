@@ -5,6 +5,7 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
+import {collectStoryLocalAssetUsages} from "../localAssets/readiness.ts";
 import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {ToraVideoProps} from "../Video.tsx";
 import type {Story} from "../story/types.ts";
@@ -401,6 +402,20 @@ export const renderStoryMediaOnWeb = async (
   if (!policy.eligible) {
     throw new Error(
       `Active Story failed the browser render policy recheck: ${policy.message}`,
+    );
+  }
+
+  // INV-5: a local ref must never reach the renderer without a resolved
+  // source, or the composition would draw a placeholder into the MP4.
+  const unresolved = collectStoryLocalAssetUsages(story).filter((usage) => {
+    const kind = options.localAssetSources?.[usage.ref]?.kind;
+
+    return kind !== "url" && kind !== "static";
+  });
+
+  if (unresolved.length > 0) {
+    throw new Error(
+      `Cannot render: ${unresolved.length} local asset(s) have no resolved source.`,
     );
   }
 
