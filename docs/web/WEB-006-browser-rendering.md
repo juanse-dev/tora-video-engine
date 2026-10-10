@@ -75,7 +75,7 @@ If capability fails or resolves only to `arraybuffer`:
 - keep editing and preview usable;
 - mention YAML export and the existing local CLI as alternatives.
 
-Do not add a server fallback in this spec. A custom `outputWritable` streaming path may be evaluated in a future version but is out of scope for v0.2.
+Do not add a server fallback in this spec. The pinned renderer is given a Tora-owned `outputWritable` OPFS stream rather than its built-in `web-fs` target (see the implementation note under "Awaitable cleanup before and after render"); the capability check above still requires `web-fs` support.
 
 Do not add a server fallback in this spec.
 
@@ -188,6 +188,8 @@ On render failure or cancellation, there is no downloadable success Blob; run th
 ### Awaitable cleanup before and after render
 
 Do **not** assume that acquiring the render Web Lock means all writers from a previous browser realm are already closed. A previous `cleanup-blocked` page can unload, implicitly releasing the Web Lock while Remotion/Mediabunny's asynchronous writer shutdown is still finishing. Likewise, rejection of the current `renderMediaOnWeb()` does not guarantee its writer is already closed.
+
+> **Implementation note (issue #29).** The pinned `@remotion/web-renderer` (4.0.529, and as far as inspected 4.0.534) opens a `FileSystemWritableFileStream` for its `web-fs` target but closes it only on the success path. On cancel or failure it is never closed or aborted, so Chrome keeps the `__remotion_render:` file (and its `.crswap` swap file) locked for the life of the page: every `removeEntry` fails with `NoModificationAllowedError`, the bounded cleanup always exhausts, and **Retry cleanup** can never succeed. The assumption above that a writer's shutdown eventually completes therefore does not hold for the library's own target. Tora now owns the writer: `renderStoryMediaOnWeb()` creates the `__remotion_render:tora:<uuid>` file and writer, passes the renderer a forwarding stream as `outputWritable`, reads the Blob back with `getFile()` after a successful render, and `abort()`s the writer on every non-success exit before returning, while the render lease is still held and before the post-render cleanup. This is still the `web-fs` streaming path (bytes stream to OPFS during the render) and uses the same prefix, lock and cleanup protocol. Revisit this (and prefer the library target again) if Remotion starts closing or aborting the writer on cancel and failure upstream.
 
 Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and use it for **both pre-render preflight and post-render cleanup** while the render Web Lock remains held:
 
@@ -320,6 +322,7 @@ If organization policy forbids the required telemetry path, production deploymen
 - same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, public `getBlob()`, browser download handoff, and positively-completed final cleanup;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
+- Cancel Render and a mid-render failure settle in `idle` / `failure` (not `cleanup-blocked`) with no `__remotion_render:` entries left, because Tora aborts the writer it owns (issue #29); the next render then succeeds;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
 - the public Remotion `getBlob()` result is materialized once after rendering into an independent download Blob before OPFS cleanup, and Chrome can complete the resulting real MP4 download after cleanup removes the render files;
 - Tora retains `web-fs` streaming during rendering, adds only that single required post-render snapshot, and adds no artificial browser MP4 artifact-size rejection beyond the existing Story/render policies;
