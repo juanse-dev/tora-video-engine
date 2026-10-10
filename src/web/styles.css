@@ -119,6 +119,15 @@ h1 {
   background: #000;
 }
 
+.preview-frame [data-local-asset-status],
+.preview-frame [data-local-asset-over-budget] {
+  margin: 0;
+  padding: 12px 16px;
+  color: #f8fafc;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 @media (max-width: 520px) {
   .app-header {
     padding-top: 32px;

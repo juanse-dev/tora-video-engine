@@ -1,0 +1,390 @@
+import {expect, test} from "@playwright/test";
+import {
+  buildStoryYaml,
+  deleteAssetRows,
+  fixtureRecord,
+  localAssetRef,
+  metadataOnlyRecord,
+  readFixture,
+  seedAssetLibrary,
+} from "./helpers/seedAssetLibrary.mjs";
+
+const STORAGE_KEY = "tora-video-engine:project";
+
+const waitForOwner = async (page) => {
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-persistence-mode",
+    "owner",
+    {timeout: 10_000},
+  );
+};
+
+/** Opens the app once so the origin exists, seeds IndexedDB, then reloads. */
+const openSeeded = async (page, records) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await seedAssetLibrary(page, records);
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+};
+
+const applyYaml = async (page, yaml) => {
+  const source = page.getByLabel("YAML source");
+
+  if (!(await source.isVisible())) {
+    await page.getByRole("button", {name: "Open YAML"}).click();
+  }
+
+  await source.fill(yaml);
+  await page.getByRole("button", {name: "Apply YAML"}).click();
+  await expect(page.locator("[data-yaml-dirty=false]")).toBeVisible();
+};
+
+const waitForStoryPersisted = async (page, needle) => {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ([key, text]) => (window.localStorage.getItem(key) ?? "").includes(text),
+          [STORAGE_KEY, needle],
+        ),
+      {timeout: 10_000},
+    )
+    .toBe(true);
+};
+
+const blobImages = (page) => page.locator(".preview-frame img[src^='blob:']");
+
+/** SHA-256 of what each blob: image in the Player actually points at. */
+const blobImageDigests = (page) =>
+  page.evaluate(async () => {
+    const digests = [];
+
+    for (const image of document.querySelectorAll(
+      ".preview-frame img[src^='blob:']",
+    )) {
+      const bytes = await (await fetch(image.src)).arrayBuffer();
+      const hash = await crypto.subtle.digest("SHA-256", bytes);
+
+      digests.push(
+        [...new Uint8Array(hash)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join(""),
+      );
+    }
+
+    return digests.sort();
+  });
+
+const frameOf = async (page) =>
+  Number(await page.locator("[data-tora-frame]").first().getAttribute("data-tora-frame"));
+
+test("local pose and background render inside the Player from verified blob: URLs", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose),
+    fixtureRecord("background", background),
+  ]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {
+        pose: localAssetRef("pose", pose.digest),
+        background: localAssetRef("background", background.digest),
+      },
+    ]),
+  );
+
+  await expect(blobImages(page)).toHaveCount(2);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  await expect(page.locator("[data-pending-local-asset]")).toHaveCount(0);
+  await expect(page.locator("[data-local-asset-status]")).toHaveCount(0);
+  expect(await blobImageDigests(page)).toEqual(
+    [pose.digest, background.digest].sort(),
+  );
+});
+
+test("the Player does not advance while a local image is still loading", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLImageElement.prototype,
+      "src",
+    );
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    const queued = [];
+    let holding = true;
+    const isBlob = (value) =>
+      typeof value === "string" && value.startsWith("blob:");
+
+    Object.defineProperty(HTMLImageElement.prototype, "src", {
+      configurable: true,
+      enumerable: descriptor.enumerable,
+      get() {
+        return descriptor.get.call(this);
+      },
+      set(value) {
+        if (holding && isBlob(value)) {
+          queued.push(() => descriptor.set.call(this, value));
+          return;
+        }
+
+        descriptor.set.call(this, value);
+      },
+    });
+    // React writes `src` with setAttribute, so hold that path too.
+    Element.prototype.setAttribute = function (name, value) {
+      if (
+        holding &&
+        this instanceof HTMLImageElement &&
+        name === "src" &&
+        isBlob(value)
+      ) {
+        queued.push(() => nativeSetAttribute.call(this, name, value));
+        return;
+      }
+
+      return nativeSetAttribute.call(this, name, value);
+    };
+    window.__heldBlobImages = () => queued.length;
+    window.__releaseBlobImages = () => {
+      holding = false;
+
+      for (const apply of queued.splice(0)) {
+        apply();
+      }
+    };
+  });
+
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose),
+    fixtureRecord("background", background),
+  ]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {
+        pose: localAssetRef("pose", pose.digest),
+        background: localAssetRef("background", background.digest),
+      },
+    ]),
+  );
+
+  await expect
+    .poll(() => page.evaluate(() => window.__heldBlobImages()), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0);
+
+  await page.getByRole("button", {name: "Play video"}).click();
+  await expect.poll(() => frameOf(page)).toBe(0);
+  await page.waitForTimeout(500);
+  expect(await frameOf(page)).toBe(0);
+
+  await page.evaluate(() => window.__releaseBlobImages());
+
+  await expect.poll(() => frameOf(page), {timeout: 10_000}).toBeGreaterThan(0);
+});
+
+test("a deleted background record shows a placeholder for that ref only and blocks render", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+  const backgroundRef = localAssetRef("background", background.digest);
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose),
+    fixtureRecord("background", background),
+  ]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {
+        pose: localAssetRef("pose", pose.digest),
+        background: backgroundRef,
+      },
+    ]),
+  );
+  await expect(blobImages(page)).toHaveCount(2);
+  await waitForStoryPersisted(page, background.digest);
+
+  await deleteAssetRows(page, [backgroundRef]);
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const preview = page.locator(".preview-frame");
+  const placeholders = preview.locator("[data-missing-local-asset]");
+
+  await expect(placeholders).toHaveCount(1);
+  await expect(placeholders).toHaveAttribute(
+    "data-missing-local-asset",
+    backgroundRef,
+  );
+  await expect(blobImages(page)).toHaveCount(1);
+  expect(await blobImageDigests(page)).toEqual([pose.digest]);
+  await expect(page.locator("[data-local-asset-status]")).toContainText(
+    "1 local asset is missing in this browser. Scene 1 shows a placeholder.",
+  );
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+  await expect(page.locator(".render-banner")).toHaveAttribute(
+    "data-local-asset-block",
+    "Browser render is blocked because 1 local asset(s) are unavailable in this browser.",
+  );
+});
+
+test("a corrupt blob gets a placeholder for that ref only", async ({page}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose),
+    // Metadata and key claim the JPEG, the stored bytes are the PNG.
+    fixtureRecord("background", background, {bytesFrom: pose}),
+  ]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {
+        pose: localAssetRef("pose", pose.digest),
+        background: localAssetRef("background", background.digest),
+      },
+    ]),
+  );
+
+  const placeholders = page.locator("[data-missing-local-asset]");
+
+  await expect(placeholders).toHaveCount(1);
+  await expect(placeholders).toHaveAttribute(
+    "data-missing-local-asset",
+    localAssetRef("background", background.digest),
+  );
+  await expect(blobImages(page)).toHaveCount(1);
+  expect(await blobImageDigests(page)).toEqual([pose.digest]);
+});
+
+test("a Story over the ref cap shows the budget message, no Player, and reads no blobs", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__idbGetStores = [];
+
+    const nativeGet = IDBObjectStore.prototype.get;
+
+    IDBObjectStore.prototype.get = function (...args) {
+      window.__idbGetStores.push(this.name);
+
+      return nativeGet.apply(this, args);
+    };
+  });
+
+  const meta = {mimeType: "image/png", byteSize: 1000, width: 10, height: 10};
+  const records = Array.from({length: 65}, (_, index) =>
+    metadataOnlyRecord("pose", index + 1, meta),
+  );
+
+  await openSeeded(page, records);
+  await applyYaml(
+    page,
+    buildStoryYaml(
+      records.map((record) => ({pose: record.ref, background: "office"})),
+    ),
+  );
+
+  const message = page.locator("[data-local-asset-over-budget]");
+
+  await expect(message).toBeVisible();
+  await expect(message).toHaveAttribute("role", "status");
+  await expect(message).toContainText("Uses 65 local assets (limit 64).");
+  await expect(page.locator(".preview-frame [data-tora-frame]")).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Play video"})).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.__idbGetStores.includes("blobs")),
+  ).toBe(false);
+
+  // Back to a small Story: the Player mounts again and plays frames.
+  await applyYaml(
+    page,
+    buildStoryYaml([{pose: "formal", background: "office"}]),
+  );
+  await expect(message).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
+  await page.getByRole("button", {name: "Play video"}).click();
+  await expect.poll(() => frameOf(page), {timeout: 10_000}).toBeGreaterThan(0);
+});
+
+test("changing the pose ref quickly A to B to C ends with C displayed", async ({
+  page,
+}) => {
+  const a = await readFixture("pose-magenta.png");
+  const b = await readFixture("background-cyan.jpg");
+  const c = await readFixture("background-noext");
+
+  await openSeeded(page, [
+    fixtureRecord("pose", a),
+    fixtureRecord("pose", b),
+    fixtureRecord("pose", c),
+  ]);
+
+  for (const fixture of [a, b, c]) {
+    await applyYaml(
+      page,
+      buildStoryYaml([
+        {pose: localAssetRef("pose", fixture.digest), background: "office"},
+      ]),
+    );
+  }
+
+  await expect
+    .poll(() => blobImageDigests(page), {timeout: 10_000})
+    .toEqual([c.digest]);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  await expect(page.locator("[data-pending-local-asset]")).toHaveCount(0);
+});
+
+test("without Web Locks My assets is disabled and bundled Stories still preview", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const preview = page.locator(".preview-frame");
+
+  await expect(preview.locator("img").first()).toBeVisible();
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  await expect(page.locator("[data-local-asset-status]")).toHaveCount(0);
+
+  const pose = await readFixture("pose-magenta.png");
+
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {pose: localAssetRef("pose", pose.digest), background: "office"},
+    ]),
+  );
+
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(1);
+  await expect(page.locator("[data-local-asset-status]")).toContainText(
+    "My assets needs a browser with Web Locks support.",
+  );
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+  await expect(page.locator(".render-banner")).toHaveAttribute(
+    "data-local-asset-block",
+    /Web Locks/u,
+  );
+});

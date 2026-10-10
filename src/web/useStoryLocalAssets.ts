@@ -24,10 +24,12 @@ type SettledResult = {
  *
  * `library` must be referentially stable (App keeps it in `useState`); the
  * effect restarts whenever `story`, `library` or `refreshToken` changes.
+ * `null` means the library is still opening: no generation runs and local refs
+ * stay `pending` (never a spurious `unavailable`).
  */
 export const useStoryLocalAssets = (
   story: Story,
-  library: AssetLibraryStatus,
+  library: AssetLibraryStatus | null,
   cache: IntegrityCache,
   pool: ObjectUrlPool,
   refreshToken: number,
@@ -38,13 +40,15 @@ export const useStoryLocalAssets = (
   );
   const [settled, setSettled] = useState<SettledResult | null>(null);
 
-  useEffect(
-    () =>
-      controller.start(story, library, (snapshot) =>
-        setSettled({snapshot, story, library, refreshToken}),
-      ),
-    [controller, story, library, refreshToken],
-  );
+  useEffect(() => {
+    if (library === null) {
+      return;
+    }
+
+    return controller.start(story, library, (snapshot) =>
+      setSettled({snapshot, story, library, refreshToken}),
+    );
+  }, [controller, story, library, refreshToken]);
 
   // Declared after the start effect, so it commits only once the snapshot has
   // rendered; the controller then releases every older lease and the Player

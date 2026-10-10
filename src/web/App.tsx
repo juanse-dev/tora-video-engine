@@ -11,6 +11,12 @@ import {
   applyVisualDraftEvaluation,
   createAuthoringState,
 } from "./authoringState.ts";
+import {
+  createAssetLibraryChannel,
+  openAssetLibrary,
+  type AssetLibraryStatus,
+} from "./assetLibrary/coordination.ts";
+import {IntegrityCache} from "./assetLibrary/integrity.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
@@ -31,7 +37,9 @@ import {
   type BrowserRenderCleanupBlocked,
   type BrowserRenderPendingOutcome,
 } from "./browserRender.ts";
+import {describeLocalAssetRenderBlock} from "./localAssetState.ts";
 import {hasLossRisk} from "./lossRisk.ts";
+import {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
   acquirePersistenceOwnership,
   PERSISTENCE_STORAGE_KEY,
@@ -44,6 +52,7 @@ import {
   type ProtectedRecovery,
 } from "./persistence.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
+import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
 import {
   MAX_BROWSER_YAML_SOURCE_BYTES,
@@ -106,6 +115,18 @@ type RenderUiState = {
   message: string;
   progress: number | null;
 };
+
+// Stand-in while openAssetLibrary has not settled yet.
+const OPENING_ASSET_LIBRARY: AssetLibraryStatus = {
+  kind: "unavailable",
+  message: "Checking local assets…",
+};
+
+// TODO(ASSET-004 task 4): remove once the render sequence passes verified local
+// sources to the transaction. Until then a Story with local refs must not render,
+// or its MP4 would silently contain placeholders (INV-5).
+const LOCAL_ASSET_RENDER_NOT_WIRED_MESSAGE =
+  "Browser render of Stories with local assets is not available yet.";
 
 const getFallbackStory = (): Story => {
   const policy = evaluateBrowserStoryPolicy(exampleStory);
@@ -248,8 +269,22 @@ export const App = () => {
     progress: null,
   });
   const [cleanupRetrying, setCleanupRetrying] = useState(false);
+  // null until openAssetLibrary settles; then referentially stable (see useStoryLocalAssets).
+  const [assetLibrary, setAssetLibrary] = useState<AssetLibraryStatus | null>(
+    null,
+  );
+  const [assetRefreshToken, setAssetRefreshToken] = useState(0);
+  const [integrityCache] = useState(() => new IntegrityCache());
+  const [objectUrlPool] = useState(() => new ObjectUrlPool());
 
   const {activeStory, visual} = authoringState;
+  const localAssets = useStoryLocalAssets(
+    activeStory,
+    assetLibrary,
+    integrityCache,
+    objectUrlPool,
+    assetRefreshToken,
+  );
   const previewConfig = getWebPlayerConfig(activeStory);
 
   const activeStoryChangedFromInitial =
@@ -292,6 +327,14 @@ export const App = () => {
     renderUi.phase === "rendering" ||
     renderUi.phase === "cancelling" ||
     renderUi.phase === "finalizing";
+  const localAssetRenderBlock =
+    describeLocalAssetRenderBlock(
+      localAssets.state,
+      assetLibrary ?? OPENING_ASSET_LIBRARY,
+    ) ??
+    (localAssets.state.kind !== "none"
+      ? LOCAL_ASSET_RENDER_NOT_WIRED_MESSAGE
+      : null);
   const renderNeedsUnloadWarning =
     authoringLocked || renderUi.phase === "cleanup-blocked";
 
@@ -330,6 +373,53 @@ export const App = () => {
     activeStory,
     renderInputBlocked,
   };
+
+  // Opens My assets once. The status is stored when the open settles and again
+  // only if a blocked upgrade later finishes (or fails).
+  useEffect(() => {
+    let cancelled = false;
+    let latest: AssetLibraryStatus | null = null;
+    const accept = (status: AssetLibraryStatus) => {
+      if (cancelled) {
+        if (status.kind === "ready") {
+          status.store.close();
+        }
+
+        return;
+      }
+
+      latest = status;
+      setAssetLibrary(status);
+    };
+
+    void openAssetLibrary({onStatusChange: accept}).then(accept);
+
+    return () => {
+      cancelled = true;
+
+      if (latest?.kind === "ready") {
+        latest.store.close();
+      }
+    };
+  }, []);
+
+  // Other tabs' library changes and window focus refresh local asset readiness.
+  useEffect(() => {
+    const refresh = () => setAssetRefreshToken((token) => token + 1);
+    const channel = createAssetLibraryChannel((message) => {
+      integrityCache.invalidate(message.digests);
+      refresh();
+    });
+
+    window.addEventListener("focus", refresh);
+
+    return () => {
+      window.removeEventListener("focus", refresh);
+      channel.close();
+    };
+  }, [integrityCache]);
+
+  useEffect(() => () => objectUrlPool.dispose(), [objectUrlPool]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1494,6 +1584,7 @@ export const App = () => {
               renderCapability?.kind !== "ready" ||
               renderLockStatus !== "available" ||
               renderInputBlocked ||
+              localAssetRenderBlock !== null ||
               renderUi.phase === "cleanup-blocked"
             }
           >
@@ -1603,6 +1694,7 @@ export const App = () => {
         className="app-banner render-banner"
         role="status"
         data-render-state={renderUi.phase}
+        data-local-asset-block={localAssetRenderBlock ?? undefined}
       >
         <strong>Browser MP4</strong>
         <span>
@@ -1612,7 +1704,9 @@ export const App = () => {
               ? renderCapability.message
               : renderInputBlocked
                 ? "Resolve or discard pending editor/import work before rendering the active Story."
-                : renderLockStatus === "busy"
+                : localAssetRenderBlock !== null && !authoringLocked
+                  ? localAssetRenderBlock
+                  : renderLockStatus === "busy"
                   ? "Another Tora tab owns the browser render lock."
                   : renderLockStatus === "unavailable"
                     ? "Browser render lock status is unavailable. Preview, YAML export, and the local CLI remain available."
@@ -1704,7 +1798,11 @@ export const App = () => {
             </span>
           </div>
 
-          <Preview story={activeStory} />
+          <Preview
+            story={activeStory}
+            localAssetSources={localAssets.sources}
+            localAssetState={localAssets.state}
+          />
         </section>
       </main>
     </div>
