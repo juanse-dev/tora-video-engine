@@ -195,18 +195,49 @@ export const netlifyApplicability = ({url, local}) => {
 };
 
 /**
+ * Removes the token (trimmed and as given, never an empty string) from every
+ * text of a result, so a message that echoes a request or header cannot put
+ * it in state.json or the report.
+ *
+ * @param {NetlifyResult} result
+ * @param {string | undefined} token
+ * @returns {NetlifyResult}
+ */
+const redactToken = (result, token) => {
+  const secrets = [...new Set([token, token?.trim()])]
+    .filter((secret) => typeof secret === "string" && secret !== "")
+    .sort((one, other) => other.length - one.length);
+  const clean = (/** @type {string} */ text) =>
+    secrets.reduce((acc, secret) => acc.split(secret).join("[token]"), String(text));
+
+  if (secrets.length === 0) {
+    return result;
+  }
+
+  return {
+    ...result,
+    detail: clean(result.detail),
+    ...(result.checks
+      ? {checks: result.checks.map((check) => ({...check, detail: clean(check.detail)}))}
+      : {}),
+  };
+};
+
+/**
  * The Netlify result to record for a phase, whatever happens: skip (a local
  * target or a host that is not this project's site), manual (no token), or the
  * API check's own pass/fail. Anything that throws on the way (reading the
  * identity, an unexpected error in the check) becomes a recorded "fail" with
  * the message, because a phase with no recorded Netlify result does not count
- * as passed (phaseOutcome).
+ * as passed (phaseOutcome). The token is redacted from the final result on
+ * every path.
  *
  * @param {{
  *   target: {name: string, url: string, local: boolean},
  *   token?: string,
  *   getIdentity: () => Promise<BuildIdentity | undefined>,
  *   check?: typeof checkNetlifyDeploy,
+ *   fetch?: typeof fetch,
  * }} options
  * @returns {Promise<NetlifyResult>}
  */
@@ -215,22 +246,26 @@ export const resolveNetlifyResult = async ({
   token,
   getIdentity,
   check = checkNetlifyDeploy,
+  fetch: fetchImpl,
 }) => {
+  /** @type {NetlifyResult} */
+  let result;
+
   try {
-    return (
+    result =
       netlifyApplicability(target) ??
       (await check({
         token,
         identity: await getIdentity(),
         isProduction: target.name === "prod",
-      }))
-    );
+        ...(fetchImpl ? {fetch: fetchImpl} : {}),
+      }));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    return {
+    result = {
       status: "fail",
-      detail: `Netlify check could not run: ${token ? message.split(token).join("[token]") : message}`,
+      detail: `Netlify check could not run: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+
+  return redactToken(result, token);
 };

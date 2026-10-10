@@ -457,3 +457,52 @@ describe("GATE-001 resolveNetlifyResult always yields a result to record", () =>
     assert.match(result.detail, /state\.json unreadable/);
   });
 });
+
+describe("GATE-001 resolveNetlifyResult never records the token", () => {
+  const prod = {name: "prod", url: `https://${NETLIFY_SITE}`, local: false};
+
+  for (const [name, token] of [
+    ["the token", TOKEN],
+    ["a token padded with whitespace", `  ${TOKEN}
+`],
+  ]) {
+    it(`redacts ${name} from an API error message`, async () => {
+      const result = await resolveNetlifyResult({
+        target: prod,
+        token,
+        getIdentity: async () => identity,
+        fetch: async () => {
+          throw new Error(`connect ECONNRESET while sending Bearer ${TOKEN} (raw ${token})`);
+        },
+      });
+
+      assert.equal(result.status, "fail");
+      assert.match(result.detail, /Netlify API request failed/);
+      assert.doesNotMatch(JSON.stringify(result), /nfp_SECRET_TOKEN/);
+    });
+
+    it(`redacts ${name} from a failure thrown by the check itself`, async () => {
+      const result = await resolveNetlifyResult({
+        target: prod,
+        token,
+        getIdentity: async () => identity,
+        check: async () => {
+          throw new Error(`boom ${TOKEN}`);
+        },
+      });
+
+      assert.equal(result.status, "fail");
+      assert.doesNotMatch(JSON.stringify(result), /nfp_SECRET_TOKEN/);
+    });
+  }
+
+  it("never redacts an empty or blank token (the detail stays intact)", async () => {
+    const result = await resolveNetlifyResult({
+      target: prod,
+      token: "   ",
+      getIdentity: async () => identity,
+    });
+
+    assert.deepEqual(result, {status: "manual", detail: "manual (no token)"});
+  });
+});

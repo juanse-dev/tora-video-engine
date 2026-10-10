@@ -204,29 +204,40 @@ export const renderReport = (state, results) => {
     }
   }
 
-  const netlifyEntries = /** @type {Array<["A" | "B", NetlifyResult]>} */ (
-    ["A", "B"]
-      .filter((phase) => state.netlify?.[phase])
-      .map((phase) => [phase, state.netlify[phase]])
-  );
   const netlifyWord = {pass: "pass", fail: "fail", manual: "manual", skip: "skipped"};
+  const RECORDED = Object.keys(netlifyWord);
+  /** A phase that ran, or that has a valid record, in phase order. */
+  const netlifyPhases = /** @type {Array<"A" | "B">} */ (["A", "B"]).filter(
+    (phase) =>
+      (phase === "A" ? a : b) || RECORDED.includes(state.netlify?.[phase]?.status),
+  );
+  const recordedResult = (/** @type {"A" | "B"} */ phase) => {
+    const result = state.netlify?.[phase];
 
-  for (const [phase, result] of netlifyEntries) {
-    if (result.status === "fail") {
+    return RECORDED.includes(result?.status) ? result : null;
+  };
+
+  for (const phase of netlifyPhases) {
+    const result = recordedResult(phase);
+
+    if (result?.status === "fail") {
       failures.push(`- **Netlify check, phase ${phase}**: ${oneLine(result.detail)}`);
     }
   }
 
-  const netlify =
-    netlifyEntries.length === 0 ||
-    netlifyEntries.every(([, result]) => result.status === "manual")
-      ? "Netlify check: manual (no token)"
-      : netlifyEntries
-          .map(
-            ([phase, result]) =>
-              `- Phase ${phase}: ${netlifyWord[result.status]}. ${oneLine(result.detail)}`,
-          )
-          .join("\n");
+  const netlify = netlifyPhases.every(
+    (phase) => recordedResult(phase)?.status === "manual",
+  )
+    ? "Netlify check: manual (no token)"
+    : netlifyPhases
+        .map((phase) => {
+          const result = recordedResult(phase);
+
+          return result
+            ? `- Phase ${phase}: ${netlifyWord[result.status]}. ${oneLine(result.detail)}`
+            : `- Phase ${phase}: not recorded`;
+        })
+        .join("\n");
 
   // A non-zero Playwright exit is a failure even when no spec recorded one
   // (a timeout, a crash, a thrown assertion).
@@ -268,6 +279,19 @@ export const renderReport = (state, results) => {
           ? "PASS"
           : "PHASE A PASSED (phase B pending)";
 
+  // Why a report is INCOMPLETE, so it is never silent about it.
+  const incompleteReasons =
+    verdict === "INCOMPLETE"
+      ? /** @type {Array<["A" | "B", typeof outcomeA]>} */ ([
+          ["A", outcomeA],
+          ...(hasB ? [["B", outcomeB]] : []),
+        ]).flatMap(([phase, outcome]) =>
+          outcome.passed
+            ? []
+            : outcome.reasons.map((reason) => `- Phase ${phase}: ${oneLine(reason)}`),
+        )
+      : [];
+
   /** @param {PhaseState | undefined} phase */
   const span = (phase) =>
     !phase
@@ -303,6 +327,9 @@ export const renderReport = (state, results) => {
     "",
     ...(failures.length > 0 ? failures : ["None."]),
     "",
+    ...(incompleteReasons.length > 0
+      ? ["## Incomplete", "", ...incompleteReasons, ""]
+      : []),
   ].join("\n");
 };
 

@@ -321,3 +321,65 @@ describe("GATE-001 G7 failures that never went through recordResult", () => {
     );
   });
 });
+
+describe("GATE-001 report explains an incomplete or unrecorded phase", () => {
+  it("prints the Netlify section as not recorded for a phase that ran without a valid record", () => {
+    const state = phaseAState();
+
+    state.netlify = {};
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /## Netlify check\n\n- Phase A: not recorded\n/);
+    assert.match(report, /^Result: INCOMPLETE$/m);
+  });
+
+  it("treats an invalid Netlify status as not recorded", () => {
+    const state = fullState();
+
+    state.netlify.B = {status: "pending", detail: "x"};
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /- Phase A: pass\. ready/);
+    assert.match(report, /- Phase B: not recorded\n/);
+  });
+
+  it("lists the incomplete reasons under their own heading, keeping Failures for failures", () => {
+    const state = phaseAState();
+
+    delete state.results.cliParity;
+    delete state.results["golden.captionEdit"];
+    state.netlify = {};
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /^Result: INCOMPLETE$/m);
+    assert.match(report, /## Failures\n\nNone\.\n/);
+    assert.match(
+      report,
+      /## Incomplete\n\n- Phase A: not recorded: cliParity, golden\.captionEdit\n- Phase A: Netlify check not recorded\n/,
+    );
+  });
+
+  it("lists phase B reasons too once phase B has run", () => {
+    const state = fullState();
+
+    delete state.results.deleteReimport;
+
+    assert.match(
+      renderReport(state, state.results),
+      /## Incomplete\n\n- Phase B: not recorded: deleteReimport \(phase B part\)\n/,
+    );
+  });
+
+  it("has no Incomplete section for a pass, a phase A pass or a failure", () => {
+    const failing = fullState();
+
+    failing.netlify.B = {status: "fail", detail: "x"};
+
+    for (const state of [fullState(), phaseAState(), failing]) {
+      assert.doesNotMatch(renderReport(state, state.results), /## Incomplete/);
+    }
+  });
+});

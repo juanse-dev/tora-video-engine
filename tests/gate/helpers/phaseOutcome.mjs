@@ -183,12 +183,17 @@ export const phaseOutcome = (state, phase) => {
 
   // The runner records finishedAt and the exit code before it runs the
   // Netlify step, so an interrupted run has everything else but this. pass,
-  // skip and manual are fine; fail and absent are not.
+  // skip and manual are fine; fail is a failure; anything else (absent, `{}`,
+  // pending, an unknown status) is not a recorded check.
   const netlify = state.netlify?.[phase];
+  const netlifyStatus = netlify?.status;
 
-  if (netlify?.status === "fail") {
+  if (netlifyStatus === "fail") {
     fail(`Netlify check failed: ${netlify.detail}`);
-  } else if (!netlify && data) {
+  } else if (
+    data &&
+    !(netlifyStatus === "pass" || netlifyStatus === "skip" || netlifyStatus === "manual")
+  ) {
     reasons.push("Netlify check not recorded");
   }
 

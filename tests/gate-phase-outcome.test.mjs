@@ -147,6 +147,32 @@ const CASES = [
     "INCOMPLETE",
   ],
   [
+    "phase A whose Netlify record has no valid status",
+    (() => {
+      const state = passedA();
+
+      state.netlify = {A: {}};
+
+      return state;
+    })(),
+    false,
+    false,
+    "INCOMPLETE",
+  ],
+  [
+    "phase B whose Netlify record is pending",
+    (() => {
+      const state = passedAB();
+
+      state.netlify.B = {status: "pending", detail: "x"};
+
+      return state;
+    })(),
+    true,
+    false,
+    "INCOMPLETE",
+  ],
+  [
     "phase A with a skipped Netlify check",
     Object.assign(passedA(), {netlify: {A: {status: "skip", detail: "local"}}}),
     true,
@@ -436,6 +462,32 @@ describe("GATE-001 R11 phaseOutcome", () => {
 
       assert.equal(outcome.passed, false, key);
       assert.match(outcome.reasons.join("; "), new RegExp(key));
+    }
+  });
+
+  it("counts a Netlify record only with a status of pass, skip, manual or fail", () => {
+    for (const status of ["pass", "skip", "manual"]) {
+      const state = passedA();
+
+      state.netlify = {A: {status, detail: "x"}};
+      assert.equal(phaseOutcome(state, "A").passed, true, status);
+    }
+
+    const failedState = passedA();
+
+    failedState.netlify = {A: {status: "fail", detail: "x"}};
+    assert.equal(phaseOutcome(failedState, "A").failed, true);
+
+    for (const record of [{}, {status: "pending", detail: "x"}, {status: "weird"}, {status: undefined}, null, "pass"]) {
+      const state = passedA();
+
+      state.netlify = {A: record};
+
+      const outcome = phaseOutcome(state, "A");
+
+      assert.equal(outcome.passed, false, JSON.stringify(record));
+      assert.equal(outcome.failed, false);
+      assert.deepEqual(outcome.reasons, ["Netlify check not recorded"]);
     }
   });
 
