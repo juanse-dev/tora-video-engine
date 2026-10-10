@@ -1,7 +1,6 @@
-import {execFile} from "node:child_process";
 import {readFile} from "node:fs/promises";
-import {promisify} from "node:util";
 import {expect, test} from "@playwright/test";
+import {probeMp4} from "../helpers/ffmpeg.mjs";
 import {
   applyYaml,
   BACKGROUND_BOTTOM_REGION,
@@ -21,8 +20,6 @@ import {
   localAssetRef,
   readFixture,
 } from "./helpers/seedAssetLibrary.mjs";
-
-const execFileAsync = promisify(execFile);
 
 const FRAME_WIDTH = 540;
 const FRAME_HEIGHT = 960;
@@ -762,40 +759,15 @@ const assertMp4Metadata = async (
   path,
   {expectedFrames = 30, expectedDuration = 1} = {},
 ) => {
-  const {stdout} = await execFileAsync(
-    "npx",
-    [
-      "remotion",
-      "ffprobe",
-      "-v",
-      "error",
-      "-count_frames",
-      "-show_streams",
-      "-show_format",
-      "-of",
-      "json",
-      path,
-    ],
-    {timeout: 60_000},
-  );
-  const metadata = JSON.parse(stdout);
-  const video = metadata.streams.filter(
-    (stream) => stream.codec_type === "video",
-  );
-  const audio = metadata.streams.filter(
-    (stream) => stream.codec_type === "audio",
-  );
+  const {codec, width, height, frames, hasAudio, durationSeconds} =
+    await probeMp4(path);
+  const frameCount = frames;
+  const duration = durationSeconds;
 
-  expect(video).toHaveLength(1);
-  expect(audio).toHaveLength(0);
-  expect(video[0].codec_name).toBe("h264");
-  expect(video[0].width).toBe(1080);
-  expect(video[0].height).toBe(1920);
-  const frameCount = Number(
-    video[0].nb_read_frames ?? video[0].nb_frames,
-  );
-  const duration = Number(metadata.format.duration);
-
+  expect(hasAudio).toBe(false);
+  expect(codec).toBe("h264");
+  expect(width).toBe(1080);
+  expect(height).toBe(1920);
   expect(frameCount).toBe(expectedFrames);
   expect(duration).toBeCloseTo(expectedDuration, 2);
   expect(frameCount / duration).toBeCloseTo(30, 1);
