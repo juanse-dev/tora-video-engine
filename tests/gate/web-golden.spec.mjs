@@ -500,6 +500,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       expect(info.frames).toBe(360);
       expect(info.durationSeconds).toBeCloseTo(12, 1);
       expect(info.hasAudio).toBe(false);
+      expect(info.videoStreams).toBe(1);
 
       // Positive control only: the frames are not black and two different
       // scenes (1 and 4) do not decode to the same picture. It does not prove

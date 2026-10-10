@@ -271,6 +271,7 @@ export const expectMp4Metadata = async (path) => {
   expect(info.frames).toBe(360);
   expect(info.durationSeconds).toBeCloseTo(12, 1);
   expect(info.hasAudio).toBe(false);
+  expect(info.videoStreams).toBe(1);
 
   return info;
 };
