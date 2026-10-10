@@ -37,6 +37,12 @@ export type AssetDialog =
       onCancel: () => void;
     };
 
+/** Stand-in status while openAssetLibrary has not settled yet. */
+export const OPENING_ASSET_LIBRARY = {
+  kind: "unavailable",
+  message: "Checking local assets…",
+} as const satisfies AssetLibraryStatus;
+
 export type AssetLibraryContextValue = {
   status: AssetLibraryStatus; // ASSET-002
   locks: LockManager | undefined;
@@ -50,6 +56,11 @@ export type AssetLibraryContextValue = {
   transitionPending: boolean; // App transition panel open -> imports disabled
   /** Rendered by App outside the fieldset. Returns false (nothing opened) while an App transition panel or another asset dialog is open. */
   openAssetDialog: (dialog: AssetDialog) => boolean;
+  /**
+   * Closes whatever asset dialog is open without running its callbacks. Safe
+   * for a mismatch dialog too: App releases the import lock it holds. Prefer
+   * the dialog's own Cancel (which also runs `onCancel`).
+   */
   closeAssetDialog: () => void;
 };
 

@@ -5,12 +5,18 @@ import {
   type LocalAssetRef,
 } from "../../localAssets/refs.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
-import {AssetLibraryContext} from "../assetLibraryContext.ts";
+import {
+  AssetLibraryContext,
+  OPENING_ASSET_LIBRARY,
+} from "../assetLibraryContext.ts";
 import {
   localOnlyDisclosure,
   sceneNumbersUsingRef,
 } from "../localAssetUi.ts";
-import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
+import {
+  LOCAL_ASSET_LOAD_ERROR,
+  type LocalAssetPageEntry,
+} from "../localAssetPageController.ts";
 import {useLocalAssetImport} from "../useLocalAssetImport.ts";
 import {useLocalAssetManage} from "../useLocalAssetManage.ts";
 import {useLocalAssetPage} from "../useLocalAssetPage.ts";
@@ -26,6 +32,35 @@ type MyAssetsSectionProps = {
   selectedValue: string;
   onSelect: (ref: LocalAssetRef) => void;
 };
+
+/**
+ * Neutral stand-in for the Current card while its state is still being
+ * determined (the library is opening, or the pinned row is loading). It keeps
+ * the card in place instead of flickering out on every scene switch.
+ */
+const PendingCurrentCard = ({
+  assetRef,
+  category,
+  message,
+}: {
+  assetRef: LocalAssetRef;
+  category: LocalAssetCategory;
+  message: string;
+}) => (
+  <div
+    className="asset-card local-asset-card selected current local-asset-pending-card"
+    role="group"
+    aria-busy="true"
+    aria-label={`Local ${category} ${shortAssetId(assetRef)}`}
+    data-local-asset-pending={assetRef}
+  >
+    <span className="asset-card-copy">
+      <strong>{`Local ${category}`}</strong>
+      <small>{shortAssetId(assetRef)}</small>
+      <span>{message}</span>
+    </span>
+  </div>
+);
 
 const categoryLabel = (category: LocalAssetCategory) =>
   category === "pose" ? "pose" : "background";
@@ -119,6 +154,16 @@ export const MyAssetsSection = ({
       return null;
     }
 
+    if (status === OPENING_ASSET_LIBRARY) {
+      return (
+        <PendingCurrentCard
+          assetRef={currentRef}
+          category={category}
+          message={OPENING_ASSET_LIBRARY.message}
+        />
+      );
+    }
+
     if (!ready) {
       return renderMissing("unavailable", currentRef, status.message);
     }
@@ -136,14 +181,27 @@ export const MyAssetsSection = ({
       );
     }
 
-    const {pinned} = page;
+    // `pinned` describes the ref it was loaded for; for any other ref (the
+    // scene just changed) it is still loading, never the previous ref's card.
+    const pinned =
+      page.pinnedFor === currentRef ? page.pinned : {kind: "loading" as const};
 
     if (pinned.kind === "missing") {
       return renderMissing("missing", currentRef);
     }
 
-    if (pinned.kind !== "present") {
-      return null; // still loading
+    if (pinned.kind === "error") {
+      return renderMissing("unavailable", currentRef, LOCAL_ASSET_LOAD_ERROR);
+    }
+
+    if (pinned.kind !== "present" || pinned.entry.ref !== currentRef) {
+      return (
+        <PendingCurrentCard
+          assetRef={currentRef}
+          category={category}
+          message="Loading…"
+        />
+      );
     }
 
     if (pinned.entry.row.status !== "present") {
@@ -245,6 +303,7 @@ export const MyAssetsSection = ({
       page.error === null &&
       page.total === 0 &&
       currentRef === null &&
+      page.loaded &&
       !page.loading ? (
         <p className="my-assets-empty">No imported {noun}s yet.</p>
       ) : null}
@@ -256,14 +315,14 @@ export const MyAssetsSection = ({
             onClick={page.previous}
             disabled={page.loading || !page.hasPrevious}
           >
-            ‹ Previous
+            <span aria-hidden="true">‹</span> Previous
           </button>
           <button
             type="button"
             onClick={page.next}
             disabled={page.loading || !page.hasNext}
           >
-            Next ›
+            Next <span aria-hidden="true">›</span>
           </button>
         </div>
       ) : null}

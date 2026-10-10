@@ -438,5 +438,92 @@ describe("ASSET-003 local asset page controller", () => {
       assert.equal(pinned.entry.thumbnailUrl, null);
       assert.deepEqual(thumbnailLoads, []);
     });
+
+    it("names the pinned ref the state describes and shows loading for a newly pinned ref", async () => {
+      const store = createFakeStore("pose", [1, 2]);
+      const {controller} = createHarness(store);
+      const seen = [];
+
+      controller.subscribe((snapshot) =>
+        seen.push({pinnedFor: snapshot.pinnedFor, kind: snapshot.pinned.kind}),
+      );
+      await controller.sync(refOf("pose", 1));
+      assert.equal(controller.getSnapshot().pinnedFor, refOf("pose", 1));
+      seen.length = 0;
+
+      await controller.sync(refOf("pose", 2));
+      // The first publish of the load already describes the new ref as loading.
+      assert.deepEqual(seen[0], {pinnedFor: refOf("pose", 2), kind: "loading"});
+      assert.equal(controller.getSnapshot().pinnedFor, refOf("pose", 2));
+      assert.equal(controller.getSnapshot().pinned.kind, "present");
+    });
+
+    it("a failed load of a newly pinned ref ends in the error state, never stuck loading", async () => {
+      const store = createFakeStore("pose", [1, 2]);
+      const {controller} = createHarness(store);
+
+      await controller.sync(refOf("pose", 1));
+      store.getAssetRow = async () => {
+        throw new Error("db closed");
+      };
+      await controller.sync(refOf("pose", 2));
+
+      const snapshot = controller.getSnapshot();
+
+      assert.equal(snapshot.error, "Could not load My assets.");
+      assert.equal(snapshot.loading, false);
+      assert.equal(snapshot.pinnedFor, refOf("pose", 2));
+      assert.deepEqual(snapshot.pinned, {kind: "error"});
+    });
+
+    it("keeps an already loaded pin when a later refresh fails, and recovers on retry", async () => {
+      const store = createFakeStore("pose", [1]);
+      const {controller} = createHarness(store);
+      const getAssetRow = store.getAssetRow;
+
+      await controller.sync(refOf("pose", 1));
+      store.getAssetRow = async () => {
+        throw new Error("db closed");
+      };
+      await controller.refresh();
+      assert.equal(controller.getSnapshot().pinned.kind, "present");
+
+      store.getAssetRow = async () => {
+        throw new Error("db closed");
+      };
+      await controller.sync(refOf("pose", 2));
+      assert.deepEqual(controller.getSnapshot().pinned, {kind: "error"});
+
+      store.getAssetRow = getAssetRow;
+      await controller.refresh();
+      assert.deepEqual(controller.getSnapshot().pinned, {kind: "missing"});
+      assert.equal(controller.getSnapshot().error, null);
+    });
+  });
+
+  it("is not loaded until the first load settles", async () => {
+    const store = createFakeStore("pose", [1]);
+    const {controller} = createHarness(store);
+
+    assert.equal(controller.getSnapshot().loaded, false);
+
+    const pending = controller.sync(null);
+
+    assert.equal(controller.getSnapshot().loaded, false);
+    await pending;
+    assert.equal(controller.getSnapshot().loaded, true);
+  });
+
+  it("a failed first load stays not loaded", async () => {
+    const store = createFakeStore("pose", [1]);
+
+    store.countAssets = async () => {
+      throw new Error("db closed");
+    };
+
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+    assert.equal(controller.getSnapshot().loaded, false);
   });
 });

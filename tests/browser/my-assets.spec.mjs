@@ -1367,3 +1367,162 @@ test("Reset project and YAML import leave My assets intact", async ({page}) => {
   await waitForOwner(page);
   await expectLibraryIntact();
 });
+
+// --- Final fix wave ---------------------------------------------------------------
+
+test("the Current card never drops out of the grid when the selected scene changes", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const other = await readFixture("background-cyan.jpg");
+  const poseRef = localAssetRef("pose", pose.digest);
+  const otherRef = localAssetRef("pose", other.digest);
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose, {label: "My cat"}),
+    fixtureRecord("pose", other, {label: "Other cat"}),
+  ]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {pose: poseRef, background: "office"},
+      {pose: otherRef, background: "office"},
+    ]),
+  );
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(
+    section(page, "pose").locator(".asset-card.current"),
+  ).toContainText("My cat");
+
+  // Records the smallest number of Current cards in the pose grid after every
+  // DOM change (a MutationObserver callback sees each committed state).
+  await page.evaluate(() => {
+    const grid = document.querySelector('[data-my-assets="pose"]');
+
+    window.__minCurrent = Infinity;
+    new MutationObserver(() => {
+      window.__minCurrent = Math.min(
+        window.__minCurrent,
+        grid.querySelectorAll(".asset-card.current").length,
+      );
+    }).observe(grid, {childList: true, subtree: true, attributes: true});
+  });
+
+  for (const [index, label] of [
+    [1, "Other cat"],
+    [0, "My cat"],
+    [1, "Other cat"],
+  ]) {
+    await page.locator(".scene-list-item").nth(index).click();
+    await expect(
+      section(page, "pose").locator(".asset-card.current"),
+    ).toContainText(label);
+  }
+
+  expect(await page.evaluate(() => window.__minCurrent)).toBe(1);
+});
+
+test("while the library is still opening the Current card says it is checking, not unavailable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("hold-library") !== "1") {
+      return;
+    }
+
+    const nativeRequest = navigator.locks.request.bind(navigator.locks);
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    window.__releaseLibrary = release;
+    navigator.locks.request = (name, ...rest) =>
+      name === "tora-video-engine:asset-library"
+        ? gate.then(() => nativeRequest(name, ...rest))
+        : nativeRequest(name, ...rest);
+  });
+
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await applyYaml(page, buildStoryYaml([{pose: ref, background: "office"}]));
+  await page.evaluate(() => sessionStorage.setItem("hold-library", "1"));
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const pending = page.locator(`[data-local-asset-pending="${ref}"]`);
+
+  await expect(pending).toContainText("Checking local assets…");
+  await expect(missingCard(page, ref)).toHaveCount(0);
+  await expect(section(page, "pose")).not.toContainText("unavailable");
+
+  await page.evaluate(() => window.__releaseLibrary());
+  await expect(pending).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
+});
+
+test("the import buttons show a keyboard focus outline", async ({page}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importInput(page, "pose").focus();
+
+  const outline = await section(page, "pose")
+    .locator(".file-button")
+    .evaluate((element) => getComputedStyle(element).outlineStyle);
+
+  expect(outline).toBe("solid");
+});
+
+test("the paging arrows are hidden from assistive technology", async ({
+  page,
+}) => {
+  await openSeeded(page, syntheticPoses(60));
+
+  const pose = section(page, "pose");
+
+  await expect(pose.getByRole("button", {name: "Next", exact: true})).toBeVisible();
+  await expect(
+    pose.getByRole("button", {name: "Previous", exact: true}),
+  ).toBeVisible();
+});
+
+test("a failed Use it as replacement keeps the dialog open and the Story frozen, then Cancel unlocks", async ({
+  page,
+}) => {
+  const {ref} = await openMissingStory(page);
+  const other = await readFixture("background-cyan.jpg");
+  const dialog = page.getByRole("dialog");
+  const yamlBefore = await yamlSource(page);
+
+  await missingCard(page, ref)
+    .locator('input[type="file"]')
+    .setInputFiles(fixtureUpload(other));
+  await expect(dialog).toContainText("This file is a different image");
+
+  // Every library mutation takes the exclusive Web Lock, so this makes it fail.
+  await page.evaluate(() => {
+    navigator.locks.request = () => Promise.reject(new Error("lock refused"));
+  });
+  await dialog
+    .getByRole("button", {name: "Use it as replacement for this scene"})
+    .click();
+
+  await expect(dialog.getByRole("alert")).toContainText("That didn't work:");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  await expectAuthoringLocked(page);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+  ).toBeVisible();
+
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(missingCard(page, ref)).toBeVisible();
+  expect(await yamlSource(page)).toBe(yamlBefore);
+});

@@ -14,6 +14,7 @@ import {
 } from "./authoringState.ts";
 import {
   AssetLibraryContext,
+  OPENING_ASSET_LIBRARY,
   type AssetDialog,
   type AssetLibraryContextValue,
 } from "./assetLibraryContext.ts";
@@ -128,12 +129,6 @@ type RenderUiState = {
   phase: RenderPhase;
   message: string;
   progress: number | null;
-};
-
-// Stand-in while openAssetLibrary has not settled yet.
-const OPENING_ASSET_LIBRARY: AssetLibraryStatus = {
-  kind: "unavailable",
-  message: "Checking local assets…",
 };
 
 const getFallbackStory = (): Story => {
@@ -464,6 +459,10 @@ export const App = () => {
 
   assetDialogOpenRef.current = assetDialog !== null;
 
+  const assetDialogRef = useRef<AssetDialog | null>(null);
+
+  assetDialogRef.current = assetDialog;
+
   const openAssetDialog = useCallback((dialog: AssetDialog) => {
     // One dialog of any kind at a time: never open under an App transition panel
     // or over another asset dialog.
@@ -472,11 +471,22 @@ export const App = () => {
     }
 
     assetDialogOpenRef.current = true;
+    assetDialogRef.current = dialog;
     setAssetDialog(dialog);
 
     return true;
   }, []);
-  const closeAssetDialog = useCallback(() => setAssetDialog(null), []);
+  // A mismatch dialog is the end of an import that holds the authoring lock,
+  // so closing it from here must release that lock too (the host does the same
+  // when the user picks Cancel / Use it as replacement).
+  const closeAssetDialog = useCallback(() => {
+    if (assetDialogRef.current?.kind === "mismatch") {
+      setAssetImportInFlight(false);
+    }
+
+    assetDialogRef.current = null;
+    setAssetDialog(null);
+  }, []);
   // Closes only the dialog it was asked about, so a newer dialog is never closed by a stale callback.
   const closeAssetDialogIfCurrent = useCallback((dialog: AssetDialog) => {
     setAssetDialog((current) => (current === dialog ? null : current));

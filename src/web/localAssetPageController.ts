@@ -21,6 +21,7 @@ export type PinnedLocalAsset =
   | {kind: "none"} // nothing pinned
   | {kind: "loading"}
   | {kind: "missing"} // no row for the ref in this library
+  | {kind: "error"} // reading the ref failed (the page load failed)
   | {kind: "present"; entry: LocalAssetPageEntry}; // entry.row may be corrupt
 
 export type LocalAssetPageSnapshot = {
@@ -29,8 +30,12 @@ export type LocalAssetPageSnapshot = {
   hasPrevious: boolean;
   hasNext: boolean;
   loading: boolean;
+  /** True once a load has settled; before that an empty list is not yet "no assets". */
+  loaded: boolean;
   /** Set when the last load failed; the previous page (if any) is kept. */
   error: string | null;
+  /** The ref that `pinned` describes, so a stale state is never shown for a newer ref. */
+  pinnedFor: LocalAssetRef | null;
   pinned: PinnedLocalAsset;
 };
 
@@ -44,7 +49,9 @@ export const EMPTY_LOCAL_ASSET_PAGE: LocalAssetPageSnapshot = {
   hasPrevious: false,
   hasNext: false,
   loading: false,
+  loaded: false,
   error: null,
+  pinnedFor: null,
   pinned: {kind: "none"},
 };
 
@@ -62,7 +69,10 @@ export const EMPTY_LOCAL_ASSET_PAGE: LocalAssetPageSnapshot = {
  * - next()/previous() are ignored while a load is pending (the snapshot would
  *   still describe the old page), so a double click advances one page.
  * - A failed load sets `error`, keeps the previous page and restores the last
- *   committed cursor, so the same action can be retried.
+ *   committed cursor, so the same action can be retried. If the pinned ref was
+ *   not loaded yet, `pinned` becomes `{kind: "error"}` (never stuck loading).
+ * - `pinnedFor` names the ref `pinned` describes; while a newly pinned ref is
+ *   loading, `pinned` is `{kind: "loading"}` for that ref.
  */
 export const createLocalAssetPageController = (options: {
   store: Pick<
@@ -158,6 +168,7 @@ export const createLocalAssetPageController = (options: {
       ...snapshot,
       loading: true,
       error: null,
+      pinnedFor: pinnedForThisLoad,
       pinned:
         pinnedForThisLoad === null
           ? {kind: "none"}
@@ -218,7 +229,9 @@ export const createLocalAssetPageController = (options: {
           hasPrevious: cursorStack.length > 0,
           hasNext: page.hasNext,
           loading,
+          loaded: true,
           error: null,
+          pinnedFor: pinnedForThisLoad,
           pinned:
             pinnedResult.kind === "none"
               ? {kind: "none"}
@@ -264,7 +277,18 @@ export const createLocalAssetPageController = (options: {
       if (!isStale()) {
         cursor = committedCursor;
         cursorStack.splice(0, cursorStack.length, ...committedStack);
-        publish({...snapshot, loading: false, error: LOCAL_ASSET_LOAD_ERROR});
+        publish({
+          ...snapshot,
+          loading: false,
+          error: LOCAL_ASSET_LOAD_ERROR,
+          pinnedFor: pinnedForThisLoad,
+          pinned:
+            pinnedForThisLoad === null
+              ? {kind: "none"}
+              : pinnedLoadedFor === pinnedForThisLoad
+                ? snapshot.pinned
+                : {kind: "error"},
+        });
       }
     }
   };

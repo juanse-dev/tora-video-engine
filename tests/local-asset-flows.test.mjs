@@ -16,6 +16,7 @@ import {
   libraryFromContext,
   renameAssetFlow,
 } from "../src/web/localAssetManageFlow.ts";
+import {runAssetDialogCallback} from "../src/web/localAssetUi.ts";
 import {
   buildApng,
   buildGifSignature,
@@ -488,6 +489,26 @@ describe("ASSET-003 import matching file", () => {
     await assert.rejects(dialogs[0].onReplace(), /storage/iu);
     assert.equal(events.some((event) => event.startsWith("apply:")), false);
     assert.equal(events.at(-1), "settled:failed");
+  });
+
+  it("a failed replacement run through the dialog host's wrapper releases the import lock exactly once and reports the failure", async () => {
+    const library = makeLibrary();
+    const {dialogs, run} = await matching(library, {fileBytes: PNG_OTHER});
+    let released = 0;
+
+    await run();
+    library.store.failNextApply();
+
+    // What AssetDialogHost does for "Use it as replacement": the lock is
+    // released when the callback settles, success or not.
+    const result = await runAssetDialogCallback(dialogs[0].onReplace, () => {
+      released += 1;
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.message, /storage/iu);
+    assert.equal(released, 1);
+    assert.deepEqual(library.posted, []);
   });
 
   it("an unreadable file fails and releases the lock", async () => {
