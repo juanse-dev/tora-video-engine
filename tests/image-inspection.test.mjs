@@ -539,6 +539,48 @@ test("malformed: a WebP chunk that straddles the declared RIFF end", () => {
   assert.equal(rejected(withRiffSize(vp8, vp8.length - 8 - 4)), "malformed");
 });
 
+/* ------------------------------------- RIFF pad tolerance (only a missing pad) */
+
+test("malformed: even-size VP8 or VP8L with RIFF size one past the file (no pad is due)", () => {
+  for (const bytes of [
+    buildWebpVp8({width: 10, height: 10}), // 18 data bytes: even
+    buildRiffWebp(webpChunk("VP8L", concatBytes(new Uint8Array([0x2f]), new Uint8Array(13)))), // 14: even
+  ]) {
+    assert.equal(rejected(withConsistentRiff(bytes, 1)), "malformed");
+  }
+});
+
+test("accepted: odd-size VP8 and VP8L whose pad byte is physically missing (RIFF size = length + 1)", () => {
+  const vp8 = buildRiffWebp(webpChunk("VP8 ", concatBytes(buildWebpVp8({width: 10, height: 10}).slice(20), new Uint8Array(1))));
+  for (const padded of [vp8, buildWebpVp8l({width: 10, height: 10})]) {
+    const bytes = truncate(padded, padded.length - 1);
+    assert.equal(riffSizeOf(bytes), bytes.length - 8 + 1);
+    assert.equal(accepted(bytes).width, 10);
+  }
+});
+
+test("malformed: odd-size final chunk but data does not end at EOF, with RIFF size = length + 1", () => {
+  const vp8l = buildWebpVp8l({width: 10, height: 10}); // odd data, pad present
+  // Pad present plus one more byte; RIFF size claims one byte beyond that.
+  const bytes = withConsistentRiff(concatBytes(vp8l, new Uint8Array(1)), 1);
+  assert.equal(rejected(bytes), "malformed");
+});
+
+test("malformed: VP8X whose final scanned chunk is even-sized, with RIFF size = length + 1", () => {
+  const vp8x = buildWebpVp8x({width: 10, height: 10, imageChunk: false});
+  const bytes = concatBytes(vp8x, webpChunk("EXIF", new Uint8Array(8)));
+  assert.equal(rejected(withConsistentRiff(bytes, 1)), "malformed");
+  // No chunk after VP8X at all (VP8X is itself even-sized).
+  assert.equal(rejected(withConsistentRiff(vp8x, 1)), "malformed");
+});
+
+test("accepted: VP8X whose final odd-sized chunk is missing its pad byte", () => {
+  const vp8x = buildWebpVp8x({width: 10, height: 10, imageChunk: false});
+  const full = concatBytes(vp8x, webpChunk("EXIF", new Uint8Array(7)));
+  const bytes = withConsistentRiff(truncate(full, full.length - 1), 1);
+  assert.deepEqual(accepted(bytes), {mimeType: "image/webp", width: 10, height: 10});
+});
+
 const pngBeforeIdat = () =>
   buildPng({width: 10, height: 10, idat: false, iend: false});
 

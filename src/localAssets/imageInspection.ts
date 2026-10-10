@@ -233,6 +233,15 @@ const WEBP_FIRST_CHUNK = 12;
 const webpChunkDataFits = (limit: number, dataStart: number, size: number) =>
   dataStart + size <= limit;
 
+// The RIFF size may exceed the file by exactly one byte only when that byte is
+// the missing pad of an odd-sized final chunk whose data ends at the file end.
+const webpPadToleranceOk = (
+  bytes: Uint8Array,
+  riffEnd: number,
+  lastDataEnd: number,
+  lastSize: number,
+) => riffEnd <= bytes.length || ((lastSize & 1) === 1 && lastDataEnd === bytes.length);
+
 const parseWebp = (bytes: Uint8Array): ParsedHeader => {
   if (bytes.length < WEBP_FIRST_CHUNK) {
     return MALFORMED;
@@ -262,7 +271,11 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
 
   if (hasTag(bytes, WEBP_FIRST_CHUNK, TAG_VP8)) {
     // Frame tag (3) + start code (3) + width (2) + height (2).
-    if (size < 10 || !webpChunkDataFits(limit, dataStart, size)) {
+    if (
+      size < 10 ||
+      !webpChunkDataFits(limit, dataStart, size) ||
+      !webpPadToleranceOk(bytes, riffEnd, dataStart + size, size)
+    ) {
       return MALFORMED;
     }
 
@@ -282,6 +295,7 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     if (
       size < 5 ||
       !webpChunkDataFits(limit, dataStart, size) ||
+      !webpPadToleranceOk(bytes, riffEnd, dataStart + size, size) ||
       bytes[dataStart] !== 0x2f
     ) {
       return MALFORMED;
@@ -315,6 +329,8 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
     // overruns the data means a damaged file: `malformed`. A missing final pad
     // byte is tolerated.
     let offset = dataStart + size;
+    let lastDataEnd = dataStart + size;
+    let lastSize = size;
 
     while (offset < limit) {
       if (offset + WEBP_CHUNK_HEADER > limit) {
@@ -332,7 +348,13 @@ const parseWebp = (bytes: Uint8Array): ParsedHeader => {
         return MALFORMED;
       }
 
+      lastDataEnd = chunkEnd;
+      lastSize = chunkSize;
       offset = chunkEnd + (chunkSize & 1); // always advances by >= 8
+    }
+
+    if (!webpPadToleranceOk(bytes, riffEnd, lastDataEnd, lastSize)) {
+      return MALFORMED;
     }
 
     return image("image/webp", width, height);
