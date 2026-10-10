@@ -82,6 +82,7 @@ npm run video -- stories/my-story.yaml
 ```
 
 - `npm run assets` lists every file in `local-assets/` with the `local:...` ref to paste into a Story, or why a file was skipped (not a static PNG/JPEG/WebP, over 25 MiB, over 8192 px per side or 50 million pixels in total, animated, damaged).
+- Web app: the asset catalog has a **My assets** section for poses and backgrounds. Import a PNG, JPEG or WebP, apply it to the selected scene, rename or delete it, and re-import the original file (**Import matching file**) to restore a missing one. Your images are stored only in this browser, are not uploaded or synced, and each origin (Production, Deploy Previews, localhost) keeps its own library.
 - Browser to CLI: export the Story YAML from the web app, copy the exact original image files into `local-assets/poses/` or `local-assets/backgrounds/` (any filename, subfolders allowed, symbolic links are skipped), then run `npm run video`.
 - If a referenced image is missing, the render stops before Remotion starts and lists each missing ref, the scenes that use it and the folder that was searched. Nothing falls back to another image.
 - The images are copied into a temporary public directory for the render and removed afterwards; `public/` and the originals are never modified. Bundled-only Stories render exactly as before.
@@ -255,4 +256,4 @@ The v0.2 Web Authoring sequence is:
 
 See [docs/web/README.md](docs/web/README.md) for the source-of-truth architecture and acceptance criteria.
 
-v0.3 Local Custom Assets is in progress (see [docs/assets/README.md](docs/assets/README.md)). Complete: ASSET-001 (local asset references, persistence v2 and the composition contract), ASSET-002 (image inspection, hashing and the browser asset library), ASSET-004 (preview and browser MP4 rendering with local assets) and ASSET-005 (CLI rendering with local assets). Importing local assets in the browser arrives with ASSET-003 (the My assets UI).
+v0.3 Local Custom Assets is in progress (see [docs/assets/README.md](docs/assets/README.md)). Complete: ASSET-001 (local asset references, persistence v2 and the composition contract), ASSET-002 (image inspection, hashing and the browser asset library), ASSET-003 (the My assets UI: browser import, rename, delete and recovery), ASSET-004 (preview and browser MP4 rendering with local assets) and ASSET-005 (CLI rendering with local assets). Browser import is now available.

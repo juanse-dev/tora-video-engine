@@ -1,6 +1,6 @@
 # ASSET-003 — My assets UI: import, rename, delete and recovery
 
-> Status: **Proposed**
+> Status: **Implemented**. The visual editor's asset catalog splits into Bundled and My assets; users import, apply, rename and delete local images and recover a missing or damaged one from the Current selection card; verified by `npm test`, `tests/browser/my-assets.spec.mjs` and, under system Chrome, `tests/browser/my-assets-render.spec.mjs`.
 >
 > Depends on: ASSET-002, ASSET-004. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
@@ -35,7 +35,7 @@ Extend the visual editor's asset catalog so a user can import, apply, rename and
 | modify | `src/web/components/AssetCatalog.tsx` | Split each image category into **Bundled** and **My assets**. |
 | modify | `src/web/App.tsx` | Provide `AssetLibraryContext`. |
 | modify | `src/web/styles.css` | Styles for the new elements (reuse `.asset-card`, `.asset-grid`, `.transition-panel`). |
-| create | `tests/local-asset-ui.test.mjs`, `tests/browser/my-assets.spec.mjs` | Tests. |
+| create | `tests/local-asset-ui.test.mjs`, `tests/browser/my-assets.spec.mjs`, `tests/browser/my-assets-render.spec.mjs` | Tests. |
 
 ## Interfaces
 
@@ -160,11 +160,11 @@ Reset project, YAML import/apply, editor mode switches, and Story deletion of sc
 
 ## Tasks
 
-- [ ] **1. Pure helpers + context.** `localAssetUi.ts`, `assetLibraryContext.ts`, App provides the context. `tests/local-asset-ui.test.mjs`.
-- [ ] **2. Catalog split + paging + cards.** `useLocalAssetPage.ts`, `MyAssetsSection.tsx`, `LocalAssetCard.tsx`, `AssetCatalog.tsx`, styles.
-- [ ] **3. Import, rename, delete flows.**
-- [ ] **4. Missing/corrupt recovery card.** `MissingLocalAssetCard.tsx`.
-- [ ] **5. Browser tests.** `tests/browser/my-assets.spec.mjs`.
+- [x] **1. Pure helpers + context.** `localAssetUi.ts`, `assetLibraryContext.ts`, App provides the context. `tests/local-asset-ui.test.mjs`.
+- [x] **2. Catalog split + paging + cards.** `useLocalAssetPage.ts`, `MyAssetsSection.tsx`, `LocalAssetCard.tsx`, `AssetCatalog.tsx`, styles.
+- [x] **3. Import, rename, delete flows.**
+- [x] **4. Missing/corrupt recovery card.** `MissingLocalAssetCard.tsx`.
+- [x] **5. Browser tests.** `tests/browser/my-assets.spec.mjs` and `tests/browser/my-assets-render.spec.mjs` (R6).
 
 ## Tests
 
@@ -212,3 +212,20 @@ Batch import, folders/tags/search, drag-and-drop, bulk replacement across scenes
 ## Done when
 
 All tasks are ticked and a user can import, apply, rename, delete and recover local assets from the visual editor, with bundled assets visibly separate and unchanged.
+
+## Implementation notes
+
+Rulings made while implementing (R1–R11):
+
+- **R1:** each task wrote the browser tests for its own behaviour into `tests/browser/my-assets.spec.mjs` (RED before the implementation); task 5 added the cross-cutting ones. Browser behaviour cannot be TDD'd if every spec lands at the end.
+- **R2:** App owns every `AssetLibraryContextValue` field from task 1 (import-in-flight, asset dialog, the `renderAuthoringLocked` / `authoringLocked` split), so later tasks only consume the context.
+- **R3:** `context.status` is `assetLibrary ?? OPENING_ASSET_LIBRARY` (kind `unavailable`, "Checking local assets…"): the context type is non-null, and My assets shows that message with no controls until the library opens.
+- **R4:** App owns one `BroadcastChannel` for its lifetime and `channel.post` also invalidates the integrity cache and bumps the refresh token locally. A `BroadcastChannel` never delivers to its sender, so without this a same-tab delete would leave the asset "ready" and renderable.
+- **R5:** the phase line maps the ASSET-002 enum to the spec copy: `reading` → "Reading…", `validating` → "Checking…", `hashing` → "Hashing…", `storing` → "Saving…".
+- **R6:** the test that needs an MP4 render lives in `tests/browser/my-assets-render.spec.mjs`, listed in `playwright.browser-render.config.mjs` (system Chrome, run in CI). Bundled Chromium cannot encode H.264, so there it would always skip.
+- **R7:** browser tests that start Player playback mute the Player first ("Mute sound"), because playback hangs on the Linux runner (issue #24).
+- **R8:** asset dialogs render through `AssetDialogHost` (`src/web/components/AssetDialogHost.tsx`) next to `renderTransitionPanel()`, outside the fieldset. The host owns busy state and error handling, closes only the dialog it opened, and `openAssetDialog` returns a boolean, so a rejected callback can never freeze authoring.
+- **R9:** the Current card's ref is not repeated in the page grid (the page shows up to 50 others plus Current), because a duplicate selected card is confusing.
+- **R10:** `useLocalAssetPage(category, pinnedRef = null)` takes the pinned ref and delegates to the pure `localAssetPageController.ts`, which R9 needs and which can be unit-tested in Node.
+- **R11:** with a ready library, the Current card for any non-ready ref state (missing, corrupt or unavailable, for example a read failure) offers **Import matching file**; only a disabled or unavailable library hides actions, as the spec says.
+- Deferred: the cross-category re-entrancy of imports and the Safari/Firefox focus restore after a dialog closes have no browser coverage.
