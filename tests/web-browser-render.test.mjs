@@ -18,6 +18,7 @@ import {
   WEB_RENDER_LOCK_NAME,
 } from "../src/web/browserRender.ts";
 
+import {createFakeOpfs} from "./helpers/fakeOpfs.mjs";
 import {
   createMemoryAssetStore,
   createMemoryLockManager,
@@ -226,6 +227,7 @@ describe("WEB-006 browser rendering", () => {
       signal: controller.signal,
       licenseKey: "public-test-key",
       component: StubComposition,
+      getDirectory: createFakeOpfs().getDirectory,
       render: async (options) => {
         seen = options;
 
@@ -239,7 +241,10 @@ describe("WEB-006 browser rendering", () => {
     assert.equal(seen.container, "mp4");
     assert.equal(seen.videoCodec, "h264");
     assert.equal(seen.muted, true);
-    assert.equal(seen.outputTarget, "web-fs");
+    // Tora owns the OPFS writer (issue #29), so the renderer gets a stream
+    // instead of the library-managed web-fs target.
+    assert.equal(seen.outputTarget, undefined);
+    assert.ok(seen.outputWritable instanceof WritableStream);
     assert.equal(seen.allowHtmlInCanvas, false);
     assert.equal(typeof seen.onFrame, "function");
     assert.equal(BROWSER_FRAME_DURATION_MICROSECONDS, 33_333);
@@ -608,6 +613,7 @@ describe("ASSET-004 render transaction with local assets", () => {
     await renderStoryMediaOnWeb(exampleStory, {
       signal: new AbortController().signal,
       component: () => null,
+      getDirectory: createFakeOpfs().getDirectory,
       localAssetSources: lockedSources,
       render: async (options) => {
         seen = options;
@@ -639,6 +645,7 @@ describe("ASSET-004 render transaction with local assets", () => {
       renderStoryMediaOnWeb(localStory, {
         signal: new AbortController().signal,
         component: () => null,
+        getDirectory: createFakeOpfs().getDirectory,
         localAssetSources,
         render: async () => {
           rendered += 1;
@@ -1001,5 +1008,255 @@ describe("ASSET-004 render transaction with local assets", () => {
       "cleanup",
       "render",
     ]);
+  });
+});
+
+const OPFS_PREFIX = "__remotion_render:";
+const CANCEL_MESSAGE = "renderMediaOnWeb() was cancelled";
+
+/**
+ * Stand-ins for `renderMediaOnWeb()` that behave like the pinned renderer given
+ * `outputWritable`: mediabunny's StreamTarget locks the stream with
+ * `getWriter()` and only closes it when the render finalizes.
+ */
+const successRender = (bytes) => async (options) => {
+  const writer = options.outputWritable.getWriter();
+
+  await writer.write({type: "write", position: 0, data: bytes});
+  await writer.close();
+
+  return {
+    getBlob: () =>
+      Promise.reject(new Error("unavailable with outputWritable")),
+    internalState: {},
+  };
+};
+
+const cancelledRender = (events) => async (options) => {
+  const writer = options.outputWritable.getWriter();
+
+  await writer.write({
+    type: "write",
+    position: 0,
+    data: new Uint8Array([1, 2, 3]),
+  });
+  events?.push("render-started");
+  await new Promise((_, reject) => {
+    options.signal.addEventListener("abort", () => {
+      // Like the pinned renderer, leave the writer open and locked.
+      reject(new Error(CANCEL_MESSAGE));
+    });
+  });
+};
+
+const failingRender = (message) => async (options) => {
+  const writer = options.outputWritable.getWriter();
+
+  await writer.write({type: "write", position: 0, data: new Uint8Array([9])});
+  throw new Error(message);
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+describe("issue #29 Tora-owned OPFS writer", () => {
+  it("writes to a Tora-created __remotion_render: file, the render closes it, and the blob is read back from getFile", async () => {
+    const opfs = createFakeOpfs();
+    const bytes = new Uint8Array([10, 20, 30, 40]);
+
+    const result = await renderStoryMediaOnWeb(exampleStory, {
+      signal: new AbortController().signal,
+      component: () => null,
+      getDirectory: opfs.getDirectory,
+      render: successRender(bytes),
+    });
+
+    assert.equal(opfs.files.size, 1);
+
+    const [[name, file]] = [...opfs.files];
+
+    assert.ok(name.startsWith(OPFS_PREFIX), name);
+    assert.equal(file.writable.state, "closed");
+    assert.ok(
+      !opfs.events.some((event) => event.startsWith("abort:")),
+      "a finished render is never aborted",
+    );
+
+    const blob = await result.getBlob();
+
+    assert.equal(blob.type, "video/mp4");
+    assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), bytes);
+  });
+
+  it("aborts the writable before settling when the render is cancelled", async () => {
+    const opfs = createFakeOpfs();
+    const controller = new AbortController();
+    const settled = renderStoryMediaOnWeb(exampleStory, {
+      signal: controller.signal,
+      component: () => null,
+      getDirectory: opfs.getDirectory,
+      render: cancelledRender(),
+    });
+
+    await tick();
+    controller.abort();
+
+    await assert.rejects(settled, /was cancelled/);
+
+    const [[name, file]] = [...opfs.files];
+
+    assert.ok(name.startsWith(OPFS_PREFIX), name);
+    assert.equal(file.writable.state, "aborted");
+  });
+
+  it("aborts the writable before settling when the render rejects", async () => {
+    const opfs = createFakeOpfs();
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: failingRender("encoder exploded"),
+      }),
+      /encoder exploded/,
+    );
+
+    const [[, file]] = [...opfs.files];
+
+    assert.equal(file.writable.state, "aborted");
+  });
+
+  it("never masks the render error when the abort itself fails", async () => {
+    const opfs = createFakeOpfs({abortRejects: true});
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: failingRender("original failure"),
+      }),
+      /original failure/,
+    );
+  });
+
+  it("opens no OPFS writer when the local-asset recheck refuses to render", async () => {
+    const opfs = createFakeOpfs();
+    const localStory = {
+      ...exampleStory,
+      scenes: exampleStory.scenes.map((scene, index) =>
+        index === 0 ? {...scene, pose: LOCAL_POSE} : scene,
+      ),
+    };
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(localStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: successRender(new Uint8Array([1])),
+      }),
+      /local asset/i,
+    );
+    assert.equal(opfs.files.size, 0);
+  });
+
+  describe("inside the render transaction", () => {
+    const transaction = (opfs, render, events) => {
+      const lease = {mode: "owner", release: () => events.push("release")};
+      const controller = new AbortController();
+
+      return {
+        controller,
+        run: () =>
+          startBrowserRenderTransaction(exampleStory, {
+            signal: controller.signal,
+            checkCapability: readyCapability,
+            acquireLock: async () => lease,
+            cleanup: async () => {
+              events.push("cleanup");
+              opfs.events.push("cleanup");
+
+              return cleanupRemotionOpfsUntilEmpty({
+                getDirectory: opfs.getDirectory,
+                wait: async () => undefined,
+              });
+            },
+            renderStory: (story, options) =>
+              renderStoryMediaOnWeb(story, {
+                ...options,
+                component: () => null,
+                getDirectory: opfs.getDirectory,
+                render,
+              }),
+          }),
+      };
+    };
+
+    it("a cancelled render settles cancelled, not cleanup-blocked, and releases the lease after clean OPFS", async () => {
+      const opfs = createFakeOpfs();
+      const events = [];
+      const tx = transaction(opfs, cancelledRender(events), events);
+      const outcome = tx.run();
+
+      await tick();
+      tx.controller.abort();
+
+      assert.deepEqual(await outcome, {kind: "cancelled"});
+      assert.equal(opfs.files.size, 0);
+      assert.deepEqual(events.slice(-2), ["cleanup", "release"]);
+    });
+
+    it("aborts the writer before the transaction's post-render cleanup", async () => {
+      const opfs = createFakeOpfs();
+      const events = [];
+      const tx = transaction(opfs, cancelledRender(events), events);
+      const outcome = tx.run();
+
+      await tick();
+      tx.controller.abort();
+      await outcome;
+
+      const abortAt = opfs.events.findIndex((event) =>
+        event.startsWith("abort:"),
+      );
+      const postCleanupAt = opfs.events.lastIndexOf("cleanup");
+
+      assert.ok(abortAt >= 0, "writer aborted");
+      assert.ok(abortAt < postCleanupAt, opfs.events.join(", "));
+    });
+
+    it("a mid-render failure settles failure with clean OPFS, not cleanup-blocked", async () => {
+      const opfs = createFakeOpfs();
+      const events = [];
+      const outcome = await transaction(
+        opfs,
+        failingRender("mid-render boom"),
+        events,
+      ).run();
+
+      assert.equal(outcome.kind, "failure");
+      assert.match(outcome.error.message, /mid-render boom/);
+      assert.equal(opfs.files.size, 0);
+      assert.equal(events.at(-1), "release");
+    });
+
+    it("a successful render still returns the MP4 bytes and cleans OPFS", async () => {
+      const opfs = createFakeOpfs();
+      const events = [];
+      const bytes = new Uint8Array([5, 6, 7]);
+      const outcome = await transaction(
+        opfs,
+        successRender(bytes),
+        events,
+      ).run();
+
+      assert.equal(outcome.kind, "success");
+      assert.deepEqual(
+        new Uint8Array(await outcome.blob.arrayBuffer()),
+        bytes,
+      );
+      assert.equal(opfs.files.size, 0);
+    });
   });
 });
