@@ -1,6 +1,6 @@
 # ASSET-004 — Preview and browser rendering with local assets
 
-> Status: **Proposed**
+> Status: **Implemented**. The Player shows verified local images with explicit placeholders, a Story over budget does not mount the Player, and browser MP4 renders seeded local assets with race-safe preparation; the MP4 golden covers local and bundled-only scenes (verified in CI).
 >
 > Depends on: ASSET-001, ASSET-002. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
@@ -206,11 +206,11 @@ Why this is race-safe: a mutation that commits between step 3 and the moment the
 
 ## Tasks
 
-- [ ] **1. Orchestration.** `localAssetState.ts` (`resolveStoryLocalAssets`, `resolveStoryLocalAssetsForPreview`, `createLocalAssetRenderPreparation`, `describeLocalAssetRenderBlock`) + `tests/local-asset-state.test.mjs` (uses `tests/helpers/memoryAssetStore.mjs`).
-- [ ] **2. URL pool and hook.** `objectUrlPool.ts`, `useStoryLocalAssets.ts`, `tests/object-url-pool.test.mjs`.
-- [ ] **3. Preview wiring.** `Preview.tsx`, `App.tsx` (open library on mount, channel + focus → `refreshToken`, cache invalidation on messages), `tests/browser/helpers/seedAssetLibrary.mjs`, `tests/browser/local-asset-preview.spec.mjs`.
-- [ ] **4. Render wiring.** `browserRender.ts`, `App.tsx` render sequence, extend `tests/web-browser-render.test.mjs`, `tests/browser/local-asset-render-race.spec.mjs`.
-- [ ] **5. MP4 golden.** Extend `tests/browser/browser-render-golden.spec.mjs` with a Story using `pose-magenta.png` and `background-cyan.jpg` (seeded), render, and sample frames: magenta present in the pose area, cyan in the top half / yellow in the bottom half of the background, plus a bundled-only positive control. Check H.264, video-only, 1080×1920, 30 FPS, expected frame count.
+- [x] **1. Orchestration.** `localAssetState.ts` (`resolveStoryLocalAssets`, `resolveStoryLocalAssetsForPreview`, `createLocalAssetRenderPreparation`, `describeLocalAssetRenderBlock`) + `tests/local-asset-state.test.mjs` (uses `tests/helpers/memoryAssetStore.mjs`).
+- [x] **2. URL pool and hook.** `objectUrlPool.ts`, `useStoryLocalAssets.ts`, `tests/object-url-pool.test.mjs`.
+- [x] **3. Preview wiring.** `Preview.tsx`, `App.tsx` (open library on mount, channel + focus → `refreshToken`, cache invalidation on messages), `tests/browser/helpers/seedAssetLibrary.mjs`, `tests/browser/local-asset-preview.spec.mjs`.
+- [x] **4. Render wiring.** `browserRender.ts`, `App.tsx` render sequence, extend `tests/web-browser-render.test.mjs`, `tests/browser/local-asset-render-race.spec.mjs`.
+- [x] **5. MP4 golden.** Extend `tests/browser/browser-render-golden.spec.mjs` with a Story using `pose-magenta.png` and `background-cyan.jpg` (seeded), render, and sample frames: magenta present in the pose area, cyan in the top half / yellow in the bottom half of the background, plus a bundled-only positive control. Check H.264, video-only, 1080×1920, 30 FPS, expected frame count.
 
 ## Tests
 
@@ -283,3 +283,18 @@ Import/rename/delete UI and the missing-asset recovery UX (ASSET-003); CLI (ASSE
 ## Done when
 
 All tasks are ticked: the Player shows local images, explicit placeholders for missing/corrupt refs, and an over-budget message without reading blobs; browser MP4 renders seeded local images (golden passes); render preparation detects concurrent deletions; and bundled-only behavior and output are unchanged.
+
+## Implementation notes
+
+Decisions taken while implementing, beyond the spec text:
+
+- R1: the generation/lease logic of `useStoryLocalAssets` lives in a pure, Node-testable controller; the hook is a thin wrapper, because Node cannot render React hooks.
+- R2: `resolveStoryLocalAssetsForPreview` lives in `localAssetState.ts` next to `resolveStoryLocalAssets`, since task 1 owns that file.
+- R3: the `LocalAssetRenderPreparation` type is declared in `localAssetState.ts` (needed first) and re-exported type-only from `browserRender.ts`, avoiding a cycle.
+- R4: the MP4 golden cannot run on every developer machine (it needs system Chrome with H.264), so CI (`playwright.browser-render.config.mjs`) is its gate.
+- R5: the controller owns lease lifetime: the hook commits each rendered snapshot, older leases are released, and `dispose()` on unmount releases the rest, so no object URL leaks or is revoked while in use.
+- R6: Render MP4 stayed disabled for Stories with local refs between tasks 3 and 4 to preserve INV-5; task 4 removed that guard.
+- R7: `library: AssetLibraryStatus | null` means the library is still opening; refs stay `pending` instead of flashing `unavailable` on load.
+- R8: a generation started only by a `refreshToken` bump keeps the previous settled state visible until it settles, so window focus does not flicker the status or toggle Render MP4; render safety does not depend on it because preparation re-checks under the shared lock.
+- R9: after a payload read failure the render "leaves no stuck state" (failure shown, authoring unlocked, no Cancel); the button stays disabled because the preview correctly reports the asset unavailable, which keeps INV-5.
+- R10: the render sequence calls `throwIfAborted` after the resolve step, so a Cancel pressed during a non-interruptible read is honoured, matching the spec cancel semantics.
