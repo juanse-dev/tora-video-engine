@@ -139,14 +139,15 @@ const parsePng = (bytes: Uint8Array): ParsedHeader => {
       return ANIMATED;
     }
 
-    if (hasTag(bytes, offset + 4, TAG_IDAT)) {
-      return image("image/png", width, height);
-    }
-
     const next = offset + PNG_CHUNK_OVERHEAD + length;
 
+    // Every chunk, including the first IDAT, must fit entirely (header, data, CRC).
     if (next > bytes.length) {
       return MALFORMED;
+    }
+
+    if (hasTag(bytes, offset + 4, TAG_IDAT)) {
+      return image("image/png", width, height);
     }
 
     offset = next;

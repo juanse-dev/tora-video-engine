@@ -375,6 +375,38 @@ test("malformed: png with a partial chunk header after IHDR", () => {
   assert.equal(rejected(concatBytes(ihdr, new Uint8Array([0, 0, 0]))), "malformed");
 });
 
+const pngBeforeIdat = () =>
+  buildPng({width: 10, height: 10, idat: false, iend: false});
+
+test("malformed: png truncated right after the IDAT chunk header", () => {
+  const bytes = concatBytes(
+    pngBeforeIdat(),
+    u32be(20),
+    new TextEncoder().encode("IDAT"),
+  );
+  assert.equal(rejected(bytes), "malformed");
+});
+
+test("malformed: png whose IDAT length exceeds the remaining bytes", () => {
+  const bytes = concatBytes(
+    pngBeforeIdat(),
+    u32be(1000),
+    new TextEncoder().encode("IDAT"),
+    new Uint8Array(10),
+  );
+  assert.equal(rejected(bytes), "malformed");
+});
+
+test("malformed: png whose IDAT is missing its CRC", () => {
+  const full = concatBytes(pngBeforeIdat(), pngChunk("IDAT", new Uint8Array(5)));
+  assert.equal(rejected(truncate(full, full.length - 1)), "malformed");
+});
+
+test("accepted: png with a complete IDAT but no IEND (trailing chunks are not inspected)", () => {
+  const bytes = concatBytes(pngBeforeIdat(), pngChunk("IDAT", new Uint8Array(5)));
+  assert.deepEqual(accepted(bytes), {mimeType: "image/png", width: 10, height: 10});
+});
+
 test("malformed: jpeg segment with length 0 or 1 terminates as malformed", () => {
   for (const length of [0, 1]) {
     const bytes = new Uint8Array([
