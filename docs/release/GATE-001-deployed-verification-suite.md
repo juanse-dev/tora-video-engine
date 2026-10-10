@@ -106,7 +106,7 @@ Rulings made while building this (the full ledger is in the SDD progress file):
 
 Changes from the final whole-branch review:
 
-- A target slug can no longer escape `.gate/`: custom-host slugs are `host-<host>`, a slug must match `[a-z0-9.-]+` and not be empty, `.` or `..`, and every delete asserts the target dir is a direct child of `.gate/`.
+- A target slug can no longer escape `.gate/`: custom-host slugs are `host-<sanitized host[-port]>-<first 10 hex of sha256(origin)>` (so `example.com:8443` and `example.com-8443` get different directories), phase A refuses to reuse a directory whose `state.json` records another URL unless `--fresh` is given, a slug must match `[a-z0-9.-]+` and not be empty, `.` or `..`, and every delete asserts the target dir is a direct child of `.gate/`.
 - The runner also reads `npm_config_url`, `_phase`, `_only`, `_headed` and `_fresh` when argv has no `--url`, because Windows PowerShell 5.1's `npm.ps1` drops the `--`.
 - Phase B checks that phase A passed before it builds or launches a browser.
 - The optional Netlify API check does not cover Edge Functions; they stay a manual Netlify UI check, and the report line says so.

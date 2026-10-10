@@ -1,6 +1,7 @@
 // GATE-001 G2: argument parsing and target resolution for scripts/gate.mjs.
 // Pure (no I/O) so it is unit-tested in tests/gate-runner.test.mjs.
 
+import {createHash} from "node:crypto";
 import process from "node:process";
 import {URL} from "node:url";
 
@@ -219,9 +220,18 @@ export const resolveTarget = (value) => {
     );
   }
 
+  // The readable part loses information ("example.com:8443" and
+  // "example.com-8443" both read "example.com-8443"), so the slug ends with the
+  // first 10 hex digits of the hash of the normalized origin: two origins
+  // never share a state directory (phase A deletes the one it is given).
+  const originHash = createHash("sha256")
+    .update(parsed.origin.toLowerCase())
+    .digest("hex")
+    .slice(0, 10);
+
   return {
     name: parsed.origin,
-    slug: assertSafeSlug(`host-${hostName}`),
+    slug: assertSafeSlug(`host-${hostName}-${originHash}`),
     url: parsed.origin,
     local: false,
   };

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
+import {createHash} from "node:crypto";
 import {mkdtemp, rm, symlink} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
@@ -13,6 +14,9 @@ import {
   PROD_ORIGIN,
   resolveTarget,
 } from "../scripts/gateTarget.mjs";
+
+const originHash = (origin) =>
+  createHash("sha256").update(origin.toLowerCase()).digest("hex").slice(0, 10);
 
 describe("GATE-001 G2 argument parsing", () => {
   it("parses --url, --phase, --headed and --only", () => {
@@ -154,17 +158,48 @@ describe("GATE-001 G2 target resolution", () => {
   it("accepts any https:// origin and slugs the host", () => {
     assert.deepEqual(resolveTarget("https://Staging.Example.com:8443/"), {
       name: "https://staging.example.com:8443",
-      slug: "host-staging.example.com-8443",
+      slug: `host-staging.example.com-8443-${originHash("https://staging.example.com:8443")}`,
       url: "https://staging.example.com:8443",
       local: false,
     });
   });
 
   it("prefixes custom-host slugs so they never collide with the built-in slugs", () => {
-    assert.equal(resolveTarget("https://prod").slug, "host-prod");
-    assert.equal(resolveTarget("https://local").slug, "host-local");
-    assert.equal(resolveTarget("https://preview-3").slug, "host-preview-3");
+    assert.match(resolveTarget("https://prod").slug, /^host-prod-[0-9a-f]{10}$/);
+    assert.match(resolveTarget("https://local").slug, /^host-local-[0-9a-f]{10}$/);
+    assert.match(resolveTarget("https://preview-3").slug, /^host-preview-3-[0-9a-f]{10}$/);
     assert.notEqual(resolveTarget("https://prod").slug, resolveTarget("prod").slug);
+  });
+
+  it("gives origins that sanitize to the same host text different slugs", () => {
+    const port = resolveTarget("https://example.com:8443");
+    const dash = resolveTarget("https://example.com-8443");
+
+    assert.notEqual(port.slug, dash.slug);
+    assert.match(port.slug, /^host-example\.com-8443-[0-9a-f]{10}$/);
+    assert.match(dash.slug, /^host-example\.com-8443-[0-9a-f]{10}$/);
+    assert.doesNotThrow(() => assertSafeSlug(port.slug));
+    assert.doesNotThrow(() => assertSafeSlug(dash.slug));
+  });
+
+  it("gives the same origin the same slug whatever the case or trailing slash", () => {
+    const slugs = new Set(
+      [
+        "https://example.com:8443",
+        "https://example.com:8443/",
+        "https://EXAMPLE.com:8443",
+        "HTTPS://Example.COM:8443/",
+      ].map((url) => resolveTarget(url).slug),
+    );
+
+    assert.equal(slugs.size, 1);
+  });
+
+  it("keeps the built-in slugs unchanged", () => {
+    assert.equal(resolveTarget("prod").slug, "prod");
+    assert.equal(resolveTarget("local").slug, "local");
+    assert.equal(resolveTarget("preview:28").slug, "preview-28");
+    assert.equal(resolveTarget("https://tora-video-engine.netlify.app").slug, "prod");
   });
 
   it("rejects hosts whose slug would be empty, . or .. (they escape .gate/)", () => {

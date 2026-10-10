@@ -61,7 +61,7 @@ node scripts/gate.mjs --url=prod --phase=A
 | `--url=prod` | `https://tora-video-engine.netlify.app` |
 | `--url=preview:<n>` | The Deploy Preview of pull request `<n>`: `https://deploy-preview-<n>--tora-video-engine.netlify.app`. Use this to rehearse the suite on a PR before merging. |
 | `--url=local` | Builds and serves the app on `http://127.0.0.1:4190` (phase A builds `dist/web`; phase B builds a different, unminified copy into `dist/web-gate-b`). Needs no deploy. |
-| `--url=https://<origin>` | Any other https origin (state under `.gate/host-<host>/`). `http://` is accepted only for loopback hosts. |
+| `--url=https://<origin>` | Any other https origin (state under `.gate/host-<host>-<hash>/`, where the hash is the first 10 hex digits of the SHA-256 of the origin, so two origins never share a directory). `http://` is accepted only for loopback hosts. |
 | `--phase=A` / `--phase=B` | Phase A: after Deploy A. Phase B: after Deploy B. |
 | `--headed` | Show the browser window instead of running headless. |
 | `--fresh` | Phase A only. Start over even though `.gate/<target>/` holds a passed phase A whose phase B has not completed. Without it, phase A refuses and tells you so. |
@@ -86,7 +86,7 @@ The runner exits with Playwright's exit code (non-zero when any check fails, or 
 
 ## The report
 
-The report is written to **`.gate/<target>/report.md`** (`prod`, `preview-<n>`, `local`, or `host-<sanitized host>`), next to `state.json`, `profile/` and `artifacts/` (exported YAML, MP4s, decoded frames, `network.json`). `.gate/` is git-ignored.
+The report is written to **`.gate/<target>/report.md`** (`prod`, `preview-<n>`, `local`, or `host-<sanitized host>-<hash>`), next to `state.json`, `profile/` and `artifacts/` (exported YAML, MP4s, decoded frames, `network.json`). `.gate/` is git-ignored.
 
 It contains, in this order:
 

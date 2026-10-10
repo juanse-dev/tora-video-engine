@@ -841,6 +841,37 @@ describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
     assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), false);
   });
 
+  it("refuses when the existing state was recorded for a different URL, unless fresh", async () => {
+    await seed();
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: "https://other.example.com"}),
+      /different URL.*https:\/\/tora-video-engine\.netlify\.app.*https:\/\/other\.example\.com.*--fresh/s,
+    );
+    assert.equal(await markerSurvives(), true);
+
+    const state = await startPhaseA({
+      stateDir,
+      target: "prod",
+      url: "https://other.example.com",
+      fresh: true,
+    });
+
+    assert.equal(state.url, "https://other.example.com");
+    assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), false);
+  });
+
+  it("refuses a different URL even when the earlier phase A never passed", async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await writeFile(join(stateDir, "profile", "marker.txt"), "keep");
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: "https://other.example.com"}),
+      /different URL/,
+    );
+    assert.equal(await markerSurvives(), true);
+  });
+
   it("does not refuse when there is no state", async () => {
     await assert.doesNotReject(
       startPhaseA({stateDir, target: "prod", url: URL_A}),

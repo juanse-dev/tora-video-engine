@@ -186,6 +186,18 @@ const updateState = async (stateDir, change) => {
 };
 
 /**
+ * @param {string} stateDir
+ * @returns {Promise<GateState | null>} null when state.json is missing or unreadable
+ */
+const readStateOrNull = async (stateDir) => {
+  try {
+    return await readState(stateDir);
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Whether the state in `stateDir` is a phase A that passed (phaseOutcome, so
  * phase B can, or could, build on it). A missing or unreadable state.json is not.
  *
@@ -238,6 +250,16 @@ export const startPhaseA = async ({
   assertInsideGateDir(stateDir, root);
 
   const paths = statePaths(stateDir);
+
+  // A state dir that belongs to another origin is never wiped by accident.
+  const existing = fresh ? null : await readStateOrNull(stateDir);
+
+  if (existing && typeof existing.url === "string" && existing.url !== url) {
+    throw new Error(
+      `${paths.statePath} was recorded for a different URL (${existing.url}), not ${url}. Running phase A deletes that state and profile. To start over for ${url} in the same directory, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
+    );
+  }
+
   const earlier = fresh ? null : await readPassedPhaseA(stateDir);
 
   if (earlier && !phaseBCompleted(earlier)) {
