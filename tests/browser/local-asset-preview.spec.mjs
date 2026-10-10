@@ -90,44 +90,21 @@ test("the Player does not advance while a local image is still loading", async (
   page,
 }) => {
   await page.addInitScript(() => {
-    const descriptor = Object.getOwnPropertyDescriptor(
-      HTMLImageElement.prototype,
-      "src",
-    );
-    const nativeSetAttribute = Element.prototype.setAttribute;
+    // Remotion's <Img> keeps the Player buffering until img.decode()
+    // settles, so holding decode() keeps a blob image "still loading"
+    // without touching how React assigns src.
+    const nativeDecode = HTMLImageElement.prototype.decode;
     const queued = [];
     let holding = true;
-    const isBlob = (value) =>
-      typeof value === "string" && value.startsWith("blob:");
 
-    Object.defineProperty(HTMLImageElement.prototype, "src", {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get() {
-        return descriptor.get.call(this);
-      },
-      set(value) {
-        if (holding && isBlob(value)) {
-          queued.push(() => descriptor.set.call(this, value));
-          return;
-        }
-
-        descriptor.set.call(this, value);
-      },
-    });
-    // React writes `src` with setAttribute, so hold that path too.
-    Element.prototype.setAttribute = function (name, value) {
-      if (
-        holding &&
-        this instanceof HTMLImageElement &&
-        name === "src" &&
-        isBlob(value)
-      ) {
-        queued.push(() => nativeSetAttribute.call(this, name, value));
-        return;
+    HTMLImageElement.prototype.decode = function () {
+      if (!holding || !this.src.startsWith("blob:")) {
+        return nativeDecode.call(this);
       }
 
-      return nativeSetAttribute.call(this, name, value);
+      return new Promise((resolve, reject) => {
+        queued.push(() => nativeDecode.call(this).then(resolve, reject));
+      });
     };
     window.__heldBlobImages = () => queued.length;
     window.__releaseBlobImages = () => {
