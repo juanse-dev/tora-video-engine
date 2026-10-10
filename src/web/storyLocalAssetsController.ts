@@ -66,8 +66,9 @@ const messageOf = (error: unknown): string =>
 /**
  * Framework-free core of `useStoryLocalAssets`. Each `start` is a generation:
  * it aborts the previous generation, and only the latest generation may settle
- * (and acquire pool URLs). The caller owns each snapshot's lease and releases
- * it once the next snapshot has been committed.
+ * (and acquire pool URLs). The controller tracks every lease it hands out: the
+ * caller reports `commit(snapshot)` once it has rendered a snapshot (older
+ * leases are then released) and `dispose()` on teardown (all are released).
  */
 export const createStoryLocalAssetsController = (deps: {
   pool: LocalAssetUrlPool;
@@ -76,6 +77,9 @@ export const createStoryLocalAssetsController = (deps: {
 }) => {
   const resolve = deps.resolve ?? resolveStoryLocalAssetsForPreview;
   let current: AbortController | null = null;
+  // Every snapshot handed out and not yet released, oldest first. The controller
+  // owns lease lifetime: `commit` releases older ones, `dispose` releases all.
+  let issued: StoryLocalAssetsSnapshot[] = [];
 
   const leaseSources = (
     state: SettledStoryLocalAssetState,
@@ -193,6 +197,7 @@ export const createStoryLocalAssetsController = (deps: {
       snapshot = settleFailure(story, error);
     }
 
+    issued.push(snapshot);
     onSettled(snapshot);
   };
 
@@ -221,6 +226,43 @@ export const createStoryLocalAssetsController = (deps: {
           current = null;
         }
       };
+    },
+
+    /**
+     * Call once `snapshot` has been rendered. Releases every lease issued
+     * before it; a snapshot that is no longer outstanding is ignored.
+     */
+    commit(snapshot: StoryLocalAssetsSnapshot): void {
+      const index = issued.indexOf(snapshot);
+
+      if (index === -1) {
+        return;
+      }
+
+      const older = issued.slice(0, index);
+
+      issued = issued.slice(index);
+
+      for (const entry of older) {
+        entry.lease.release();
+      }
+    },
+
+    /**
+     * Aborts the generation in flight and releases every outstanding lease
+     * (unmount). The controller can be started again afterwards.
+     */
+    dispose(): void {
+      current?.abort();
+      current = null;
+
+      const outstanding = issued;
+
+      issued = [];
+
+      for (const entry of outstanding) {
+        entry.lease.release();
+      }
     },
   };
 };

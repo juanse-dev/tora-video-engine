@@ -75,7 +75,7 @@ const createHarness = () => {
     revoke: (url) => revoked.push(url),
   });
   const calls = [];
-  const resolve = (story, lib, cache, deps) =>
+  const resolve = (story, _lib, _cache, deps) =>
     new Promise((resolvePromise, reject) => {
       calls.push({story, signal: deps.signal, resolvePromise, reject});
       deps.signal.addEventListener("abort", () => reject(deps.signal.reason));
@@ -333,4 +333,117 @@ test("buildPendingSources keeps urls for refs still in the Story and marks the r
     [poseRef(3)]: {kind: "pending"},
   });
   assert.equal(buildPendingSources([], previous), undefined);
+});
+
+// --- lease lifetime (R5): the controller owns every lease it hands out ------
+
+/** Starts a generation and settles it with the given ready [ref, category, n]. */
+const settleWith = async (h, story, ready) => {
+  const index = h.calls.length;
+
+  h.controller.start(story, library, (s) => h.settled.push(s));
+  h.calls[index].resolvePromise(resolvedState({ready}));
+  await tick();
+
+  return h.settled[h.settled.length - 1];
+};
+
+test("dispose releases a snapshot that settled but was never committed", async () => {
+  const h = createHarness();
+  const story = storyOf([[poseRef(1), "office"]]);
+
+  await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+  assert.equal(h.created.length, 1);
+  assert.deepEqual(h.revoked, []);
+
+  h.controller.dispose();
+  assert.deepEqual(h.revoked, ["blob:test/0"]);
+});
+
+test("committing the newer of two settled snapshots releases the older one", async () => {
+  const h = createHarness();
+  const story = storyOf([[poseRef(1), "office"]]);
+  const first = await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+  const second = await settleWith(h, story, [[poseRef(2), "pose", 2]]);
+
+  assert.deepEqual(h.revoked, []);
+
+  h.controller.commit(second);
+  assert.deepEqual(h.revoked, [first.sources[poseRef(1)].url]);
+
+  // Committing again, or committing the older snapshot, changes nothing.
+  h.controller.commit(second);
+  h.controller.commit(first);
+  assert.equal(h.revoked.length, 1);
+});
+
+test("after commit a URL shared by the old and the new snapshot stays live", async () => {
+  const h = createHarness();
+  const story = storyOf([[poseRef(1), "office"]]);
+  const first = await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+  const second = await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+
+  assert.equal(
+    first.sources[poseRef(1)].url,
+    second.sources[poseRef(1)].url,
+  );
+
+  h.controller.commit(second);
+  assert.deepEqual(h.revoked, []);
+
+  h.controller.dispose();
+  assert.equal(h.revoked.length, 1);
+});
+
+test("dispose leaves the pool balanced with every URL revoked", async () => {
+  const h = createHarness();
+  const story = storyOf([[poseRef(1), backgroundRef(2)]]);
+  const first = await settleWith(h, story, [
+    [poseRef(1), "pose", 1],
+    [backgroundRef(2), "background", 2],
+  ]);
+
+  h.controller.commit(first);
+
+  const second = await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+  const third = await settleWith(h, story, [[poseRef(3), "pose", 3]]);
+
+  h.controller.commit(second);
+  h.controller.dispose();
+
+  assert.equal(third.state.kind, "resolved");
+  assert.equal(h.revoked.length, h.created.length);
+  assert.equal(new Set(h.revoked).size, h.created.length);
+
+  // Releasing snapshots again after dispose is a no-op.
+  first.lease.release();
+  second.lease.release();
+  third.lease.release();
+  assert.equal(h.revoked.length, h.created.length);
+});
+
+test("dispose aborts the generation in flight and suppresses its result", async () => {
+  const h = createHarness();
+
+  h.controller.start(storyOf([[poseRef(1), "office"]]), library, (s) =>
+    h.settled.push(s),
+  );
+  h.controller.dispose();
+
+  assert.equal(h.calls[0].signal.aborted, true);
+  await tick();
+  assert.equal(h.settled.length, 0);
+});
+
+test("a disposed controller can start again", async () => {
+  const h = createHarness();
+  const story = storyOf([[poseRef(1), "office"]]);
+
+  h.controller.dispose();
+
+  const snapshot = await settleWith(h, story, [[poseRef(1), "pose", 1]]);
+
+  assert.equal(snapshot.state.kind, "resolved");
+  h.controller.dispose();
+  assert.equal(h.revoked.length, 1);
 });

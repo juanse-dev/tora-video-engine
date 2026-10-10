@@ -12,7 +12,8 @@ import {
   type StoryLocalAssetsSnapshot,
 } from "./storyLocalAssetsController.ts";
 
-type SettledResult = StoryLocalAssetsSnapshot & {
+type SettledResult = {
+  snapshot: StoryLocalAssetsSnapshot;
   story: Story;
   library: AssetLibraryStatus;
   refreshToken: number;
@@ -40,19 +41,23 @@ export const useStoryLocalAssets = (
   useEffect(
     () =>
       controller.start(story, library, (snapshot) =>
-        setSettled({...snapshot, story, library, refreshToken}),
+        setSettled({snapshot, story, library, refreshToken}),
       ),
     [controller, story, library, refreshToken],
   );
 
-  // The previous lease is released by this cleanup only after the render that
-  // replaced `settled` has been committed, so the Player never holds a revoked URL.
-  useEffect(
-    () => () => {
-      settled?.lease.release();
-    },
-    [settled],
-  );
+  // Declared after the start effect, so it commits only once the snapshot has
+  // rendered; the controller then releases every older lease and the Player
+  // never holds a revoked URL.
+  useEffect(() => {
+    if (settled !== null) {
+      controller.commit(settled.snapshot);
+    }
+  }, [controller, settled]);
+
+  // Unmount (or a new controller): abort the generation in flight and release
+  // every outstanding lease, including snapshots that never reached a commit.
+  useEffect(() => () => controller.dispose(), [controller]);
 
   const usages = useMemo(() => collectStoryLocalAssetUsages(story), [story]);
   const current =
@@ -65,7 +70,10 @@ export const useStoryLocalAssets = (
 
   return useMemo(() => {
     if (current !== null) {
-      return {state: current.state, sources: current.sources};
+      return {
+        state: current.snapshot.state,
+        sources: current.snapshot.sources,
+      };
     }
 
     if (usages.length === 0) {
@@ -74,7 +82,7 @@ export const useStoryLocalAssets = (
 
     return {
       state: {kind: "pending", usages} as const,
-      sources: buildPendingSources(usages, settled?.sources),
+      sources: buildPendingSources(usages, settled?.snapshot.sources),
     };
   }, [current, settled, usages]);
 };
