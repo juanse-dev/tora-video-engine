@@ -6,6 +6,7 @@ import {
   resolveBuildIdentity,
 } from "../vite.config.mts";
 import {
+  allowsPreviewDrawer,
   formatIdentity,
   parseBuildIdentity,
 } from "./gate/helpers/buildIdentity.mjs";
@@ -110,6 +111,24 @@ describe("GATE-001 G1 build identity (vite plugin)", () => {
   it("rejects malformed meta content with a clear message", () => {
     for (const bad of ["", "a/b", "a/b/c/d", "//", null, undefined]) {
       assert.throws(() => parseBuildIdentity(bad), /tora-build/);
+    }
+  });
+});
+
+describe("GATE-001 R10 allowsPreviewDrawer", () => {
+  const identity = (context) => ({commit: "abc1234", deployId: "d1", context});
+
+  it("is true for a known context other than production", () => {
+    for (const context of ["deploy-preview", "branch-deploy", "local", "dev"]) {
+      assert.equal(allowsPreviewDrawer(identity(context)), true, context);
+    }
+  });
+
+  it("is false for production and for an unknown identity", () => {
+    assert.equal(allowsPreviewDrawer(identity("production")), false);
+
+    for (const unknown of [null, undefined, {}, identity(""), identity(undefined)]) {
+      assert.equal(allowsPreviewDrawer(unknown), false);
     }
   });
 });

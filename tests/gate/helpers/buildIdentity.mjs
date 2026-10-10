@@ -10,6 +10,18 @@ export const formatIdentity = ({commit, deployId, context}) =>
   `${commit}/${deployId}/${context}`;
 
 /**
+ * R10: whether the network guard may allow Netlify's Deploy Preview drawer
+ * POSTs. True only when the build context is known and is not "production"
+ * (the local target's "local" counts, but the drawer never appears there).
+ *
+ * @param {Partial<BuildIdentity> | null | undefined} identity
+ */
+export const allowsPreviewDrawer = (identity) =>
+  typeof identity?.context === "string" &&
+  identity.context.length > 0 &&
+  identity.context !== "production";
+
+/**
  * @param {string | null | undefined} content
  * @returns {BuildIdentity}
  */
