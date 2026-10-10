@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -12,8 +13,14 @@ import {
   createAuthoringState,
 } from "./authoringState.ts";
 import {
+  AssetLibraryContext,
+  type AssetDialog,
+  type AssetLibraryContextValue,
+} from "./assetLibraryContext.ts";
+import {
   createAssetLibraryChannel,
   openAssetLibrary,
+  type AssetLibraryMessage,
   type AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
@@ -44,6 +51,11 @@ import {
   type LocalAssetRenderPreparation,
 } from "./localAssetState.ts";
 import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
+import {
+  deleteConfirmationText,
+  deleteConfirmButtonLabel,
+  mismatchDialogText,
+} from "./localAssetUi.ts";
 import {hasLossRisk} from "./lossRisk.ts";
 import {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
@@ -274,6 +286,11 @@ export const App = () => {
     null,
   );
   const [assetRefreshToken, setAssetRefreshToken] = useState(0);
+  // True from the start of a My assets import until the import (including its
+  // mismatch dialog) ends; locks authoring so the selected scene cannot move.
+  const [assetImportInFlight, setAssetImportInFlight] = useState(false);
+  const [assetDialog, setAssetDialog] = useState<AssetDialog | null>(null);
+  const [assetDialogBusy, setAssetDialogBusy] = useState(false);
   const [integrityCache] = useState(() => new IntegrityCache());
   const [objectUrlPool] = useState(() => new ObjectUrlPool());
 
@@ -323,16 +340,19 @@ export const App = () => {
     renderBlocked ||
     policyRejectedImport !== null ||
     transition !== null;
-  const authoringLocked =
+  const renderAuthoringLocked =
     renderUi.phase === "rendering" ||
     renderUi.phase === "cancelling" ||
     renderUi.phase === "finalizing";
+  // An open asset dialog also freezes the Story so its scene count cannot go stale.
+  const authoringLocked =
+    renderAuthoringLocked || assetImportInFlight || assetDialog !== null;
   const localAssetRenderBlock = describeLocalAssetRenderBlock(
     localAssets.state,
     assetLibrary ?? OPENING_ASSET_LIBRARY,
   );
   const renderNeedsUnloadWarning =
-    authoringLocked || renderUi.phase === "cleanup-blocked";
+    renderAuthoringLocked || renderUi.phase === "cleanup-blocked";
 
   const importRequestRef = useRef(0);
   const retryOwnershipInFlightRef = useRef(false);
@@ -356,6 +376,9 @@ export const App = () => {
     renderInputBlocked,
   });
 
+  const transitionOpenRef = useRef(false);
+
+  transitionOpenRef.current = transition !== null;
   liveImportStateRef.current = {
     mode,
     lossRisk,
@@ -400,20 +423,86 @@ export const App = () => {
   }, []);
 
   // Other tabs' library changes and window focus refresh local asset readiness.
+  // One channel lives for the App's lifetime; mutations made in this tab go
+  // through assetChannel.post, which also refreshes locally because a
+  // BroadcastChannel never delivers to its own sender.
+  const bumpAssetRefresh = useCallback(
+    () => setAssetRefreshToken((token) => token + 1),
+    [],
+  );
+  const assetChannelRef = useRef<ReturnType<
+    typeof createAssetLibraryChannel
+  > | null>(null);
+  const assetChannel = useMemo(
+    () => ({
+      post(message: AssetLibraryMessage) {
+        assetChannelRef.current?.post(message);
+        integrityCache.invalidate(message.digests);
+        bumpAssetRefresh();
+      },
+    }),
+    [integrityCache, bumpAssetRefresh],
+  );
+
   useEffect(() => {
-    const refresh = () => setAssetRefreshToken((token) => token + 1);
     const channel = createAssetLibraryChannel((message) => {
       integrityCache.invalidate(message.digests);
-      refresh();
+      bumpAssetRefresh();
     });
 
-    window.addEventListener("focus", refresh);
+    assetChannelRef.current = channel;
+    window.addEventListener("focus", bumpAssetRefresh);
 
     return () => {
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", bumpAssetRefresh);
+
+      if (assetChannelRef.current === channel) {
+        assetChannelRef.current = null;
+      }
+
       channel.close();
     };
-  }, [integrityCache]);
+  }, [integrityCache, bumpAssetRefresh]);
+
+  const openAssetDialog = useCallback((dialog: AssetDialog) => {
+    // One dialog of any kind at a time: never open under an App transition panel
+    // or over another asset dialog.
+    if (transitionOpenRef.current) {
+      return;
+    }
+
+    setAssetDialog((current) => current ?? dialog);
+  }, []);
+  const closeAssetDialog = useCallback(() => setAssetDialog(null), []);
+  const assetLibraryLocks =
+    typeof navigator === "undefined" ? undefined : navigator.locks;
+  const assetLibraryContext = useMemo<AssetLibraryContextValue>(
+    () => ({
+      status: assetLibrary ?? OPENING_ASSET_LIBRARY,
+      locks: assetLibraryLocks,
+      channel: assetChannel,
+      refreshToken: assetRefreshToken,
+      bumpRefresh: bumpAssetRefresh,
+      activeStory,
+      localAssetState: localAssets.state,
+      setAssetImportInFlight,
+      transitionPending: transition !== null,
+      openAssetDialog,
+      closeAssetDialog,
+    }),
+    [
+      assetLibrary,
+      assetLibraryLocks,
+      assetChannel,
+      assetRefreshToken,
+      bumpAssetRefresh,
+      activeStory,
+      localAssets.state,
+      transition,
+      openAssetDialog,
+      closeAssetDialog,
+    ],
+  );
 
   useEffect(() => () => objectUrlPool.dispose(), [objectUrlPool]);
 
@@ -1523,7 +1612,11 @@ export const App = () => {
               Discard it to open YAML from the active Story, or stay in the visual editor.
             </span>
             <div>
-              <button type="button" onClick={discardVisualAndEnterYaml}>
+              <button
+                type="button"
+                onClick={discardVisualAndEnterYaml}
+                disabled={assetImportInFlight}
+              >
                 Discard visual draft
               </button>
               <button type="button" onClick={() => setTransition(null)}>
@@ -1540,10 +1633,18 @@ export const App = () => {
             <strong>Visual candidate is valid but browser-ineligible.</strong>
             <span>{visual.policy.message}</span>
             <div>
-              <button type="button" onClick={transferVisualCandidateToYaml}>
+              <button
+                type="button"
+                onClick={transferVisualCandidateToYaml}
+                disabled={assetImportInFlight}
+              >
                 Open candidate in YAML
               </button>
-              <button type="button" onClick={discardVisualAndEnterYaml}>
+              <button
+                type="button"
+                onClick={discardVisualAndEnterYaml}
+                disabled={assetImportInFlight}
+              >
                 Discard visual candidate
               </button>
               <button type="button" onClick={() => setTransition(null)}>
@@ -1566,11 +1667,18 @@ export const App = () => {
             <button
               type="button"
               onClick={applyYamlAndEnterVisual}
-              disabled={yamlState.validation.kind !== "eligible"}
+              disabled={
+                assetImportInFlight ||
+                yamlState.validation.kind !== "eligible"
+              }
             >
               Apply and open visual editor
             </button>
-            <button type="button" onClick={discardYamlAndEnterVisual}>
+            <button
+              type="button"
+              onClick={discardYamlAndEnterVisual}
+              disabled={assetImportInFlight}
+            >
               Discard YAML draft
             </button>
             <button type="button" onClick={() => setTransition(null)}>
@@ -1587,7 +1695,11 @@ export const App = () => {
           <strong>Import will discard current pending or recovery work.</strong>
           <span>Validated import: {transition.filename}</span>
           <div>
-            <button type="button" onClick={confirmImport}>
+            <button
+              type="button"
+              onClick={confirmImport}
+              disabled={assetImportInFlight}
+            >
               Discard current work and import
             </button>
             <button type="button" onClick={() => setTransition(null)}>
@@ -1603,7 +1715,11 @@ export const App = () => {
         <div className="transition-panel" role="dialog">
           <strong>Reset will discard pending, unpersisted, or recovery state.</strong>
           <div>
-            <button type="button" onClick={performReset}>
+            <button
+              type="button"
+              onClick={performReset}
+              disabled={assetImportInFlight}
+            >
               Discard current state and reset
             </button>
             <button type="button" onClick={() => setTransition(null)}>
@@ -1615,6 +1731,82 @@ export const App = () => {
     }
 
     return null;
+  };
+
+  const runAssetDialogAction = async (action: () => Promise<void>) => {
+    setAssetDialogBusy(true);
+
+    try {
+      await action();
+    } finally {
+      setAssetDialogBusy(false);
+      closeAssetDialog();
+    }
+  };
+
+  // Rendered outside the authoring fieldset so its buttons stay enabled while
+  // the Story is frozen. The callbacks own their errors; App only closes.
+  const renderAssetDialog = () => {
+    if (assetDialog === null) {
+      return null;
+    }
+
+    if (assetDialog.kind === "delete") {
+      return (
+        <div className="transition-panel" role="dialog">
+          <strong>
+            {deleteConfirmationText(
+              assetDialog.label,
+              assetDialog.category,
+              assetDialog.sceneCount,
+            )}
+          </strong>
+          <div>
+            <button
+              type="button"
+              onClick={closeAssetDialog}
+              disabled={assetDialogBusy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAssetDialogAction(assetDialog.onConfirm)}
+              disabled={
+                renderAuthoringLocked || assetImportInFlight || assetDialogBusy
+              }
+            >
+              {deleteConfirmButtonLabel(assetDialog.sceneCount)}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="transition-panel" role="dialog">
+        <strong>{mismatchDialogText(assetDialog.candidateRef)}</strong>
+        <div>
+          <button
+            type="button"
+            onClick={() => void runAssetDialogAction(assetDialog.onReplace)}
+            disabled={assetDialogBusy}
+          >
+            Use it as replacement for this scene
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              assetDialog.onCancel();
+              closeAssetDialog();
+            }}
+            disabled={assetDialogBusy}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1861,6 +2053,7 @@ export const App = () => {
       </div>
 
       {renderTransitionPanel()}
+      {renderAssetDialog()}
 
       <main className="app-main editor-workspace">
         <fieldset
@@ -1868,6 +2061,7 @@ export const App = () => {
           disabled={authoringLocked}
           aria-label="Story authoring"
         >
+        <AssetLibraryContext.Provider value={assetLibraryContext}>
         {mode === "visual" ? (
           <VisualEditor
             key={visualRevision}
@@ -1886,6 +2080,7 @@ export const App = () => {
             onImportFile={importFile}
           />
         ) : null}
+        </AssetLibraryContext.Provider>
         </fieldset>
 
         <section
