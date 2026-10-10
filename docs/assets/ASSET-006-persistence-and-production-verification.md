@@ -1,6 +1,6 @@
 # ASSET-006 — End-to-end verification and production gate
 
-> Status: **Part A implemented; Part B pending human gate**
+> Status: **Implemented** (Part A green in CI; Part B production gate recorded 2026-10-10)
 >
 > Depends on: ASSET-001 to ASSET-005. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
@@ -45,7 +45,7 @@ Per-feature tests already live in their specs (inspection, library, integrity, r
   - delete of an in-use asset in A → B shows the missing card and placeholder;
   - the same file imported in A and B at nearly the same time → one card, one payload (check with the harness store or by counting cards).
 - [x] **A4. Release readiness.** Run every suite listed under Verify; tick all spec task lists; set every spec `Status` to **Implemented**; fill Part B's record table with "pending human gate". Then **stop and hand over to the user** for Part B.
-  - Note: ASSET-006's own Status stays "Part A implemented; Part B pending human gate" by design, and "Part A tasks A1–A4 pass" is confirmed by this PR's Linux CI.
+  - Note: ASSET-006's own Status stayed "Part A implemented; Part B pending human gate" until Part B was recorded, and "Part A tasks A1–A4 pass" is confirmed by PR #26's Linux CI.
 
 ### Verify
 
@@ -85,14 +85,14 @@ Use one browser profile for the whole gate and do not clear its site data.
 | Item | Value |
 | --- | --- |
 | Production URL | `https://tora-video-engine.netlify.app` |
-| Deploy A (commit / Netlify ID) | pending human gate |
-| Deploy B (commit / Netlify ID) | pending human gate |
-| Browser + version, profile | pending human gate |
-| Fixture refs | pending human gate |
-| Reload / restart / A → B results | pending human gate |
-| Delete → re-import recovery | pending human gate |
-| No-upload check | pending human gate |
-| CLI parity | pending human gate |
+| Deploy A (commit / Netlify ID) | `d4aa69a` (merge of #25) / `6ac9d19a7ca32e0009507632` |
+| Deploy B (commit / Netlify ID) | `da946d8` (merge of #26) / `6aca48364ca0ea00081ccb99`. #26 changed only tests and docs, so B serves the same app bundle as A; a genuinely different bundle on one origin is covered by A1 in CI |
+| Browser + version, profile | Chrome 154.0.8037.98, Windows 11 desktop; the user's existing profile (v1 project from v0.2), site data never cleared |
+| Fixture refs | `local:pose:sha256:e572d1a4c4908ab8ee783693c99a050b45a28fa030e48e645b64e354651a0ca7`, `local:background:sha256:3470d1d2f387e4e55b88e8139f84bde89dc8a9b015827ec638ecf5af9a8fdc06` (equal to `stories/ci-local-assets.yaml`) |
+| Reload / restart / A → B results | Pass. Envelope `version: 1` before import, `version: 2` after applying both; reload, full browser restart and Deploy B kept Story, My assets and Player without re-import. Browser MP4 (H.264, 1080×1920, 30 FPS, 12 s) shows the magenta pose and cyan/yellow background in scene 3; render after Deploy B succeeded |
+| Delete → re-import recovery | Pass. Delete warned "used by 1 scene"; scene 3 showed the missing placeholder and Render MP4 was blocked; **Import matching file** with the same file resolved it without a Story change and render succeeded |
+| No-upload check | Pass. DevTools Network (Preserve log) during steps 3–11: the only outgoing POST was Remotion's `register-usage-point` licence telemetry (0.2 kB); every other request was a GET of the app bundle, bundled images or a local `blob:` URL |
+| CLI parity | Pass. `npm run video` with the exported YAML and the two fixtures in a `local-assets`-style folder (`TORA_LOCAL_ASSETS_ROOT`) rendered 360 frames; scene 3 shows the same magenta pose and cyan/yellow background as the browser MP4 |
 
 ## Implementation notes
 
@@ -111,7 +111,7 @@ Use one browser profile for the whole gate and do not clear its site data.
 - [x] ASSET-004 implemented (Player + browser render, race-safe render preparation, MP4 golden)
 - [x] ASSET-005 implemented (CLI scan/staging, `npm run assets`, e2e)
 - [x] Part A tasks A1–A4 pass
-- [ ] Part B production gate recorded
+- [x] Part B production gate recorded
 
 ## Done when
 
