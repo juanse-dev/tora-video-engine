@@ -256,22 +256,25 @@ test("a v1 envelope written by v0.2 restores and stays v1 after bundled edits", 
   await page.getByRole("button", {name: /Panic/u}).first().click();
   await page.getByRole("button", {name: /Server room/iu}).first().click();
 
-  await expect
-    .poll(() =>
-      page.evaluate((key) => localStorage.getItem(key) ?? "", STORAGE_KEY),
-    )
-    .toContain("Edited in v0.3");
+  // The caption, pose and background edits autosave separately, so wait until
+  // the stored scene 0 holds all three before asserting (waiting for the
+  // caption alone raced the later pose and background saves).
+  const readStoredEnvelope = () =>
+    page
+      .evaluate((key) => localStorage.getItem(key), STORAGE_KEY)
+      .then((raw) => (raw ? JSON.parse(raw) : null));
 
-  const stored = JSON.parse(
-    await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY),
-  );
+  await expect
+    .poll(async () => (await readStoredEnvelope())?.story?.scenes?.[0] ?? null)
+    .toMatchObject({
+      text: "Edited in v0.3",
+      pose: "panic",
+      background: "server-room",
+    });
+
+  const stored = await readStoredEnvelope();
 
   expect(stored.version).toBe(1);
-  expect(stored.story.scenes[0]).toMatchObject({
-    text: "Edited in v0.3",
-    pose: "panic",
-    background: "server-room",
-  });
   expect(localRefsIn(JSON.stringify(stored))).toEqual([]);
 
   // And it survives a reload.
