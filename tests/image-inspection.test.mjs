@@ -431,6 +431,114 @@ test("malformed: VP8X file whose image chunk is truncated (covered by the traili
   assert.equal(rejected(truncate(vp8Image, vp8Image.length - 4)), "malformed");
 });
 
+/* ------------------------------------------------- WebP RIFF size bound */
+
+// RIFF size is a little-endian u32 at offset 4 (body length after the first 8 bytes).
+const withRiffSize = (bytes, size) => {
+  const out = bytes.slice();
+  new DataView(out.buffer).setUint32(4, size, true);
+  return out;
+};
+
+// Rewrite the RIFF size so the whole array is the declared body (plus `extra`
+// for a physically missing final pad byte).
+const withConsistentRiff = (bytes, extra = 0) => withRiffSize(bytes, bytes.length - 8 + extra);
+
+const riffSizeOf = (bytes) => new DataView(bytes.buffer, bytes.byteOffset).getUint32(4, true);
+
+test("the WebP builders write a RIFF size consistent with their length", () => {
+  for (const bytes of [
+    buildWebpVp8({width: 3, height: 4}),
+    buildWebpVp8l({width: 3, height: 4}),
+    buildWebpVp8x({width: 3, height: 4}),
+    buildWebpVp8x({width: 3, height: 4, animChunk: true}),
+  ]) {
+    assert.equal(riffSizeOf(bytes) + 8, bytes.length);
+  }
+});
+
+for (const [name, build] of [
+  ["VP8", () => buildWebpVp8({width: 10, height: 10})],
+  ["VP8L", () => buildWebpVp8l({width: 10, height: 10})],
+  ["VP8X", () => buildWebpVp8x({width: 10, height: 10})],
+]) {
+  test(`malformed: ${name} RIFF size 0xFFFFFFFF with a physically complete file`, () => {
+    assert.equal(rejected(withRiffSize(build(), 0xffffffff)), "malformed");
+  });
+
+  test(`malformed: ${name} RIFF size larger than the file by more than a pad byte`, () => {
+    const bytes = build();
+    assert.equal(rejected(withRiffSize(bytes, bytes.length - 8 + 2)), "malformed");
+  });
+
+  test(`accepted: ${name} with trailing garbage after the declared RIFF end`, () => {
+    const bytes = build();
+    const dims = accepted(bytes);
+    assert.deepEqual(
+      accepted(concatBytes(bytes, pseudoRandomBytes(7, 40))),
+      dims,
+    );
+  });
+}
+
+test("malformed: WebP RIFF size below 4 cannot even contain WEBP", () => {
+  for (const size of [0, 1, 3]) {
+    assert.equal(
+      rejected(withRiffSize(buildWebpVp8({width: 10, height: 10}), size)),
+      "malformed",
+      `riff size ${size}`,
+    );
+  }
+});
+
+test("accepted: WebP RIFF size matching exactly, or one more than the file (missing pad byte)", () => {
+  const vp8l = buildWebpVp8l({width: 10, height: 10}); // odd chunk data, padded
+  assert.deepEqual(accepted(vp8l), {mimeType: "image/webp", width: 10, height: 10});
+  // Pad byte physically missing, RIFF size still counts it: riffEnd = length + 1.
+  assert.deepEqual(accepted(truncate(vp8l, vp8l.length - 1)), {
+    mimeType: "image/webp",
+    width: 10,
+    height: 10,
+  });
+});
+
+test("RIFF but not WEBP stays unsupported-format even with a bogus RIFF size", () => {
+  const wave = concatBytes(
+    new TextEncoder().encode("RIFF"),
+    new Uint8Array([0xff, 0xff, 0xff, 0xff]),
+    new TextEncoder().encode("WAVE"),
+    new Uint8Array(20),
+  );
+  assert.equal(rejected(wave), "unsupported-format");
+});
+
+test("an ANIM chunk beyond the declared RIFF end is trailing data: ignored, not animated", () => {
+  const bytes = buildWebpVp8x({width: 10, height: 10});
+  const withTrailingAnim = concatBytes(bytes, webpChunk("ANIM", new Uint8Array(6)));
+  assert.deepEqual(accepted(withTrailingAnim), {
+    mimeType: "image/webp",
+    width: 10,
+    height: 10,
+  });
+});
+
+test("an ANIM chunk inside the declared RIFF end is still animated", () => {
+  assert.equal(
+    rejected(buildWebpVp8x({width: 10, height: 10, animChunk: true})),
+    "animated",
+  );
+});
+
+test("malformed: a WebP chunk that straddles the declared RIFF end", () => {
+  const vp8x = buildWebpVp8x({width: 10, height: 10, imageChunk: false});
+  const bytes = concatBytes(vp8x, webpChunk("EXIF", new Uint8Array(8)));
+  // Declare the body to end 4 bytes into the EXIF chunk's data; the file stays complete.
+  assert.equal(rejected(withRiffSize(bytes, vp8x.length - 8 + 8 + 4)), "malformed");
+  // First-chunk (VP8) data running past the declared end.
+  const vp8 = buildWebpVp8({width: 10, height: 10});
+  assert.equal(rejected(withRiffSize(vp8, vp8.length - 8 - 4)), "malformed");
+});
+
 const pngBeforeIdat = () =>
   buildPng({width: 10, height: 10, idat: false, iend: false});
 
@@ -510,29 +618,35 @@ test("malformed: static VP8X whose trailing chunk size runs past the end of data
     new Uint8Array([0xff, 0xff, 0xff, 0x7f]),
     new Uint8Array(4),
   );
-  assert.equal(rejected(bytes), "malformed");
+  assert.equal(rejected(withConsistentRiff(bytes)), "malformed");
 });
 
 test("malformed: static VP8X with a partial trailing chunk header", () => {
   const vp8x = buildWebpVp8x({width: 10, height: 10, imageChunk: false});
-  assert.equal(rejected(concatBytes(vp8x, new Uint8Array([1, 2, 3]))), "malformed");
+  assert.equal(
+    rejected(withConsistentRiff(concatBytes(vp8x, new Uint8Array([1, 2, 3])))),
+    "malformed",
+  );
 });
 
 test("static VP8X with a final odd-sized chunk missing its pad byte is accepted", () => {
   const vp8x = buildWebpVp8x({width: 10, height: 10, imageChunk: false});
   const odd = webpChunk("EXIF", new Uint8Array(3));
-  const bytes = truncate(concatBytes(vp8x, odd), vp8x.length + odd.length - 1);
+  const bytes = withConsistentRiff(
+    truncate(concatBytes(vp8x, odd), vp8x.length + odd.length - 1),
+    1,
+  );
   assert.deepEqual(accepted(bytes), {mimeType: "image/webp", width: 10, height: 10});
 });
 
 test("static VP8X with ICCP, EXIF and XMP metadata chunks is accepted", () => {
-  const bytes = concatBytes(
+  const bytes = withConsistentRiff(concatBytes(
     buildWebpVp8x({width: 64, height: 32, imageChunk: false}),
     webpChunk("ICCP", new Uint8Array(33)),
     webpChunk("VP8L", concatBytes(new Uint8Array([0x2f]), new Uint8Array(12))),
     webpChunk("EXIF", new Uint8Array(8)),
     webpChunk("XMP ", new Uint8Array(5)),
-  );
+  ));
   assert.deepEqual(accepted(bytes), {mimeType: "image/webp", width: 64, height: 32});
 });
 
