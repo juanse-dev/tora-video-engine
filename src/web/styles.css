@@ -519,6 +519,7 @@ h1 {
 }
 
 .my-assets-toolbar .file-button,
+.local-asset-actions .file-button,
 .my-assets-paging button,
 .local-asset-actions button {
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -530,13 +531,20 @@ h1 {
   cursor: pointer;
 }
 
-.my-assets-toolbar .file-button {
+.my-assets-toolbar .file-button,
+.local-asset-actions .file-button {
   position: relative;
+}
+
+.local-asset-actions .file-button {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .my-assets-paging button:disabled,
 .local-asset-actions button:disabled,
-.my-assets-toolbar .file-button:has(input:disabled) {
+.my-assets-toolbar .file-button:has(input:disabled),
+.local-asset-actions .file-button:has(input:disabled) {
   cursor: not-allowed;
   opacity: 0.45;
 }

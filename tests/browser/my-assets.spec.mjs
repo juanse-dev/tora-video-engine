@@ -218,7 +218,7 @@ test("a missing local ref shows a placeholder as the current card", async ({
   );
   await page.getByRole("button", {name: "Open visual editor"}).click();
 
-  const placeholder = page.locator(`[data-local-asset-placeholder="${missing}"]`);
+  const placeholder = page.locator(`[data-missing-local-asset-card="${missing}"]`);
 
   await expect(
     page.getByRole("group", {name: /^Missing local pose [0-9a-f]{4}…[0-9a-f]{4}$/u}),
@@ -432,11 +432,16 @@ const holdDigests = (page) =>
       return nativeDigest(...args);
     };
   });
-const startHeldImport = async (page, category, fixture) => {
+const startHeldImport = async (
+  page,
+  category,
+  fixture,
+  input = importInput(page, category),
+) => {
   await page.evaluate(() => {
     window.__holdDigest = true;
   });
-  await importInput(page, category).setInputFiles(fixtureUpload(fixture));
+  await input.setInputFiles(fixtureUpload(fixture));
   await expect
     .poll(() => page.evaluate(() => window.__heldDigests))
     .toBeGreaterThan(0);
@@ -745,7 +750,7 @@ test("deleting an in-use asset warns with the scene count and leaves the Story w
   await expect(dialog).toHaveCount(0);
   await expect(cardFor(page, "pose", pose.digest)).toHaveCount(0);
   await expect(
-    page.locator(`[data-local-asset-placeholder="${ref}"]`),
+    page.locator(`[data-missing-local-asset-card="${ref}"]`),
   ).toContainText("Missing local pose");
   await expect(page.locator("[data-missing-local-asset]")).toHaveCount(1);
   await expect(blobImages(page)).toHaveCount(0);
@@ -936,6 +941,10 @@ test("with a transition panel open the import buttons are disabled, and during a
   ).toBeDisabled();
   await page.evaluate(() => window.__releaseDigest());
   await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  // Positive control: the same confirmation is enabled again once the import ended.
+  await expect(
+    panel.getByRole("button", {name: "Discard visual draft"}),
+  ).toBeEnabled();
 });
 
 test("a failing delete keeps the asset and the dialog, shows why, and Cancel still closes it", async ({
@@ -968,4 +977,247 @@ test("a failing delete keeps the asset and the dialog, shows why, and Cancel sti
     "data-authoring-locked",
     "false",
   );
+});
+
+// --- Recovery card: Import matching file (ASSET-003 task 4) --------------------
+
+const missingCard = (page, ref) =>
+  page.locator(`[data-missing-local-asset-card="${ref}"]`);
+const shortId = (digest) => `${digest.slice(0, 4)}…${digest.slice(-4)}`;
+const countOf = (text, needle) => text.split(needle).length - 1;
+
+/** Two scenes that both use the (not yet stored) pose; scene 1 selected. */
+const openMissingStory = async (page, seed = []) => {
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, seed);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {pose: ref, background: "office"},
+      {pose: ref, background: "server-room"},
+    ]),
+  );
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  return {pose, ref};
+};
+
+test("Import matching file with the exact fixture restores the ref: no Story change and every scene resolves", async ({
+  page,
+}) => {
+  const {pose, ref} = await openMissingStory(page);
+  const card = missingCard(page, ref);
+  const yamlBefore = await yamlSource(page);
+
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute("role", "group");
+  await expect(card).toContainText("Missing local pose");
+  await expect(card).toContainText(shortId(pose.digest));
+  await expect(card).toContainText("Used by scenes 1, 2.");
+  await expect(card).toContainText(
+    "Import the original file to restore it, or pick any other pose to replace it.",
+  );
+  await expect(card).not.toContainText("The stored copy is damaged.");
+  await expect(blobImages(page)).toHaveCount(0);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(1);
+
+  await card.locator('input[type="file"]').setInputFiles(fixtureUpload(pose));
+
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(card).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(blobImages(page)).toHaveCount(1);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  await expect(page.locator(".render-banner")).not.toHaveAttribute(
+    "data-local-asset-block",
+    /.+/u,
+  );
+  expect(await yamlSource(page)).toBe(yamlBefore);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+
+  // Scene 2 uses the same ref and resolves too.
+  await page.locator(".scene-list-item").nth(1).click();
+  await expect(blobImages(page)).toHaveCount(1);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+});
+
+for (const choice of ["Cancel", "Use it as replacement for this scene"]) {
+  test(`Import matching file with a different image: the mismatch dialog holds the lock, then ${choice} unlocks`, async ({
+    page,
+  }) => {
+    await holdDigests(page);
+
+    const {ref} = await openMissingStory(page);
+    const other = await readFixture("background-cyan.jpg");
+    const otherRef = localAssetRef("pose", other.digest);
+    const dialog = page.getByRole("dialog");
+
+    const yamlBefore = await yamlSource(page);
+
+    // Opening the YAML view remounts the editor on scene 1; select scene 2.
+    await page.locator(".scene-list-item").nth(1).click();
+    await startHeldImport(
+      page,
+      "pose",
+      other,
+      missingCard(page, ref).locator('input[type="file"]'),
+    );
+    await expect(statusLine(page, "pose")).toHaveText("Hashing…");
+    await expectAuthoringLocked(page);
+    await page.evaluate(() => window.__releaseDigest());
+
+    await expect(dialog).toContainText(
+      `This file is a different image (${shortId(other.digest)}), so it can't restore the missing one.`,
+    );
+    // The dialog is outside the disabled fieldset; everything else stays locked.
+    await expect(
+      dialog.getByRole("button", {
+        name: "Use it as replacement for this scene",
+      }),
+    ).toBeEnabled();
+    await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+    await expectAuthoringLocked(page);
+    await expect(
+      section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+    ).toBeVisible();
+
+    await dialog.getByRole("button", {name: choice, exact: true}).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".app-shell")).toHaveAttribute(
+      "data-authoring-locked",
+      "false",
+    );
+    await expect(page.getByRole("button", {name: "Add scene"})).toBeEnabled();
+
+    if (choice === "Cancel") {
+      // Nothing written, Story unchanged, still missing.
+      await expect(
+        section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+      ).toBeVisible();
+      await expect(cards(page, "pose")).toHaveCount(0);
+      await expect(missingCard(page, ref)).toBeVisible();
+      expect(await yamlSource(page)).toBe(yamlBefore);
+    } else {
+      // Only the selected scene (2) changed; scene 1 still has the missing ref.
+      await expect(
+        section(page, "pose").getByRole("heading", {name: "My assets · 1"}),
+      ).toBeVisible();
+      await expect(statusLine(page, "pose")).toHaveText(
+        'Imported "background-cyan".',
+      );
+
+      // Scene 2 (the selected one) now shows the new asset as Current ...
+      await expect(cardFor(page, "pose", other.digest)).toContainText(
+        "Current",
+      );
+      await expect(missingCard(page, ref)).toHaveCount(0);
+
+      // ... and only scene 2 changed: scene 1 still has the missing ref.
+      const source = await yamlSource(page);
+
+      expect(countOf(source, `pose: ${otherRef}`)).toBe(1);
+      expect(countOf(source, `pose: ${ref}`)).toBe(1);
+      await expect(missingCard(page, ref)).toBeVisible();
+    }
+  });
+}
+
+test("a corrupt stored copy shows the damaged text, and importing the original repairs it", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const wrongBytes = await readFixture("background-cyan.jpg");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose, {label: "Broken", bytesFrom: wrongBytes}),
+  ]);
+  await applyYaml(page, buildStoryYaml([{pose: ref, background: "office"}]));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  const card = missingCard(page, ref);
+
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Missing local pose");
+  await expect(card).toContainText("The stored copy is damaged.");
+  await expect(blobImages(page)).toHaveCount(0);
+  await expect(page.locator(".render-banner")).toHaveAttribute(
+    "data-local-asset-block",
+    /.+/u,
+  );
+
+  // Re-importing the original over the damaged copy repairs it (the cached
+  // verification is invalidated by the change announcement).
+  await card.locator('input[type="file"]').setInputFiles(fixtureUpload(pose));
+  await expect(card).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
+  await expect(blobImages(page)).toHaveCount(1);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  await expect(page.locator(".render-banner")).not.toHaveAttribute(
+    "data-local-asset-block",
+    /.+/u,
+  );
+});
+
+test("without Web Locks the current-selection card explains the ref is unavailable and offers no actions", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await applyYaml(page, buildStoryYaml([{pose: ref, background: "office"}]));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  const card = missingCard(page, ref);
+
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Local pose unavailable");
+  await expect(card).toContainText(
+    "My assets needs a browser with Web Locks support.",
+  );
+  await expect(card.getByRole("button")).toHaveCount(0);
+  await expect(card.locator("input")).toHaveCount(0);
+});
+
+test("a stale import message is cleared when a rename or delete runs", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const pose = await readFixture("pose-magenta.png");
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+
+  const card = cardFor(page, "pose", pose.digest);
+
+  await card
+    .getByRole("button", {name: "Rename pose-magenta", exact: true})
+    .click();
+  await card.getByRole("textbox").fill("Renamed");
+  await card.getByRole("button", {name: "Save"}).click();
+  await expect(card).toContainText("Renamed");
+  await expect(statusLine(page, "pose")).toHaveText("");
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toContainText(
+    "was already in My assets",
+  );
+  await card.getByRole("button", {name: "Delete Renamed", exact: true}).click();
+  await expect(statusLine(page, "pose")).toHaveText("");
 });

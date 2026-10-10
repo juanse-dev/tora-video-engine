@@ -5,6 +5,7 @@ import {
   importPhaseText,
   importSuccessText,
   runLocalAssetImport,
+  runMatchingFileImport,
   withImportLock,
 } from "../src/web/localAssetImportFlow.ts";
 import {
@@ -374,5 +375,138 @@ describe("ASSET-003 rename and delete flows", () => {
       (error) =>
         error instanceof Error && error.message === DELETE_FAILED_MESSAGE,
     );
+  });
+});
+
+describe("ASSET-003 import matching file", () => {
+  const PNG_OTHER = buildPng({width: 10, height: 20, extraChunksBeforeIdat: [{type: "tEXt", data: new Uint8Array([65])}]});
+
+  const matching = async (library, {missingBytes = PNG, fileBytes = PNG, dialogOpens = true} = {}) => {
+    const events = [];
+    const dialogs = [];
+    // The ref of the missing asset: what importing `missingBytes` would give.
+    const probe = await runLocalAssetImport({
+      file: new File([missingBytes], "orig.png"),
+      category: "pose",
+      library: makeLibrary(),
+      setInFlight: () => {},
+      apply: () => {},
+      deps: imageDeps(),
+    });
+
+    return {
+      events,
+      dialogs,
+      missingRef: probe.ref,
+      run: () =>
+        runMatchingFileImport({
+          file: new File([fileBytes], "candidate.png"),
+          category: "pose",
+          missingRef: probe.ref,
+          library,
+          setInFlight: (value) => events.push(`inFlight:${value}`),
+          onPhase: (phase) => events.push(`phase:${phase}`),
+          apply: (ref) => events.push(`apply:${ref}`),
+          openMismatchDialog: (dialog) => {
+            dialogs.push(dialog);
+            events.push("dialog");
+
+            return dialogOpens;
+          },
+          onDialogSettled: (result) => events.push(`settled:${result.kind}`),
+          deps: imageDeps(),
+        }),
+    };
+  };
+
+  it("commits the exact file without applying anything and releases the lock", async () => {
+    const library = makeLibrary();
+    const {events, dialogs, run, missingRef} = await matching(library);
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "restored");
+    assert.equal(outcome.ref, missingRef);
+    assert.equal(library.store.applyCalls.length, 1);
+    assert.equal(dialogs.length, 0);
+    assert.equal(events.some((event) => event.startsWith("apply:")), false);
+    assert.deepEqual(events, [
+      "inFlight:true",
+      "phase:reading",
+      "phase:validating",
+      "phase:hashing",
+      "phase:storing",
+      "inFlight:false",
+    ]);
+  });
+
+  it("opens the mismatch dialog for a different image, writes nothing and keeps the lock", async () => {
+    const library = makeLibrary();
+    const {events, dialogs, run, missingRef} = await matching(library, {fileBytes: PNG_OTHER});
+    const outcome = await run();
+
+    assert.deepEqual(outcome, {kind: "dialog"});
+    assert.equal(dialogs.length, 1);
+    assert.equal(dialogs[0].kind, "mismatch");
+    assert.notEqual(dialogs[0].candidateRef, missingRef);
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.equal(events.at(-1), "dialog"); // the lock is NOT released here
+    assert.equal(events.includes("inFlight:false"), false);
+  });
+
+  it("Use it as replacement commits and applies the candidate; the host releases the lock", async () => {
+    const library = makeLibrary();
+    const {events, dialogs, run} = await matching(library, {fileBytes: PNG_OTHER});
+
+    await run();
+    await dialogs[0].onReplace();
+    assert.equal(library.store.applyCalls.length, 1);
+    assert.deepEqual(events.slice(-3), [
+      "phase:storing",
+      `apply:${dialogs[0].candidateRef}`,
+      "settled:replaced",
+    ]);
+    assert.equal(events.includes("inFlight:false"), false);
+  });
+
+  it("Cancel writes nothing", async () => {
+    const library = makeLibrary();
+    const {events, dialogs, run} = await matching(library, {fileBytes: PNG_OTHER});
+
+    await run();
+    dialogs[0].onCancel();
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+    assert.equal(events.at(-1), "settled:cancelled");
+  });
+
+  it("a failed replacement rejects (the dialog shows it) and applies nothing", async () => {
+    const library = makeLibrary();
+    const {events, dialogs, run} = await matching(library, {fileBytes: PNG_OTHER});
+
+    await run();
+    library.store.failNextApply();
+    await assert.rejects(dialogs[0].onReplace(), /storage/iu);
+    assert.equal(events.some((event) => event.startsWith("apply:")), false);
+    assert.equal(events.at(-1), "settled:failed");
+  });
+
+  it("an unreadable file fails and releases the lock", async () => {
+    const library = makeLibrary();
+    const {events, run} = await matching(library, {fileBytes: buildGifSignature()});
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "failed");
+    assert.match(outcome.message, /Only static PNG, JPEG and WebP/u);
+    assert.equal(events.at(-1), "inFlight:false");
+  });
+
+  it("releases the lock and writes nothing when the dialog cannot open", async () => {
+    const library = makeLibrary();
+    const {events, run} = await matching(library, {fileBytes: PNG_OTHER, dialogOpens: false});
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "failed");
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.equal(events.at(-1), "inFlight:false");
   });
 });

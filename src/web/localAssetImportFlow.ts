@@ -7,6 +7,8 @@ import {
   type PrepareLocalAssetImportDeps,
 } from "./assetLibrary/importAsset.ts";
 import type {AssetLibrary} from "./assetLibrary/library.ts";
+import type {AssetDialog} from "./assetLibraryContext.ts";
+import {evaluateMatchingFile} from "./localAssetUi.ts";
 import type {LocalAssetCategory, LocalAssetRef} from "../localAssets/refs.ts";
 
 /** Shown for an error that is not a LocalAssetImportError (the details go to the console). */
@@ -188,3 +190,110 @@ export const runLocalAssetImport = ({
 
     return committed;
   });
+
+export const DIALOG_BLOCKED_MESSAGE =
+  "Close the open panel and try Import matching file again.";
+
+export type MismatchDialog = Extract<AssetDialog, {kind: "mismatch"}>;
+
+/** How the mismatch dialog ended (reported through `onDialogSettled`). */
+export type MatchingFileDialogResult =
+  | {kind: "replaced"; message: string}
+  | {kind: "cancelled"}
+  | {kind: "failed"; message: string};
+
+export type MatchingFileOutcome =
+  | {kind: "restored"; ref: LocalAssetRef; message: string}
+  | {kind: "failed"; message: string; error?: unknown}
+  /** The mismatch dialog is open and owns the import lock until the user chooses. */
+  | {kind: "dialog"};
+
+/**
+ * Import matching file (the recovery card): prepare the file, then
+ * - same ref (`evaluateMatchingFile` match): commit it, the Story is unchanged;
+ * - different image: open the mismatch dialog and keep `setInFlight(true)` until
+ *   the user chooses. The dialog host releases the lock after `onReplace` /
+ *   `onCancel`, so nothing here clears it again. "Use it as replacement" commits
+ *   the prepared bytes and calls `apply` (the selected scene only); Cancel drops
+ *   them and writes nothing.
+ */
+export const runMatchingFileImport = ({
+  file,
+  category,
+  missingRef,
+  library,
+  setInFlight,
+  openMismatchDialog,
+  apply,
+  onPhase,
+  onDialogSettled,
+  deps,
+}: {
+  file: File;
+  category: LocalAssetCategory;
+  missingRef: LocalAssetRef;
+  library: AssetLibrary;
+  setInFlight: (inFlight: boolean) => void;
+  /** Returns false when no dialog could open (another panel is open). */
+  openMismatchDialog: (dialog: MismatchDialog) => boolean;
+  apply: (ref: LocalAssetRef) => void;
+  onPhase?: (phase: ImportPhase) => void;
+  onDialogSettled?: (result: MatchingFileDialogResult) => void;
+  deps?: ImportFlowDeps;
+}): Promise<MatchingFileOutcome> =>
+  withImportLock<MatchingFileOutcome>(
+    setInFlight,
+    async () => {
+      const prepared = await prepareImportFile(file, category, {onPhase, deps});
+
+      if (!prepared.ok) {
+        return {kind: "failed", message: prepared.message, error: prepared.error};
+      }
+
+      const evaluation = evaluateMatchingFile(
+        missingRef,
+        prepared.prepared.ref,
+      );
+
+      if (evaluation.kind === "match") {
+        const committed = await commitPreparedImport(
+          prepared.prepared,
+          library,
+          {onPhase, deps},
+        );
+
+        return committed.ok
+          ? {kind: "restored", ref: committed.ref, message: committed.message}
+          : {kind: "failed", message: committed.message, error: committed.error};
+      }
+
+      const opened = openMismatchDialog({
+        kind: "mismatch",
+        candidateRef: evaluation.candidateRef,
+        onReplace: async () => {
+          const committed = await commitPreparedImport(
+            prepared.prepared,
+            library,
+            {onPhase, deps},
+          );
+
+          if (!committed.ok) {
+            onDialogSettled?.({kind: "failed", message: committed.message});
+            throw new Error(committed.message);
+          }
+
+          try {
+            apply(committed.ref);
+          } finally {
+            onDialogSettled?.({kind: "replaced", message: committed.message});
+          }
+        },
+        onCancel: () => onDialogSettled?.({kind: "cancelled"}),
+      });
+
+      return opened
+        ? {kind: "dialog"}
+        : {kind: "failed", message: DIALOG_BLOCKED_MESSAGE};
+    },
+    (outcome) => outcome.kind !== "dialog",
+  );

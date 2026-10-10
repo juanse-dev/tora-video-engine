@@ -7,7 +7,6 @@ import {
 import {shortAssetId} from "../../localAssets/sources.ts";
 import {AssetLibraryContext} from "../assetLibraryContext.ts";
 import {
-  describeMissingLocalAsset,
   localOnlyDisclosure,
   sceneNumbersUsingRef,
 } from "../localAssetUi.ts";
@@ -16,6 +15,10 @@ import {useLocalAssetImport} from "../useLocalAssetImport.ts";
 import {useLocalAssetManage} from "../useLocalAssetManage.ts";
 import {useLocalAssetPage} from "../useLocalAssetPage.ts";
 import {LocalAssetCard} from "./LocalAssetCard.tsx";
+import {
+  MissingLocalAssetCard,
+  type MissingLocalAssetKind,
+} from "./MissingLocalAssetCard.tsx";
 
 type MyAssetsSectionProps = {
   category: LocalAssetCategory;
@@ -43,8 +46,8 @@ const currentLocalRef = (
  * One category's My assets block: heading with the total, the local-only
  * disclosure, the current selection pinned first, the page of cards and paging.
  *
- * Import, rename and delete live in the two hooks below; the real recovery
- * card replaces the placeholder in ASSET-003 task 4.
+ * Import, rename and delete live in the two hooks below; a selected ref that
+ * is not ready is shown as a MissingLocalAssetCard.
  */
 export const MyAssetsSection = ({
   category,
@@ -65,60 +68,39 @@ export const MyAssetsSection = ({
   const {status, localAssetState, activeStory, transitionPending} = context;
   const ready = status.kind === "ready";
   const noun = categoryLabel(category);
-  const placeholder = (
-    kind: "missing" | "corrupt" | "unavailable",
-    ref: LocalAssetRef,
+  const renderMissing = (
+    kind: MissingLocalAssetKind,
+    assetRef: LocalAssetRef,
     unavailableMessage = "",
-  ) => {
-    if (kind === "unavailable") {
-      const title = `Local ${noun} unavailable`;
-
-      return (
-        <div
-          className="asset-card local-asset-card selected current local-asset-placeholder"
-          role="group"
-          aria-label={`${title} ${shortAssetId(ref)}`}
-          data-local-asset-placeholder={ref}
-        >
-          <span className="asset-card-copy">
-            <strong>{title}</strong>
-            <small>{shortAssetId(ref)}</small>
-            {unavailableMessage === "" ? null : (
-              <span>{unavailableMessage}</span>
-            )}
-          </span>
-        </div>
-      );
-    }
-
-    const copy = describeMissingLocalAsset({
-      ref,
-      sceneNumbers: sceneNumbersUsingRef(activeStory, ref),
-      damaged: kind === "corrupt",
-    });
-
-    return (
-      <div
-        className="asset-card local-asset-card selected current local-asset-placeholder"
-        role="group"
-        aria-label={`${copy.title} ${copy.shortId}`}
-        data-local-asset-placeholder={ref}
-      >
-        <span className="asset-card-copy">
-          <strong>{copy.title}</strong>
-          <small>{copy.shortId}</small>
-          <span>{copy.usedBy}</span>
-          {copy.damagedNote === null ? null : <span>{copy.damagedNote}</span>}
-          <span>{copy.hint}</span>
-        </span>
-      </div>
-    );
-  };
+  ) => (
+    <MissingLocalAssetCard
+      assetRef={assetRef}
+      category={category}
+      kind={kind}
+      sceneNumbers={sceneNumbersUsingRef(activeStory, assetRef)}
+      unavailableMessage={unavailableMessage}
+      // Only a missing or damaged copy in a usable library can be restored.
+      onImportMatching={
+        ready && kind !== "unavailable"
+          ? (file) => {
+              manage.clearNotice();
+              void imports.importMatchingFile(file, assetRef);
+            }
+          : undefined
+      }
+      importDisabled={transitionPending}
+    />
+  );
 
   const cardActions = (entry: LocalAssetPageEntry) => ({
     deleteDisabled: transitionPending,
-    onRename: (label: string) => manage.rename(entry.ref, label),
-    onDelete: () =>
+    onRename: (label: string) => {
+      imports.clearOutcome();
+
+      return manage.rename(entry.ref, label);
+    },
+    onDelete: () => {
+      imports.clearOutcome();
       manage.requestDelete({
         ref: entry.ref,
         label:
@@ -126,7 +108,8 @@ export const MyAssetsSection = ({
             ? entry.row.value.label
             : `Damaged entry ${shortAssetId(entry.ref)}`,
         category,
-      }),
+      });
+    },
   });
 
   const renderCurrent = () => {
@@ -135,7 +118,7 @@ export const MyAssetsSection = ({
     }
 
     if (!ready) {
-      return placeholder("unavailable", currentRef, status.message);
+      return renderMissing("unavailable", currentRef, status.message);
     }
 
     const refState =
@@ -144,7 +127,7 @@ export const MyAssetsSection = ({
         : undefined;
 
     if (refState !== undefined && refState.status !== "ready") {
-      return placeholder(
+      return renderMissing(
         refState.status,
         currentRef,
         refState.detail ?? "",
@@ -154,7 +137,7 @@ export const MyAssetsSection = ({
     const {pinned} = page;
 
     if (pinned.kind === "missing") {
-      return placeholder("missing", currentRef);
+      return renderMissing("missing", currentRef);
     }
 
     if (pinned.kind !== "present") {
@@ -162,7 +145,7 @@ export const MyAssetsSection = ({
     }
 
     if (pinned.entry.row.status !== "present") {
-      return placeholder("corrupt", currentRef);
+      return renderMissing("corrupt", currentRef);
     }
 
     return (
