@@ -12,6 +12,9 @@ import {crc32, deflateSync} from "node:zlib";
 //   thumbnails:  `<digest>` -> {blob, mimeType, width, height}; only seeded when a
 //                record carries `thumbnail` (preview/render do not need them).
 
+export const ASSET_DB_NAME = "tora-video-engine-assets";
+export const ASSET_DB_VERSION = 1;
+
 const FIXTURE_DIR = new URL("../../fixtures/local-assets/", import.meta.url);
 
 const FIXTURES = {
@@ -123,9 +126,9 @@ export const metadataOnlyRecord = (category, n, meta, options = {}) => ({
  * a connection: the version is the same, so no upgrade is requested.
  */
 export const seedAssetLibrary = async (page, records) => {
-  await page.evaluate(async (items) => {
+  await page.evaluate(async ({items, dbName, dbVersion}) => {
     const database = await new Promise((resolve, reject) => {
-      const request = indexedDB.open("tora-video-engine-assets", 1);
+      const request = indexedDB.open(dbName, dbVersion);
 
       request.onupgradeneeded = () => {
         for (const name of ["assets", "payloadMeta", "blobs", "thumbnails"]) {
@@ -190,14 +193,14 @@ export const seedAssetLibrary = async (page, records) => {
       transaction.onabort = () => reject(transaction.error);
     });
     database.close();
-  }, records);
+  }, {items: records, dbName: ASSET_DB_NAME, dbVersion: ASSET_DB_VERSION});
 };
 
 /** Deletes raw `assets` rows (leaving payload records), like another tab would. */
 export const deleteAssetRows = async (page, refs) => {
-  await page.evaluate(async (keys) => {
+  await page.evaluate(async ({keys, dbName, dbVersion}) => {
     const database = await new Promise((resolve, reject) => {
-      const request = indexedDB.open("tora-video-engine-assets", 1);
+      const request = indexedDB.open(dbName, dbVersion);
 
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -214,8 +217,54 @@ export const deleteAssetRows = async (page, refs) => {
       transaction.onerror = () => reject(transaction.error);
     });
     database.close();
-  }, refs);
+  }, {keys: refs, dbName: ASSET_DB_NAME, dbVersion: ASSET_DB_VERSION});
 };
+
+/**
+ * Row and record counts as the page's IndexedDB holds them: the `assets` rows
+ * for `ref` and in total, and the payload records (metadata, blob) for `digest`
+ * and in total.
+ */
+export const readLibraryRecords = (page, ref, digest) =>
+  page.evaluate(
+    async ({key, hash, dbName, dbVersion}) => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, dbVersion);
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+
+      try {
+        const count = (storeName, query) =>
+          new Promise((resolve, reject) => {
+            const request = database
+              .transaction(storeName, "readonly")
+              .objectStore(storeName)
+              .count(query);
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+
+        return {
+          assetRows: await count("assets", key),
+          allAssetRows: await count("assets"),
+          payloadMeta: await count("payloadMeta", hash),
+          blobs: await count("blobs", hash),
+          allBlobs: await count("blobs"),
+        };
+      } finally {
+        database.close();
+      }
+    },
+    {
+      key: ref,
+      hash: digest,
+      dbName: ASSET_DB_NAME,
+      dbVersion: ASSET_DB_VERSION,
+    },
+  );
 
 /** Minimal Story YAML. `scenes` are `{pose, background}` pairs. */
 export const buildStoryYaml = (scenes, title = "Local assets") =>

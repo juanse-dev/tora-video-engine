@@ -186,6 +186,55 @@ export const meanLuminance = (frame) => {
   return total / (frame.length / 3);
 };
 
+// Regions in the decoded 540x960 frame for the local-asset goldens (the
+// browser-render golden and the persistence spec). The intro preset centers
+// the pose box (680x802 at bottom 235 in the 1080x1920 frame); the 600x900
+// pose is contained in it, so its magenta rectangle (x 150-449, y 225-674)
+// lands near x 203-336, y 541-741 here. The regions below stay inside that
+// rectangle or in background areas clear of the top caption and of the pose
+// rectangle, and away from the cyan/yellow boundary at y = 480.
+export const POSE_MAGENTA_REGION = {x: 230, y: 580, width: 80, height: 120};
+export const BACKGROUND_TOP_REGION = {x: 20, y: 160, width: 500, height: 280};
+export const BACKGROUND_BOTTOM_REGION = {
+  x: 20,
+  y: 770,
+  width: 500,
+  height: 170,
+};
+export const FULL_REGION = {
+  x: 0,
+  y: 0,
+  width: DECODED_FRAME_WIDTH,
+  height: DECODED_FRAME_HEIGHT,
+};
+
+// Colour predicates for frames decoded with decodeMp4Frame (ffmpeg, RGB24 at
+// 540x960) rather than a <video> element: they do not depend on the browser's
+// video pipeline, so a black frame means the render is wrong, not the decode.
+export const isMagenta = (r, g, b) => r > 180 && g < 90 && b > 180;
+export const isCyan = (r, g, b) => r < 90 && g > 150 && b > 150;
+export const isYellow = (r, g, b) => r > 150 && g > 150 && b < 90;
+
+/** Share of sampled pixels in `region` of an RGB24 frame matching `predicate`. */
+export const regionRatio = (frame, {x, y, width, height}, predicate) => {
+  let count = 0;
+  let matching = 0;
+
+  for (let py = y; py < y + height; py += 2) {
+    for (let px = x; px < x + width; px += 2) {
+      const index = (py * DECODED_FRAME_WIDTH + px) * 3;
+
+      count += 1;
+
+      if (predicate(frame[index], frame[index + 1], frame[index + 2])) {
+        matching += 1;
+      }
+    }
+  }
+
+  return matching / count;
+};
+
 /** Names of `__remotion_render:` entries currently in the OPFS root. */
 export const listRemotionOpfsEntries = (page) =>
   page.evaluate(async () => {
