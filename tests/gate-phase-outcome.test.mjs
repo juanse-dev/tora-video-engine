@@ -13,6 +13,7 @@ import {
   assertPhaseAPassed,
   phaseAIncompleteReason,
   readState,
+  recordFailureOf,
   startPhaseA,
   startPhaseB,
   targetDir,
@@ -185,6 +186,63 @@ const CASES = [
     "FAIL",
   ],
   [
+    "phase A with a skipped golden item (--only ran a subset)",
+    (() => {
+      const state = passedA();
+
+      state.results["golden.sceneReorder"] = {
+        status: "skip",
+        detail: "not run (an earlier item failed or the run was interrupted)",
+        phase: "A",
+      };
+
+      return state;
+    })(),
+    false,
+    false,
+    "INCOMPLETE",
+  ],
+  [
+    "phase A with a pending CLI parity",
+    (() => {
+      const state = passedA();
+
+      state.results.cliParity = {status: "pending", detail: "later", phase: "A"};
+
+      return state;
+    })(),
+    false,
+    false,
+    "INCOMPLETE",
+  ],
+  [
+    "phase A with a skipped golden network guard",
+    (() => {
+      const state = passedA();
+
+      state.results.goldenNetwork = {status: "skip", detail: "x", phase: "A"};
+
+      return state;
+    })(),
+    false,
+    false,
+    "INCOMPLETE",
+  ],
+  [
+    "phase A whose reload and noUpload rows were overwritten or dropped by a phase B rerun",
+    (() => {
+      const state = passedA();
+
+      delete state.results.reload;
+      delete state.results.noUpload;
+
+      return state;
+    })(),
+    true,
+    false,
+    "PHASE A PASSED (phase B pending)",
+  ],
+  [
     "phase B run with --only (only the build identity recorded)",
     onlyBuildIdentityB(),
     true,
@@ -306,8 +364,43 @@ describe("GATE-001 R11 phaseOutcome", () => {
     assert.match(text, /deleteReimport/);
   });
 
-  it("requires every A-stamped Record row", () => {
-    for (const key of ["reload", "noUpload", "cliParity"]) {
+  it("requires status pass for cliParity, every golden item and goldenNetwork, naming the one that did not", () => {
+    for (const key of ["cliParity", "goldenNetwork", ...GOLDEN_ITEMS.map(({key}) => key)]) {
+      for (const status of ["skip", "pending"]) {
+        const state = passedA();
+
+        state.results[key] = {status, detail: "x", phase: "A"};
+
+        const outcome = phaseOutcome(state, "A");
+
+        assert.equal(outcome.passed, false, `${key} ${status}`);
+        assert.equal(outcome.failed, false);
+        assert.ok(
+          outcome.reasons.some((reason) => reason.includes(`${key} is ${status}`)),
+          outcome.reasons.join("; "),
+        );
+      }
+    }
+  });
+
+  it("proves the A halves of reload and noUpload from state.a, not from the shared rows (R12)", () => {
+    const state = passedA();
+
+    delete state.results.reload;
+    delete state.results.noUpload;
+    assert.equal(phaseOutcome(state, "A").passed, true);
+
+    delete state.a.reloadDetail;
+    delete state.a.networkSummary;
+
+    const text = phaseOutcome(state, "A").reasons.join("; ");
+
+    assert.match(text, /reloadDetail/);
+    assert.match(text, /networkSummary/);
+  });
+
+  it("requires cliParity", () => {
+    for (const key of ["cliParity"]) {
       const state = passedA();
 
       delete state.results[key];
@@ -419,6 +512,47 @@ describe("GATE-001 R11 the guards read phaseOutcome", () => {
 
     await assert.rejects(startPhaseB({stateDir, url: URL_A}), /Netlify/);
   });
+
+  for (const key of ["reload", "noUpload"]) {
+    it(`a phase B rerun still accepts phase A after an earlier B failed at ${key} (R12)`, async () => {
+      await seed(passedA());
+      await startPhaseB({stateDir, url: URL_A, now: "t1"});
+
+      const phase = process.env.TORA_GATE_PHASE;
+
+      process.env.TORA_GATE_PHASE = "B";
+
+      try {
+        await assert.rejects(
+          recordFailureOf(
+            stateDir,
+            key,
+            async () => {
+              throw new Error("Deploy B is not live yet: still abc1234 / d1 (production)");
+            },
+            {label: "step 9"},
+          ),
+          /not live yet/,
+        );
+      } finally {
+        if (phase === undefined) {
+          delete process.env.TORA_GATE_PHASE;
+        } else {
+          process.env.TORA_GATE_PHASE = phase;
+        }
+      }
+
+      assert.equal((await readState(stateDir)).results[key].status, "fail");
+
+      const state = await startPhaseB({stateDir, url: URL_A, now: "t2"});
+
+      assert.equal(state.results[key], undefined);
+      assert.doesNotThrow(() => assertPhaseAPassed(state));
+      const onDisk = await readState(stateDir);
+
+      assert.doesNotThrow(() => assertPhaseAPassed(onDisk));
+    });
+  }
 
   it("startPhaseB accepts a complete phase A", async () => {
     await seed(passedA());

@@ -51,9 +51,18 @@ const GOLDEN_NETWORK_KEY = "goldenNetwork";
 const rowKeys = (/** @type {"A" | "B"} */ phase) =>
   RECORD_ROWS.filter((row) => row.owner?.includes(phase)).map(({key}) => key);
 
-/** Result keys a phase A that ran in full records. */
+// R12: the shared "AB" rows (reload, noUpload) are not evidence of phase A.
+// Phase B overwrites them, and a phase B rerun deletes whatever B stamped, so
+// phase A's halves are proven by state.a.reloadDetail / state.a.networkSummary.
+const ownedByA = (/** @type {string} */ key) =>
+  RECORD_ROWS.find((row) => row.key === key)?.owner === "A";
+
+/**
+ * Result keys a phase A that ran in full records; each must be a pass.
+ * Skipped items (what `--only` leaves behind) and pending ones do not count.
+ */
 export const PHASE_A_RESULT_KEYS = [
-  ...rowKeys("A"),
+  ...rowKeys("A").filter(ownedByA),
   ...GOLDEN_ITEMS.map(({key}) => key),
   GOLDEN_NETWORK_KEY,
 ];
@@ -151,7 +160,7 @@ export const phaseOutcome = (state, phase) => {
 
       if (!result || bPartMissing) {
         notRecorded.push(phase === "B" ? `${key} (phase B part)` : key);
-      } else if (result.status !== "fail" && phase === "B" && result.status !== "pass") {
+      } else if (result.status !== "fail" && result.status !== "pass") {
         reasons.push(`${key} is ${result.status}, not pass`);
       }
     }
