@@ -32,12 +32,18 @@ export const LocalAssetCard = ({
   ]
     .filter(Boolean)
     .join(" ");
-  const actions = (names: string[]) =>
+  // Each button names its asset, so a screen reader can tell the cards apart.
+  const actions = (buttons: Array<{text: string; label: string}>) =>
     canManage ? (
       <div className="local-asset-actions">
-        {names.map((name) => (
-          <button key={name} type="button" disabled>
-            {name}
+        {buttons.map(({text, label: accessibleName}) => (
+          <button
+            key={text}
+            type="button"
+            aria-label={accessibleName}
+            disabled
+          >
+            {text}
           </button>
         ))}
       </div>
@@ -55,7 +61,12 @@ export const LocalAssetCard = ({
             <span className="local-badge">Local</span>
           </span>
         </div>
-        {actions(["Delete"])}
+        {actions([
+          {
+            text: "Delete",
+            label: `Delete damaged entry ${shortAssetId(entry.ref)}`,
+          },
+        ])}
       </div>
     );
   }
@@ -96,7 +107,10 @@ export const LocalAssetCard = ({
           </span>
         </span>
       </button>
-      {actions(["Rename", "Delete"])}
+      {actions([
+        {text: "Rename", label: `Rename ${label}`},
+        {text: "Delete", label: `Delete ${label}`},
+      ])}
     </div>
   );
 };

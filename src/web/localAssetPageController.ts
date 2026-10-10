@@ -29,8 +29,12 @@ export type LocalAssetPageSnapshot = {
   hasPrevious: boolean;
   hasNext: boolean;
   loading: boolean;
+  /** Set when the last load failed; the previous page (if any) is kept. */
+  error: string | null;
   pinned: PinnedLocalAsset;
 };
+
+export const LOCAL_ASSET_LOAD_ERROR = "Could not load My assets.";
 
 type ThumbnailResult = {ok: true; blob: Blob} | {ok: false};
 
@@ -40,6 +44,7 @@ export const EMPTY_LOCAL_ASSET_PAGE: LocalAssetPageSnapshot = {
   hasPrevious: false,
   hasNext: false,
   loading: false,
+  error: null,
   pinned: {kind: "none"},
 };
 
@@ -54,6 +59,10 @@ export const EMPTY_LOCAL_ASSET_PAGE: LocalAssetPageSnapshot = {
  * - Every load supersedes the previous one; a superseded load creates no URL.
  * - Paging is a stack of "after" cursors, so stepping back (or backing off an
  *   emptied page) re-reads the same boundaries.
+ * - next()/previous() are ignored while a load is pending (the snapshot would
+ *   still describe the old page), so a double click advances one page.
+ * - A failed load sets `error`, keeps the previous page and restores the last
+ *   committed cursor, so the same action can be retried.
  */
 export const createLocalAssetPageController = (options: {
   store: Pick<
@@ -80,6 +89,9 @@ export const createLocalAssetPageController = (options: {
   let snapshot: LocalAssetPageSnapshot = EMPTY_LOCAL_ASSET_PAGE;
   let cursor: AssetPageCursor = {};
   const cursorStack: AssetPageCursor[] = [];
+  // Cursor state of the last page that was committed, restored when a load fails.
+  let committedCursor: AssetPageCursor = {};
+  let committedStack: AssetPageCursor[] = [];
   let pinnedRef: LocalAssetRef | null = null;
   let pinnedLoadedFor: LocalAssetRef | null = null;
   let generation = 0;
@@ -145,6 +157,7 @@ export const createLocalAssetPageController = (options: {
     publish({
       ...snapshot,
       loading: true,
+      error: null,
       pinned:
         pinnedForThisLoad === null
           ? {kind: "none"}
@@ -205,6 +218,7 @@ export const createLocalAssetPageController = (options: {
           hasPrevious: cursorStack.length > 0,
           hasNext: page.hasNext,
           loading,
+          error: null,
           pinned:
             pinnedResult.kind === "none"
               ? {kind: "none"}
@@ -215,6 +229,8 @@ export const createLocalAssetPageController = (options: {
       };
 
       pinnedLoadedFor = pinnedForThisLoad;
+      committedCursor = cursor;
+      committedStack = [...cursorStack];
       commit(false);
 
       const needed = [...visible].filter((digest) => !urls.has(digest));
@@ -246,7 +262,9 @@ export const createLocalAssetPageController = (options: {
       commit(false);
     } catch {
       if (!isStale()) {
-        publish({...snapshot, loading: false});
+        cursor = committedCursor;
+        cursorStack.splice(0, cursorStack.length, ...committedStack);
+        publish({...snapshot, loading: false, error: LOCAL_ASSET_LOAD_ERROR});
       }
     }
   };
@@ -275,7 +293,7 @@ export const createLocalAssetPageController = (options: {
     next(): Promise<void> {
       const last = snapshot.entries[snapshot.entries.length - 1];
 
-      if (!snapshot.hasNext || last === undefined) {
+      if (snapshot.loading || !snapshot.hasNext || last === undefined) {
         return Promise.resolve();
       }
 
@@ -286,7 +304,7 @@ export const createLocalAssetPageController = (options: {
     },
 
     previous(): Promise<void> {
-      const previous = cursorStack.pop();
+      const previous = snapshot.loading ? undefined : cursorStack.pop();
 
       if (previous === undefined) {
         return Promise.resolve();

@@ -62,18 +62,24 @@ export const MyAssetsSection = ({
   const placeholder = (
     kind: "missing" | "corrupt" | "unavailable",
     ref: LocalAssetRef,
+    unavailableMessage = "",
   ) => {
     if (kind === "unavailable") {
+      const title = `Local ${noun} unavailable`;
+
       return (
         <div
           className="asset-card local-asset-card selected current local-asset-placeholder"
           role="group"
+          aria-label={`${title} ${shortAssetId(ref)}`}
           data-local-asset-placeholder={ref}
         >
           <span className="asset-card-copy">
-            <strong>Local {noun} unavailable</strong>
+            <strong>{title}</strong>
             <small>{shortAssetId(ref)}</small>
-            <span>{status.kind === "ready" ? "" : status.message}</span>
+            {unavailableMessage === "" ? null : (
+              <span>{unavailableMessage}</span>
+            )}
           </span>
         </div>
       );
@@ -89,6 +95,7 @@ export const MyAssetsSection = ({
       <div
         className="asset-card local-asset-card selected current local-asset-placeholder"
         role="group"
+        aria-label={`${copy.title} ${copy.shortId}`}
         data-local-asset-placeholder={ref}
       >
         <span className="asset-card-copy">
@@ -108,7 +115,7 @@ export const MyAssetsSection = ({
     }
 
     if (!ready) {
-      return placeholder("unavailable", currentRef);
+      return placeholder("unavailable", currentRef, status.message);
     }
 
     const refState =
@@ -117,7 +124,11 @@ export const MyAssetsSection = ({
         : undefined;
 
     if (refState !== undefined && refState.status !== "ready") {
-      return placeholder(refState.status, currentRef);
+      return placeholder(
+        refState.status,
+        currentRef,
+        refState.detail ?? "",
+      );
     }
 
     const {pinned} = page;
@@ -192,7 +203,17 @@ export const MyAssetsSection = ({
         </div>
       ) : null}
 
-      {ready && page.total === 0 && currentRef === null && !page.loading ? (
+      {ready && page.error !== null ? (
+        <p className="my-assets-status" role="alert">
+          {page.error}
+        </p>
+      ) : null}
+
+      {ready &&
+      page.error === null &&
+      page.total === 0 &&
+      currentRef === null &&
+      !page.loading ? (
         <p className="my-assets-empty">No imported {noun}s yet.</p>
       ) : null}
 
@@ -201,11 +222,15 @@ export const MyAssetsSection = ({
           <button
             type="button"
             onClick={page.previous}
-            disabled={!page.hasPrevious}
+            disabled={page.loading || !page.hasPrevious}
           >
             ‹ Previous
           </button>
-          <button type="button" onClick={page.next} disabled={!page.hasNext}>
+          <button
+            type="button"
+            onClick={page.next}
+            disabled={page.loading || !page.hasNext}
+          >
             Next ›
           </button>
         </div>

@@ -146,6 +146,118 @@ describe("ASSET-003 local asset page controller", () => {
     assert.equal(controller.getSnapshot().entries.length, 3);
   });
 
+  it("ignores next() while a load is pending, so a double click advances one page", async () => {
+    const store = createFakeStore("pose", numbers(120));
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+
+    const firstRefs = controller
+      .getSnapshot()
+      .entries.map((entry) => entry.ref);
+    const first = controller.next();
+    const second = controller.next(); // before the first load commits
+
+    await Promise.all([first, second]);
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 51));
+
+    await controller.previous();
+
+    const back = controller.getSnapshot();
+
+    assert.deepEqual(
+      back.entries.map((entry) => entry.ref),
+      firstRefs,
+    );
+    assert.equal(back.hasPrevious, false);
+  });
+
+  it("ignores previous() while a load is pending", async () => {
+    const store = createFakeStore("pose", numbers(120));
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+    await controller.next();
+    await controller.next();
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 101));
+
+    const first = controller.previous();
+    const second = controller.previous(); // before the first load commits
+
+    await Promise.all([first, second]);
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 51));
+    assert.equal(controller.getSnapshot().hasPrevious, true);
+  });
+
+  it("reports a load failure, keeps the previous page, and recovers on refresh", async () => {
+    const store = createFakeStore("pose", numbers(3));
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+    assert.equal(controller.getSnapshot().error, null);
+
+    const list = store.listAssets;
+
+    store.listAssets = async () => {
+      throw new Error("db closed");
+    };
+    await controller.refresh();
+
+    const failed = controller.getSnapshot();
+
+    assert.equal(failed.error, "Could not load My assets.");
+    assert.equal(failed.loading, false);
+    assert.equal(failed.entries.length, 3);
+    assert.equal(failed.total, 3);
+
+    store.listAssets = list;
+    await controller.refresh();
+    assert.equal(controller.getSnapshot().error, null);
+    assert.equal(controller.getSnapshot().entries.length, 3);
+  });
+
+  it("reports a first-load failure with an empty page", async () => {
+    const store = createFakeStore("pose", numbers(3));
+
+    store.countAssets = async () => {
+      throw new Error("db closed");
+    };
+
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+
+    const snapshot = controller.getSnapshot();
+
+    assert.equal(snapshot.error, "Could not load My assets.");
+    assert.deepEqual(snapshot.entries, []);
+    assert.equal(snapshot.loading, false);
+  });
+
+  it("a failed next() keeps the page and the cursor, so Next can be retried", async () => {
+    const store = createFakeStore("pose", numbers(120));
+    const {controller} = createHarness(store);
+
+    await controller.sync(null);
+
+    const list = store.listAssets;
+
+    store.listAssets = async () => {
+      throw new Error("db closed");
+    };
+    await controller.next();
+    assert.equal(controller.getSnapshot().error, "Could not load My assets.");
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 1));
+    assert.equal(controller.getSnapshot().hasPrevious, false);
+
+    store.listAssets = list;
+    await controller.next();
+    assert.equal(controller.getSnapshot().error, null);
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 51));
+    await controller.previous();
+    assert.equal(controller.getSnapshot().entries[0].ref, refOf("pose", 1));
+  });
+
   it("refresh keeps the URLs of digests that stay visible", async () => {
     const store = createFakeStore("pose", [1, 2, 3]);
     const {controller, created, revoked, thumbnailLoads} =

@@ -113,7 +113,7 @@ test("seeded rows appear as cards and selecting one applies its ref to the scene
     cards(page, "background").first().locator("img"),
   ).toHaveCount(0);
 
-  const select = poseCard.getByRole("button", {name: /My cat/u});
+  const select = poseCard.locator("button[aria-pressed]");
 
   await expect(select).toHaveAttribute("aria-pressed", "false");
   await select.click();
@@ -125,7 +125,7 @@ test("seeded rows appear as cards and selecting one applies its ref to the scene
 
   await page
     .locator(`[data-local-asset-card="${backgroundRef}"]`)
-    .getByRole("button", {name: /Sky/u})
+    .locator("button[aria-pressed]")
     .click();
   expect(await yamlSource(page)).toContain(`background: ${backgroundRef}`);
   expect(await yamlSource(page)).toContain(`pose: ${poseRef}`);
@@ -147,9 +147,14 @@ test("local cards nest no interactive element inside another and management butt
       "button button, button input, button select, button textarea, button a, a button",
     ),
   ).toHaveCount(0);
-  await expect(card.getByRole("button", {name: /My cat/u})).toHaveCount(1);
-  await expect(card.getByRole("button", {name: "Rename"})).toHaveCount(1);
-  await expect(card.getByRole("button", {name: "Delete"})).toHaveCount(1);
+  await expect(card.locator("button[aria-pressed]")).toHaveCount(1);
+  // Management buttons name their asset.
+  await expect(
+    card.getByRole("button", {name: "Rename My cat", exact: true}),
+  ).toHaveCount(1);
+  await expect(
+    card.getByRole("button", {name: "Delete My cat", exact: true}),
+  ).toHaveCount(1);
   // Rename and Delete are not descendants of the selection button.
   await expect(
     card.locator("button[aria-pressed] button"),
@@ -205,6 +210,10 @@ test("a missing local ref shows a placeholder as the current card", async ({
   await page.getByRole("button", {name: "Open visual editor"}).click();
 
   const placeholder = page.locator(`[data-local-asset-placeholder="${missing}"]`);
+
+  await expect(
+    page.getByRole("group", {name: /^Missing local pose [0-9a-f]{4}…[0-9a-f]{4}$/u}),
+  ).toHaveCount(1);
 
   await expect(placeholder).toContainText("Missing local pose");
   await expect(placeholder).toContainText("Used by scene 1.");
@@ -318,20 +327,27 @@ test("thumbnail object URLs exist for the visible page only and are revoked when
   await expect(images).toHaveCount(10);
 
   // The previous page's thumbnails are revoked: fetching them fails.
-  const stillReadable = await page.evaluate(
-    async (urls) =>
-      Promise.all(
-        urls.map((url) =>
-          fetch(url).then(
-            () => true,
-            () => false,
+  const readable = (urls) =>
+    page.evaluate(
+      async (list) =>
+        Promise.all(
+          list.map((url) =>
+            fetch(url).then(
+              () => true,
+              () => false,
+            ),
           ),
         ),
-      ),
-    firstPageUrls,
+      urls,
+    );
+  const secondPageUrls = await images.evaluateAll((elements) =>
+    elements.map((element) => element.src),
   );
 
-  expect(stillReadable.some(Boolean)).toBe(false);
+  // Positive control: the visible page's URLs are readable ...
+  expect((await readable(secondPageUrls)).every(Boolean)).toBe(true);
+  // ... and the previous page's are revoked.
+  expect((await readable(firstPageUrls)).some(Boolean)).toBe(false);
 });
 
 test("without Web Locks My assets shows the disabled message, no import controls, and the bundled flow works", async ({
