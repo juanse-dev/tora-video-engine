@@ -1,4 +1,4 @@
-import {useState} from "react";
+import {useEffect, useId, useRef, useState} from "react";
 import type {AssetDialog} from "../assetLibraryContext.ts";
 import {
   deleteConfirmationText,
@@ -32,6 +32,11 @@ type AssetDialogHostProps = {
  * throws or rejects is always logged with console.error, never left unhandled.
  * A failed confirm/replace also shows its message in a role="alert" line and
  * keeps the dialog open; a failed cancel just closes the dialog.
+ *
+ * Accessibility: the dialog is labelled by its heading text, focus moves to
+ * Cancel (the non-destructive choice, first for delete) when it opens and
+ * returns to the previously focused element when it closes, and Escape
+ * cancels.
  */
 export const AssetDialogHost = ({
   dialog,
@@ -45,6 +50,42 @@ export const AssetDialogHost = ({
     dialog: AssetDialog;
     message: string;
   } | null>(null);
+  const headingId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // The element focused outside the dialog, tracked continuously: opening the
+  // dialog disables the authoring fieldset, which can drop focus from the
+  // button that opened it before this component sees the open.
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const remember = (event: FocusEvent) => {
+      if (
+        event.target instanceof HTMLElement &&
+        !event.target.closest("[data-asset-dialog]")
+      ) {
+        openerRef.current = event.target;
+      }
+    };
+
+    document.addEventListener("focusin", remember);
+
+    return () => document.removeEventListener("focusin", remember);
+  }, []);
+
+  useEffect(() => {
+    if (dialog === null) {
+      return undefined;
+    }
+
+    cancelRef.current?.focus();
+
+    return () => {
+      if (openerRef.current?.isConnected === true) {
+        openerRef.current.focus();
+      }
+    };
+  }, [dialog]);
 
   if (dialog === null) {
     return null;
@@ -121,14 +162,31 @@ export const AssetDialogHost = ({
     </button>
   );
   const cancel = (
-    <button type="button" onClick={() => void runCancel()} disabled={busy}>
+    <button
+      ref={cancelRef}
+      type="button"
+      onClick={() => void runCancel()}
+      disabled={busy}
+    >
       Cancel
     </button>
   );
 
   return (
-    <div className={ASSET_DIALOG_CLASS_NAME} role="dialog">
-      <strong>{heading}</strong>
+    <div
+      className={ASSET_DIALOG_CLASS_NAME}
+      role="dialog"
+      data-asset-dialog=""
+      aria-labelledby={headingId}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy) {
+          event.preventDefault();
+          event.stopPropagation();
+          void runCancel();
+        }
+      }}
+    >
+      <strong id={headingId}>{heading}</strong>
       {failureLine}
       <div>
         {isDelete ? cancel : primary}

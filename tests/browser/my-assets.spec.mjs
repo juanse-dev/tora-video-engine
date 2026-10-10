@@ -1,6 +1,11 @@
+import {mkdtemp, rm, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
 import {expect, test} from "@playwright/test";
+import {buildApng, buildGifSignature} from "../helpers/imageBytes.mjs";
 import {
   buildStoryYaml,
+  deleteAssetRows,
   fixtureRecord,
   localAssetRef,
   metadataOnlyRecord,
@@ -8,7 +13,11 @@ import {
   solidPngThumbnail,
   syntheticDigest,
 } from "./helpers/seedAssetLibrary.mjs";
-import {applyYaml, openSeeded} from "./helpers/localAssetPage.mjs";
+import {
+  applyYaml,
+  openSeeded,
+  waitForOwner,
+} from "./helpers/localAssetPage.mjs";
 
 const ORIGIN = "http://127.0.0.1:4173";
 const SYNTHETIC_META = {
@@ -380,4 +389,583 @@ test("without Web Locks My assets shows the disabled message, no import controls
   await expect(
     bundledPoses.getByRole("button", {name: /Coffee/u}),
   ).toHaveAttribute("aria-pressed", "true");
+});
+
+// --- Import, rename and delete flows (ASSET-003 task 3) -----------------------
+
+const fixtureUpload = (fixture) => ({
+  name: fixture.name,
+  mimeType: fixture.meta.mimeType,
+  buffer: Buffer.from(fixture.bytes),
+});
+const importInput = (page, category) =>
+  section(page, category).locator('input[type="file"]');
+const statusLine = (page, category) =>
+  section(page, category).getByRole("status");
+const alertLine = (page, category) =>
+  section(page, category).getByRole("alert");
+const cardFor = (page, category, digest) =>
+  page.locator(`[data-local-asset-card="${localAssetRef(category, digest)}"]`);
+const blobImages = (page) => page.locator(".preview-frame img[src^='blob:']");
+
+/** Holds crypto.subtle.digest (the import's hashing phase) until released. */
+const holdDigests = (page) =>
+  page.addInitScript(() => {
+    const nativeDigest = crypto.subtle.digest.bind(crypto.subtle);
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    window.__holdDigest = false;
+    window.__heldDigests = 0;
+    window.__releaseDigest = () => {
+      window.__holdDigest = false;
+      release();
+    };
+    crypto.subtle.digest = async (...args) => {
+      if (window.__holdDigest) {
+        window.__heldDigests += 1;
+        await gate;
+      }
+
+      return nativeDigest(...args);
+    };
+  });
+const startHeldImport = async (page, category, fixture) => {
+  await page.evaluate(() => {
+    window.__holdDigest = true;
+  });
+  await importInput(page, category).setInputFiles(fixtureUpload(fixture));
+  await expect
+    .poll(() => page.evaluate(() => window.__heldDigests))
+    .toBeGreaterThan(0);
+};
+
+test("importing the pose fixture applies it: Current card, YAML ref and the Player image", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await expect(importInput(page, "pose")).toBeEnabled();
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 1"}),
+  ).toBeVisible();
+  await expect(cards(page, "pose")).toHaveCount(1);
+  await expect(cards(page, "pose").first()).toHaveAttribute(
+    "data-local-asset-card",
+    ref,
+  );
+  await expect(cards(page, "pose").first()).toContainText("Current");
+  await expect(
+    cards(page, "pose").first().locator("button[aria-pressed]"),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(await yamlSource(page)).toContain(`pose: ${ref}`);
+  await expect(blobImages(page)).toHaveCount(1);
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(0);
+  // The import ended: authoring is unlocked again.
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+});
+
+test("the extensionless background fixture is accepted", async ({page}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const background = await readFixture("background-noext");
+  const ref = localAssetRef("background", background.digest);
+
+  await importInput(page, "background").setInputFiles(
+    fixtureUpload(background),
+  );
+  await expect(statusLine(page, "background")).toHaveText(
+    'Imported "background-noext".',
+  );
+  await expect(cards(page, "background")).toHaveCount(1);
+  expect(await yamlSource(page)).toContain(`background: ${ref}`);
+});
+
+test("an APNG, a file over 25 MiB and a GIF are each refused with a message and change nothing", async ({
+  page,
+}) => {
+  const directory = await mkdtemp(join(tmpdir(), "tora-import-"));
+
+  try {
+    const apng = join(directory, "animated.png");
+    const huge = join(directory, "huge.png");
+    const gif = join(directory, "picture.gif");
+
+    await writeFile(apng, buildApng({width: 4, height: 4}));
+    await writeFile(huge, Buffer.alloc(25 * 1024 * 1024 + 1));
+    await writeFile(gif, buildGifSignature());
+
+    await page.goto("/", {waitUntil: "domcontentloaded"});
+    await waitForOwner(page);
+
+    const before = await yamlSource(page);
+
+    for (const [file, message] of [
+      [apng, "Animated images are not supported."],
+      [huge, "The file is larger than 25 MiB."],
+      [gif, "Only static PNG, JPEG and WebP images are supported."],
+    ]) {
+      await importInput(page, "pose").setInputFiles(file);
+      await expect(alertLine(page, "pose")).toHaveText(message);
+      await expect(cards(page, "pose")).toHaveCount(0);
+      await expect(
+        section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+      ).toBeVisible();
+      expect(await yamlSource(page)).toBe(before);
+      await expect(page.locator(".app-shell")).toHaveAttribute(
+        "data-authoring-locked",
+        "false",
+      );
+    }
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test("importing the same file again says it was already in My assets and keeps one card", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const pose = await readFixture("pose-magenta.png");
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText(
+    '"pose-magenta" was already in My assets; its stored copy was refreshed.',
+  );
+  await expect(cards(page, "pose")).toHaveCount(1);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 1"}),
+  ).toBeVisible();
+});
+
+test("rename changes the label (Enter, Save, Cancel, Escape, invalid) and never the Story", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const before = await yamlSource(page);
+  const input = card.getByRole("textbox");
+  const renameButton = (name) =>
+    card.getByRole("button", {name: `Rename ${name}`, exact: true});
+
+  // Cancel and Escape keep the label.
+  await renameButton("My cat").click();
+  await expect(input).toBeFocused();
+  await expect(card.locator("button[aria-pressed]")).toHaveCount(0);
+  await input.fill("Discarded");
+  await card.getByRole("button", {name: "Cancel"}).click();
+  await expect(input).toHaveCount(0);
+  await expect(card).toContainText("My cat");
+
+  await renameButton("My cat").click();
+  await input.fill("Also discarded");
+  await input.press("Escape");
+  await expect(input).toHaveCount(0);
+  await expect(card).toContainText("My cat");
+
+  // An invalid label shows the validation message and stays in edit mode.
+  await renameButton("My cat").click();
+  await input.fill("   ");
+  await input.press("Enter");
+  await expect(card.getByRole("alert")).toHaveText(
+    "Enter a name for this asset.",
+  );
+  await input.fill("x".repeat(81));
+  await card.getByRole("button", {name: "Save"}).click();
+  await expect(card.getByRole("alert")).toHaveText(
+    "Names can be at most 80 characters.",
+  );
+  await expect(input).toBeVisible();
+
+  // Enter saves.
+  await input.fill("  Best cat  ");
+  await input.press("Enter");
+  await expect(input).toHaveCount(0);
+  await expect(card).toContainText("Best cat");
+  await expect(card.locator("button[aria-pressed]")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+
+  // Save saves.
+  await renameButton("Best cat").click();
+  await input.fill("Final cat");
+  await card.getByRole("button", {name: "Save"}).click();
+  await expect(card).toContainText("Final cat");
+
+  expect(await yamlSource(page)).toBe(before);
+
+  // The new label is stored, not just shown.
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Final cat");
+});
+
+test("renaming an asset that another tab deleted says so and refreshes the list", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+
+  await card.getByRole("button", {name: "Rename My cat", exact: true}).click();
+  await deleteAssetRows(page, [localAssetRef("pose", pose.digest)]);
+  await card.getByRole("textbox").fill("Too late");
+  await card.getByRole("button", {name: "Save"}).click();
+
+  await expect(alertLine(page, "pose")).toHaveText(
+    "This asset was deleted in another tab.",
+  );
+  await expect(cards(page, "pose")).toHaveCount(0);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+  ).toBeVisible();
+});
+
+test("clicking Rename or Delete never changes the selected scene's ref", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const before = await yamlSource(page);
+
+  await card.getByRole("button", {name: "Rename My cat", exact: true}).click();
+  await expect(card.getByRole("textbox")).toBeVisible();
+  await card.getByRole("button", {name: "Cancel"}).click();
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", {name: "Cancel"}).click();
+
+  expect(await yamlSource(page)).toBe(before);
+  await expect(card.locator("button[aria-pressed]")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(card).toContainText("My cat");
+});
+
+test("deleting an unused asset asks first and then removes its card", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const dialog = page.getByRole("dialog");
+
+  await cardFor(page, "pose", pose.digest)
+    .getByRole("button", {name: "Delete My cat", exact: true})
+    .click();
+  await expect(dialog).toContainText('Delete "My cat" (pose) from My assets?');
+  await expect(dialog.getByRole("button")).toHaveText([
+    "Cancel",
+    "Delete asset",
+  ]);
+  await dialog.getByRole("button", {name: "Delete asset", exact: true}).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(cards(page, "pose")).toHaveCount(0);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+  ).toBeVisible();
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(cards(page, "pose")).toHaveCount(0);
+});
+
+test("deleting an in-use asset warns with the scene count and leaves the Story with a missing asset", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {pose: ref, background: "office"},
+      {pose: "formal", background: "office"},
+      {pose: ref, background: "server-room"},
+    ]),
+  );
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(blobImages(page)).toHaveCount(1);
+
+  const dialog = page.getByRole("dialog");
+  const deleteButton = cardFor(page, "pose", pose.digest).getByRole("button", {
+    name: "Delete My cat",
+    exact: true,
+  });
+  const yamlBefore = await yamlSource(page);
+
+  await deleteButton.click();
+  await expect(dialog).toContainText(
+    '"My cat" (pose) is used by 2 scenes in this Story. Deleting it leaves those scenes with a missing local asset, and MP4 rendering stays blocked until you re-import the same file or choose a replacement. Other exported YAML files may also use it.',
+  );
+  await expect(dialog.getByRole("button")).toHaveText([
+    "Cancel",
+    "Delete asset anyway",
+  ]);
+
+  // Cancel keeps everything.
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toBeVisible();
+  await expect(blobImages(page)).toHaveCount(1);
+  expect(await yamlSource(page)).toBe(yamlBefore);
+
+  // Confirming deletes the asset, never the Story's reference.
+  await deleteButton.click();
+  await dialog.getByRole("button", {name: "Delete asset anyway"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toHaveCount(0);
+  await expect(
+    page.locator(`[data-local-asset-placeholder="${ref}"]`),
+  ).toContainText("Missing local pose");
+  await expect(page.locator("[data-missing-local-asset]")).toHaveCount(1);
+  await expect(blobImages(page)).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+  await expect(page.locator(".render-banner")).toHaveAttribute(
+    "data-local-asset-block",
+    /local asset\(s\) are unavailable/u,
+  );
+  expect(await yamlSource(page)).toBe(yamlBefore);
+});
+
+test("the delete dialog is labelled, focuses Cancel and closes on Escape without deleting", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const deleteButton = cardFor(page, "pose", pose.digest).getByRole("button", {
+    name: "Delete My cat",
+    exact: true,
+  });
+
+  await deleteButton.click();
+
+  const dialog = page.getByRole("dialog", {
+    name: 'Delete "My cat" (pose) from My assets?',
+  });
+
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toBeVisible();
+  // Focus returns to the button that opened the dialog.
+  await expect(deleteButton).toBeFocused();
+});
+
+const twoSceneStory = () =>
+  buildStoryYaml([
+    {pose: "formal", background: "office"},
+    {pose: "formal", background: "server-room"},
+  ]);
+
+/** Scene add/move/delete/select, Open YAML, Reset and Render must all be disabled. */
+const expectAuthoringLocked = async (page) => {
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "true",
+  );
+  await expect(page.getByRole("button", {name: "Add scene"})).toBeDisabled();
+  await expect(
+    page.getByRole("button", {name: "Move scene up"}),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", {name: "Move scene down"}),
+  ).toBeDisabled();
+  await expect(
+    page
+      .locator(".scene-form-toolbar")
+      .getByRole("button", {name: "Delete", exact: true}),
+  ).toBeDisabled();
+
+  for (const item of await page.locator(".scene-list-item").all()) {
+    await expect(item).toBeDisabled();
+  }
+
+  await expect(page.getByRole("button", {name: "Open YAML"})).toBeDisabled();
+  await expect(
+    page.getByRole("button", {name: "Reset project"}),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+};
+
+test("during an import authoring is locked, and the ref lands on the scene selected when it started", async ({
+  page,
+}) => {
+  await holdDigests(page);
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await applyYaml(page, twoSceneStory());
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await page.locator(".scene-list-item").nth(1).click();
+
+  const pose = await readFixture("pose-magenta.png");
+
+  await startHeldImport(page, "pose", pose);
+  await expect(statusLine(page, "pose")).toHaveText("Hashing…");
+  await expectAuthoringLocked(page);
+  await expect(importInput(page, "pose")).toBeDisabled();
+  await expect(importInput(page, "background")).toBeDisabled();
+
+  await page.evaluate(() => window.__releaseDigest());
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+
+  // Scene 2 (selected when the import started) has the ref; scene 1 does not.
+  const select = cardFor(page, "pose", pose.digest).locator(
+    "button[aria-pressed]",
+  );
+
+  await expect(select).toHaveAttribute("aria-pressed", "true");
+  await page.locator(".scene-list-item").nth(0).click();
+  await expect(select).toHaveAttribute("aria-pressed", "false");
+  await page.locator(".scene-list-item").nth(1).click();
+  await expect(select).toHaveAttribute("aria-pressed", "true");
+});
+
+test("while the delete dialog is open the Story is frozen and the dialog still works", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await applyYaml(page, twoSceneStory());
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  const dialog = page.getByRole("dialog");
+  const open = () =>
+    cardFor(page, "pose", pose.digest)
+      .getByRole("button", {name: "Delete My cat", exact: true})
+      .click();
+
+  await open();
+  await expect(dialog).toBeVisible();
+  await expectAuthoringLocked(page);
+  await expect(importInput(page, "pose")).toBeDisabled();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  await expect(
+    dialog.getByRole("button", {name: "Delete asset", exact: true}),
+  ).toBeEnabled();
+
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Add scene"})).toBeEnabled();
+  await expect(importInput(page, "pose")).toBeEnabled();
+
+  await open();
+  await dialog.getByRole("button", {name: "Delete asset", exact: true}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cards(page, "pose")).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Add scene"})).toBeEnabled();
+});
+
+test("with a transition panel open the import buttons are disabled, and during an import its confirmations are", async ({
+  page,
+}) => {
+  await holdDigests(page);
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  // An invalid draft makes "Open YAML" ask before leaving the visual editor.
+  await page.getByLabel("Caption").fill("");
+  await page.getByRole("button", {name: "Open YAML"}).click();
+
+  const panel = page.getByRole("dialog");
+
+  await expect(panel).toContainText("Visual draft is invalid.");
+  await expect(importInput(page, "pose")).toBeDisabled();
+  await expect(importInput(page, "background")).toBeDisabled();
+  await panel.getByRole("button", {name: "Stay in visual editor"}).click();
+  await expect(panel).toHaveCount(0);
+  await expect(importInput(page, "pose")).toBeEnabled();
+
+  // The defensive direction. A transition cannot normally open during an
+  // import (Open YAML is disabled), so call the button's React onClick directly,
+  // bypassing the disabled check, and verify the panel's confirmations hold.
+  const pose = await readFixture("pose-magenta.png");
+
+  await startHeldImport(page, "pose", pose);
+  await expect(page.getByRole("button", {name: "Open YAML"})).toBeDisabled();
+  await page.evaluate(() => {
+    const button = [...document.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === "Open YAML",
+    );
+    const propsKey = Object.keys(button).find((key) =>
+      key.startsWith("__reactProps$"),
+    );
+
+    button[propsKey].onClick();
+  });
+  await expect(panel).toContainText("Visual draft is invalid.");
+  await expect(
+    panel.getByRole("button", {name: "Discard visual draft"}),
+  ).toBeDisabled();
+  await page.evaluate(() => window.__releaseDigest());
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+});
+
+test("a failing delete keeps the asset and the dialog, shows why, and Cancel still closes it", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const dialog = page.getByRole("dialog");
+
+  await cardFor(page, "pose", pose.digest)
+    .getByRole("button", {name: "Delete My cat", exact: true})
+    .click();
+  await expect(dialog).toBeVisible();
+  // Every library mutation takes the exclusive Web Lock, so this makes it fail.
+  await page.evaluate(() => {
+    navigator.locks.request = () => Promise.reject(new Error("lock refused"));
+  });
+  await dialog.getByRole("button", {name: "Delete asset", exact: true}).click();
+
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "That didn't work: The asset could not be deleted.",
+  );
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  await expect(cardFor(page, "pose", pose.digest)).toBeVisible();
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
 });

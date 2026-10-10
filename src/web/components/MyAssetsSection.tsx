@@ -11,6 +11,9 @@ import {
   localOnlyDisclosure,
   sceneNumbersUsingRef,
 } from "../localAssetUi.ts";
+import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
+import {useLocalAssetImport} from "../useLocalAssetImport.ts";
+import {useLocalAssetManage} from "../useLocalAssetManage.ts";
 import {useLocalAssetPage} from "../useLocalAssetPage.ts";
 import {LocalAssetCard} from "./LocalAssetCard.tsx";
 
@@ -40,8 +43,8 @@ const currentLocalRef = (
  * One category's My assets block: heading with the total, the local-only
  * disclosure, the current selection pinned first, the page of cards and paging.
  *
- * Importing, renaming and deleting are wired in ASSET-003 task 3, and the real
- * recovery card replaces the placeholder in task 4.
+ * Import, rename and delete live in the two hooks below; the real recovery
+ * card replaces the placeholder in ASSET-003 task 4.
  */
 export const MyAssetsSection = ({
   category,
@@ -51,12 +54,15 @@ export const MyAssetsSection = ({
   const context = useContext(AssetLibraryContext);
   const currentRef = currentLocalRef(category, selectedValue);
   const page = useLocalAssetPage(category, currentRef);
+  // Importing applies the new ref to the selected scene like clicking a card.
+  const imports = useLocalAssetImport(category, onSelect);
+  const manage = useLocalAssetManage();
 
   if (context === null) {
     return null;
   }
 
-  const {status, localAssetState, activeStory} = context;
+  const {status, localAssetState, activeStory, transitionPending} = context;
   const ready = status.kind === "ready";
   const noun = categoryLabel(category);
   const placeholder = (
@@ -109,6 +115,20 @@ export const MyAssetsSection = ({
     );
   };
 
+  const cardActions = (entry: LocalAssetPageEntry) => ({
+    deleteDisabled: transitionPending,
+    onRename: (label: string) => manage.rename(entry.ref, label),
+    onDelete: () =>
+      manage.requestDelete({
+        ref: entry.ref,
+        label:
+          entry.row.status === "present"
+            ? entry.row.value.label
+            : `Damaged entry ${shortAssetId(entry.ref)}`,
+        category,
+      }),
+  });
+
   const renderCurrent = () => {
     if (currentRef === null) {
       return null;
@@ -151,6 +171,7 @@ export const MyAssetsSection = ({
         selected
         current
         canManage={ready}
+        {...cardActions(pinned.entry)}
         onSelect={() => onSelect(currentRef)}
       />
     );
@@ -171,16 +192,41 @@ export const MyAssetsSection = ({
             {localOnlyDisclosure(window.location.origin)}
           </p>
           <div className="my-assets-toolbar">
-            {/* Selecting a file is wired in ASSET-003 task 3. */}
             <label className="file-button import-asset-button">
               Import {noun}
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
-                disabled
+                // Never start an import under a pending App transition panel
+                // (an open asset dialog already disables the whole fieldset).
+                disabled={transitionPending}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+
+                  if (file !== undefined) {
+                    manage.clearNotice();
+                    void imports.importFile(file);
+                  }
+
+                  // Lets the same file be chosen again.
+                  event.target.value = "";
+                }}
               />
             </label>
           </div>
+          <p className="my-assets-status" role="status">
+            {imports.statusText}
+          </p>
+          {imports.errorText === null ? null : (
+            <p className="my-assets-status my-assets-error" role="alert">
+              {imports.errorText}
+            </p>
+          )}
+          {manage.notice === null ? null : (
+            <p className="my-assets-status my-assets-error" role="alert">
+              {manage.notice}
+            </p>
+          )}
         </>
       ) : (
         <p className="my-assets-status" data-my-assets-status>
@@ -197,6 +243,7 @@ export const MyAssetsSection = ({
               entry={entry}
               selected={false}
               canManage={ready}
+              {...cardActions(entry)}
               onSelect={() => onSelect(entry.ref)}
             />
           ))}

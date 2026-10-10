@@ -535,9 +535,43 @@ h1 {
 }
 
 .my-assets-paging button:disabled,
-.local-asset-actions button:disabled {
+.local-asset-actions button:disabled,
+.my-assets-toolbar .file-button:has(input:disabled) {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.my-assets-error {
+  color: #fecaca;
+}
+
+.local-asset-rename {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.local-asset-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #e2e8f0;
+  background: #070a0f;
+  font-size: 12px;
+}
+
+.local-asset-rename-error {
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.local-asset-rename .local-asset-actions {
+  padding: 0;
 }
 
 /* A local card is a non-interactive wrapper around a selection button and an
@@ -545,11 +579,17 @@ h1 {
 .local-asset-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   cursor: default;
 }
 
+/* The grid cells are narrow (four poses per row): stretch and wrap instead of
+   letting a button centre overflowing content. */
 .local-asset-select {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
   width: 100%;
   border: 0;
   padding: 0;
@@ -591,10 +631,19 @@ h1 {
   text-transform: uppercase;
 }
 
+.local-asset-card .asset-card-copy {
+  min-width: 0;
+}
+
+.local-asset-card .asset-card-copy strong {
+  overflow-wrap: anywhere;
+}
+
 .local-asset-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  padding: 0 10px 10px;
+  padding: 0 8px 8px;
 }
 
 .local-asset-placeholder {

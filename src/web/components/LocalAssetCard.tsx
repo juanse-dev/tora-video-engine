@@ -1,3 +1,4 @@
+import {useEffect, useRef, useState} from "react";
 import {shortAssetId} from "../../localAssets/sources.ts";
 import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
 
@@ -8,22 +9,48 @@ type LocalAssetCardProps = {
   current?: boolean;
   /** Management buttons are shown only while the library can be changed. */
   canManage: boolean;
+  /** An App transition panel is open, so a dialog cannot open now. */
+  deleteDisabled?: boolean;
   onSelect: () => void;
+  /** Resolves to an inline error message, or null once the rename is done. */
+  onRename: (label: string) => Promise<string | null>;
+  onDelete: () => void;
 };
 
 /**
  * One My assets card. The wrapper is not interactive; the selection button and
  * the actions row are siblings so no interactive element is ever nested.
- *
- * Rename and Delete are rendered disabled until the flows in ASSET-003 task 3.
+ * Renaming swaps the selection button and the actions row for an input with
+ * Save / Cancel.
  */
 export const LocalAssetCard = ({
   entry,
   selected,
   current = false,
   canManage,
+  deleteDisabled = false,
   onSelect,
+  onRename,
+  onDelete,
 }: LocalAssetCardProps) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const renameButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      renameButtonRef.current?.focus();
+    }
+  }, [editing]);
+
   const className = [
     "asset-card",
     "local-asset-card",
@@ -32,22 +59,6 @@ export const LocalAssetCard = ({
   ]
     .filter(Boolean)
     .join(" ");
-  // Each button names its asset, so a screen reader can tell the cards apart.
-  const actions = (buttons: Array<{text: string; label: string}>) =>
-    canManage ? (
-      <div className="local-asset-actions">
-        {buttons.map(({text, label: accessibleName}) => (
-          <button
-            key={text}
-            type="button"
-            aria-label={accessibleName}
-            disabled
-          >
-            {text}
-          </button>
-        ))}
-      </div>
-    ) : null;
 
   if (entry.row.status !== "present") {
     // A damaged row can only be deleted, never applied.
@@ -61,17 +72,93 @@ export const LocalAssetCard = ({
             <span className="local-badge">Local</span>
           </span>
         </div>
-        {actions([
-          {
-            text: "Delete",
-            label: `Delete damaged entry ${shortAssetId(entry.ref)}`,
-          },
-        ])}
+        {canManage ? (
+          <div className="local-asset-actions">
+            <button
+              type="button"
+              aria-label={`Delete damaged entry ${shortAssetId(entry.ref)}`}
+              disabled={deleteDisabled}
+              onClick={onDelete}
+            >
+              Delete
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   }
 
   const label = entry.row.value.label;
+
+  const stopEditing = () => {
+    restoreFocusRef.current = true;
+    setEditing(false);
+    setError(null);
+  };
+  const save = async () => {
+    if (saving) {
+      return;
+    }
+
+    setSaving(true);
+
+    const message = await onRename(draft);
+
+    setSaving(false);
+
+    if (message === null) {
+      stopEditing();
+    } else {
+      setError(message);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className={className} data-local-asset-card={entry.ref}>
+        <div className="local-asset-rename">
+          <input
+            ref={inputRef}
+            type="text"
+            className="local-asset-rename-input"
+            aria-label={`New name for ${label}`}
+            aria-invalid={error !== null}
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) {
+                return;
+              }
+
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void save();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                stopEditing();
+              }
+            }}
+          />
+          {error === null ? null : (
+            <small className="local-asset-rename-error" role="alert">
+              {error}
+            </small>
+          )}
+          <div className="local-asset-actions">
+            <button type="button" onClick={() => void save()} disabled={saving}>
+              Save
+            </button>
+            <button type="button" onClick={stopEditing}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={className} data-local-asset-card={entry.ref}>
@@ -107,10 +194,31 @@ export const LocalAssetCard = ({
           </span>
         </span>
       </button>
-      {actions([
-        {text: "Rename", label: `Rename ${label}`},
-        {text: "Delete", label: `Delete ${label}`},
-      ])}
+      {canManage ? (
+        // Each button names its asset, so a screen reader can tell the cards apart.
+        <div className="local-asset-actions">
+          <button
+            ref={renameButtonRef}
+            type="button"
+            aria-label={`Rename ${label}`}
+            onClick={() => {
+              setDraft(label);
+              setError(null);
+              setEditing(true);
+            }}
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            aria-label={`Delete ${label}`}
+            disabled={deleteDisabled}
+            onClick={onDelete}
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };
