@@ -127,6 +127,8 @@ WEB-007 is not accepted merely because the static build succeeds. Before declari
 
 The automated WEB-001…006 tests remain the regression suite; this checklist is the production-host verification that cannot be replaced by a local preview server alone.
 
+> **Automated since GATE-001.** `npm run gate -- --url=prod --phase=A` runs steps 1 to 10 of this checklist in a real system Chrome against the deployed origin (step 9 includes the MP4 metadata check) and writes a report; see [docs/release/README.md](../release/README.md). Still human: merging (which publishes the deploy), running the command, pasting the report into the release record (step 11), and the Netlify UI checks unless `NETLIFY_AUTH_TOKEN` is set. The records below are history and stay as written.
+
 ### Deploy Preview verification — 2026-10-01
 
 Deploy Preview #16 at `https://deploy-preview-16--tora-video-engine.netlify.app` was exercised in a real desktop browser. The user confirmed that the Remotion preview loaded successfully and that browser-side MP4 rendering completed successfully using the updated four-scene `Deploy Friday` Story.

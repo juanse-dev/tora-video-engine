@@ -66,6 +66,8 @@ An implementing model must not perform these steps; they need the real productio
 
 Use one browser profile for the whole gate and do not clear its site data.
 
+> **Automated since GATE-001.** `npm run gate -- --url=prod --phase=A` (after Deploy A) and `--phase=B` (after Deploy B) perform steps 2 to 13 in a dedicated Chrome profile and write the Record table below as `report.md`; see [docs/release/README.md](../release/README.md). Still human: merging to publish Deploy A and Deploy B (steps 1 and 9, publishing only), running the two commands, pasting the report, and the Netlify UI checks unless `NETLIFY_AUTH_TOKEN` is set. The numbered steps below stay as the specification of what the suite checks, and the record below is history.
+
 1. **Deploy A** to `https://tora-video-engine.netlify.app`. Record commit and Netlify deploy ID.
 2. Open production with an existing bundled project: it still works, and `localStorage["tora-video-engine:project"]` is still `version: 1`.
 3. Import one custom pose and one custom background (use `tests/fixtures/local-assets/` files). They appear under **My assets**, separate from **Bundled**.

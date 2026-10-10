@@ -1,0 +1,143 @@
+# Release verification guide
+
+One command checks a deployed Tora origin end to end in a real system Chrome and writes a report you paste into the release docs. It replaces the manual browser steps of the production gates ([WEB-007](../web/production-deployment.md#manual-release-verification) manual golden, [ASSET-006 Part B](../assets/ASSET-006-persistence-and-production-verification.md)). The design is in [GATE-001](GATE-001-deployed-verification-suite.md).
+
+## What stays human
+
+- **Merging.** Netlify publishes when a commit lands on `main`: that is Deploy A, then later Deploy B.
+- **Running the two commands** below and **pasting the report** into the docs.
+- **The Netlify UI checks** (see [Netlify checks](#netlify-checks)), unless you set `NETLIFY_AUTH_TOKEN`, in which case the runner checks them read-only.
+
+Everything else (editing, persistence across reload, browser restart and a new deploy, rendering, downloads, the network check, CLI parity) is the suite.
+
+## Requirements
+
+- Node 22 and `npm ci` done in this checkout.
+- Google Chrome installed (system Chrome, `channel: "chrome"`). Do not run `npx playwright install`: bundled Chromium cannot encode H.264 and is not used.
+- The gate uses its own dedicated Chrome profile under `.gate/`. It never touches your own Chrome profile.
+
+## Release procedure
+
+1. **Merge the release PR to `main`.** Wait until Netlify shows that deploy as **Published** (this is Deploy A).
+2. **Run phase A** from the repository root:
+
+   ```bash
+   npm run gate -- --url=prod --phase=A
+   ```
+
+3. **Merge a later commit to `main`** and wait for Netlify to publish it (Deploy B). Do not clear `.gate/prod/`, and run phase B on the same machine, in the same checkout, as phase A. The hours between the two runs do not matter.
+4. **Run phase B**:
+
+   ```bash
+   npm run gate -- --url=prod --phase=B
+   ```
+
+5. Open `.gate/prod/report.md` and paste it (see below).
+
+Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between A and B. Phase B stops immediately if phase A's state is missing or was recorded for another URL.
+
+## Commands
+
+```bash
+npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--url=prod` | `https://tora-video-engine.netlify.app` |
+| `--url=preview:<n>` | The Deploy Preview of pull request `<n>`: `https://deploy-preview-<n>--tora-video-engine.netlify.app`. Use this to rehearse the suite on a PR before merging. |
+| `--url=local` | Builds and serves the app on `http://127.0.0.1:4190` (phase A builds `dist/web`; phase B builds a different, unminified copy into `dist/web-gate-b`). Needs no deploy. |
+| `--url=https://<origin>` | Any other https origin. `http://` is accepted only for loopback hosts. |
+| `--phase=A` / `--phase=B` | Phase A: after Deploy A. Phase B: after Deploy B. |
+| `--headed` | Show the browser window instead of running headless. |
+| `--only=<grep>` | Run only the tests whose title matches (Playwright `--grep`). Useful to debug one item; the report then lists the other items as not recorded. |
+
+The runner exits with Playwright's exit code (non-zero when any check fails, or when the optional Netlify check fails).
+
+## What the suite checks
+
+**Phase A**
+
+- The page's build identity (commit, Netlify deploy ID, context), recorded from `<meta name="tora-build">`.
+- The WEB-007 golden checklist on the bundled canonical Story, in a fresh non-persistent Chrome context: bundled assets load, caption/pose/reorder edits, the Player follows the Active Story, YAML export, reload restores the edits, render capability, render and download (video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 s), Cancel Render, a pending draft blocks rendering, an in-flight render locks authoring.
+- ASSET-006 Part B steps 2 to 8 and 13 in the gate profile: v1 project, import of the two fixtures, reload, browser restart on the same profile, YAML export, MP4 with both images, CLI parity with `npm run video`.
+
+**Phase B** (same profile)
+
+- The build identity differs from phase A's, otherwise it fails with `Deploy B is not live yet: still <identity>`.
+- Assets are still there without re-import, render again, delete an in-use asset (blocked render, Story unchanged), **Import matching file** recovers it, render again.
+
+**Both phases:** a network guard watches every browser context. A violation is any request that is not GET/HEAD/OPTIONS (except Remotion's licence telemetry `register-usage-point`, 4096 bytes or less), and any request body that contains a PNG or JPEG signature or the bytes of a fixture. Violations fail the phase and are listed in the report.
+
+## The report
+
+The report is written to **`.gate/<target>/report.md`** (`prod`, `preview-<n>`, `local`, or the sanitized host), next to `state.json`, `profile/` and `artifacts/` (exported YAML, MP4s, decoded frames, `network.json`). `.gate/` is git-ignored.
+
+It contains, in this order:
+
+1. A result line (`PASS`, `FAIL`, `INCOMPLETE` or `PHASE A PASSED (phase B pending)`), the URL and the time span of each phase.
+2. **ASSET-006 Part B Record**: the table rows in the same order and wording as the record table in the spec (Production URL, Deploy A, Deploy B, Browser + version and profile, Fixture refs, Reload / restart / A → B results, Delete → re-import recovery, No-upload check, CLI parity). After phase A the rows that phase B completes read `pending phase B`; phase B rewrites the whole report.
+3. **WEB-007 golden checklist**: one line per item, ticked or marked FAIL.
+4. **Netlify check**: the API result, or `Netlify check: manual (no token)`.
+5. **Failures**: each failing item with its message, or `None.`
+
+The report never contains the Netlify token or any secret.
+
+### Where to paste it
+
+- The Record table rows go into the **Record** table of [ASSET-006 Part B](../assets/ASSET-006-persistence-and-production-verification.md), or into a new release record if you are verifying a later release (keep older records as history).
+- The golden checklist goes into the [Production release record](../web/production-deployment.md#production-release-record) of the deployment doc.
+
+## Netlify checks
+
+### With `NETLIFY_AUTH_TOKEN` (optional)
+
+When the variable is set, the **runner** (never the browser) makes read-only `GET` requests to the Netlify API for the site and for the deploy ID found in the page's build identity, and checks that:
+
+- the deploy is `ready`;
+- its commit equals the page's commit;
+- for `prod`, it is the site's published production deploy;
+- whether it has Functions (this app should have none).
+
+It never calls a mutating endpoint and never prints the token. Local targets skip this check.
+
+Use a personal access token (Netlify: User settings, Applications, Personal access tokens). Set it only for the current session:
+
+```powershell
+# PowerShell
+$env:NETLIFY_AUTH_TOKEN = "<token>"
+npm run gate -- --url=prod --phase=A
+```
+
+```bash
+# bash
+NETLIFY_AUTH_TOKEN="<token>" npm run gate -- --url=prod --phase=A
+```
+
+Do not commit the token or put it in a file in the repository.
+
+### Without a token (manual)
+
+The report says `Netlify check: manual (no token)`. In the Netlify UI for the site, confirm for Deploy A and Deploy B and note it next to the Record rows:
+
+- the deploy is **Published** and its status is **ready**;
+- the deploy's commit matches the commit in the report's Deploy A / Deploy B rows (the Netlify deploy ID is in the same row);
+- no Functions or Edge Functions are listed for the deploy.
+
+## Remotion telemetry (production safety)
+
+The suite only reads the static site and writes to its own profile under `.gate/`. Each browser render sends Remotion's licence telemetry (`register-usage-point`, about 0.2 kB, no user data), the same as a person doing the gate by hand: about 5 requests in a phase A run and about 2 in a phase B run. Do not run the suite against `prod` as a rehearsal; use `--url=local` or `--url=preview:<n>`.
+
+## Troubleshooting
+
+| Message or symptom | What to do |
+| --- | --- |
+| `Deploy B is not live yet: still <identity>` | Netlify has not published a new deploy at that URL. Wait until Deploy B is **Published**, then run phase B again. |
+| `Phase B needs phase A's state` / `Phase A was run for <other url>` | Run phase A first, on this machine, for the same URL. Phase A recreates `.gate/<target>/`; do not run it again between A and B. |
+| Port 4190 is already in use (`--url=local`) | Another process holds the port, often a leftover `vite preview` or another gate run. Stop it and retry. |
+| Chrome is not found | Install Google Chrome (the suite launches `channel: "chrome"`). Do not run `npx playwright install`. |
+| CLI parity cannot find a browser | Point Remotion's CLI at Chrome with `TORA_REMOTION_BROWSER_EXECUTABLE`. PowerShell: `$env:TORA_REMOTION_BROWSER_EXECUTABLE = "C:\Program Files\Google\Chrome\Application\chrome.exe"`. bash: `export TORA_REMOTION_BROWSER_EXECUTABLE=/usr/bin/google-chrome`. |
+| `Gate environment is not set` | Do not call `playwright test --config=playwright.gate.config.mjs` directly; use `npm run gate -- ...`. |
+| Netlify check: fail | Read the check list in the report. `check NETLIFY_AUTH_TOKEN` means the token is wrong or lacks access. |
+| Network guard violation | The report lists the request. Something sent data the suite forbids: treat it as a release blocker and investigate before shipping. |
+| Cancel Render item says `cleanup-blocked` | Known app behaviour after cancelling a render; the item still passes as long as authoring unlocks and nothing downloads. |
