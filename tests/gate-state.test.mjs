@@ -112,11 +112,23 @@ describe("GATE-001 G4 phase B load", () => {
   it("starts B, keeps A and drops results and Netlify data of an earlier B run", async () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", {identity: identity("d1")});
-    await recordResult(stateDir, "reload", {status: "pass", detail: "ok", phase: "A"});
-    await recordResult(stateDir, "deleteReimport", {status: "pass", detail: "old", phase: "B"});
+    await recordResult(stateDir, "reload", {
+      status: "pass",
+      detail: "ok",
+      phase: "A",
+    });
+    await recordResult(stateDir, "deleteReimport", {
+      status: "pass",
+      detail: "old",
+      phase: "B",
+    });
     await recordNetlify(stateDir, "A", {status: "pass", detail: "a"});
     await startPhaseB({stateDir, url: URL_A, now: "t1"});
-    await recordResult(stateDir, "deleteReimport", {status: "fail", detail: "stale", phase: "B"});
+    await recordResult(stateDir, "deleteReimport", {
+      status: "fail",
+      detail: "stale",
+      phase: "B",
+    });
     await recordNetlify(stateDir, "B", {status: "fail", detail: "stale"});
 
     const state = await startPhaseB({stateDir, url: URL_A, now: "t2"});
@@ -134,7 +146,9 @@ describe("GATE-001 state API for the specs", () => {
   });
 
   it("merges phase data without losing earlier fields", async () => {
-    await mergePhase(stateDir, "A", {browser: {name: "Chrome", version: "154"}});
+    await mergePhase(stateDir, "A", {
+      browser: {name: "Chrome", version: "154"},
+    });
     await mergePhase(stateDir, "A", {identity: identity("d1")});
 
     const state = await readState(stateDir);
@@ -145,13 +159,25 @@ describe("GATE-001 state API for the specs", () => {
   });
 
   it("records results keyed by name and overwrites the same key", async () => {
-    await recordResult(stateDir, "reload", {status: "pending", detail: "A ok", phase: "A"});
-    await recordResult(stateDir, "reload", {status: "pass", detail: "all ok", phase: "B"});
+    await recordResult(stateDir, "reload", {
+      status: "pending",
+      detail: "A ok",
+      phase: "A",
+    });
+    await recordResult(stateDir, "reload", {
+      status: "pass",
+      detail: "all ok",
+      phase: "B",
+    });
     await recordResult(stateDir, "cliParity", {status: "fail", detail: "boom"});
 
     const {results} = await readState(stateDir);
 
-    assert.deepEqual(results.reload, {status: "pass", detail: "all ok", phase: "B"});
+    assert.deepEqual(results.reload, {
+      status: "pass",
+      detail: "all ok",
+      phase: "B",
+    });
     assert.equal(results.cliParity.status, "fail");
   });
 
@@ -177,13 +203,20 @@ describe("GATE-001 state API for the specs", () => {
   });
 
   it("stores the Netlify result per phase", async () => {
-    await recordNetlify(stateDir, "A", {status: "manual", detail: "manual (no token)"});
+    await recordNetlify(stateDir, "A", {
+      status: "manual",
+      detail: "manual (no token)",
+    });
 
     assert.equal((await readState(stateDir)).netlify.A.status, "manual");
   });
 
   it("serialises to valid JSON on disk", async () => {
-    await recordResult(stateDir, "reload", {status: "pass", detail: "ok", phase: "A"});
+    await recordResult(stateDir, "reload", {
+      status: "pass",
+      detail: "ok",
+      phase: "A",
+    });
 
     JSON.parse(await readFile(statePaths(stateDir).statePath, "utf8"));
   });
@@ -204,7 +237,10 @@ describe("GATE-001 G2/G4 assertNewBuild", () => {
   });
 
   it("fails when phase A has no identity", () => {
-    assert.throws(() => assertNewBuild({a: {}}, identity("d2")), /no build identity/);
+    assert.throws(
+      () => assertNewBuild({a: {}}, identity("d2")),
+      /no build identity/,
+    );
   });
 });
 
@@ -237,7 +273,10 @@ describe("GATE-001 G3 readGateEnv", () => {
   });
 
   it("rejects a bad phase", () => {
-    assert.throws(() => readGateEnv({...full, TORA_GATE_PHASE: "C"}), /TORA_GATE_PHASE/);
+    assert.throws(
+      () => readGateEnv({...full, TORA_GATE_PHASE: "C"}),
+      /TORA_GATE_PHASE/,
+    );
   });
 });
 
@@ -247,7 +286,10 @@ describe("GATE-001 recordFailureOf", () => {
   });
 
   it("returns the value and records nothing on success", async () => {
-    assert.equal(await recordFailureOf(stateDir, "buildIdentity", async () => 7), 7);
+    assert.equal(
+      await recordFailureOf(stateDir, "buildIdentity", async () => 7),
+      7,
+    );
     assert.deepEqual((await readState(stateDir)).results, {});
   });
 
@@ -268,12 +310,18 @@ describe("GATE-001 recordFailureOf", () => {
   it("keeps a more specific failure that was already recorded", async () => {
     await assert.rejects(
       recordFailureOf(stateDir, "buildIdentity", async () => {
-        await recordResult(stateDir, "buildIdentity", {status: "fail", detail: "listed violations"});
+        await recordResult(stateDir, "buildIdentity", {
+          status: "fail",
+          detail: "listed violations",
+        });
         throw new Error("expect(received).toEqual(expected)");
       }),
     );
 
-    assert.equal((await readState(stateDir)).results.buildIdentity.detail, "listed violations");
+    assert.equal(
+      (await readState(stateDir)).results.buildIdentity.detail,
+      "listed violations",
+    );
   });
 });
 
@@ -293,16 +341,21 @@ describe("GATE-001 phase B profile snapshot", () => {
   });
 
   it("snapshots the profile on the first phase B run", async () => {
-    await writeProfile({"marker": "m1", "Default/db": "one"});
+    await writeProfile({marker: "m1", "Default/db": "one"});
 
-    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: false});
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {
+      restored: false,
+    });
     assert.equal(await read("profile-before-b", "marker"), "m1");
     assert.equal(await read("profile-before-b", "Default", "db"), "one");
-    assert.equal(statePaths(stateDir).snapshotDir, join(stateDir, "profile-before-b"));
+    assert.equal(
+      statePaths(stateDir).snapshotDir,
+      join(stateDir, "profile-before-b"),
+    );
   });
 
   it("restores the profile from the snapshot on a rerun", async () => {
-    await writeProfile({"marker": "m1", "Default/db": "one"});
+    await writeProfile({marker: "m1", "Default/db": "one"});
     await prepareProfileForPhaseB(stateDir);
 
     // What a failed phase B run leaves behind: a changed and a new file, a removed one.
@@ -312,7 +365,10 @@ describe("GATE-001 phase B profile snapshot", () => {
     assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: true});
     assert.equal(await read("profile", "marker"), "m1");
     assert.equal(await read("profile", "Default", "db"), "one");
-    assert.equal(existsSync(join(stateDir, "profile", "Default", "extra")), false);
+    assert.equal(
+      existsSync(join(stateDir, "profile", "Default", "extra")),
+      false,
+    );
 
     // The snapshot is kept for further reruns.
     await writeProfile({"Default/db": "again"});
@@ -406,6 +462,106 @@ describe("GATE-001 recordFailureOf label", () => {
       ),
     );
 
-    assert.equal((await readState(stateDir)).results.reload.detail, "step 5: boom");
+    assert.equal(
+      (await readState(stateDir)).results.reload.detail,
+      "step 5: boom",
+    );
+  });
+});
+
+describe("GATE-001 profile snapshot is atomic", () => {
+  const failingCopy = async () => {
+    throw new Error("ENOSPC: no space left on device");
+  };
+  const halfCopy = async (from, to) => {
+    await mkdir(to, {recursive: true});
+    await writeFile(join(to, "partial"), "half");
+    throw new Error("ENOSPC: no space left on device");
+  };
+
+  beforeEach(async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await writeFile(join(stateDir, "profile", "marker"), "live");
+  });
+
+  it("replaces a stale .tmp left by an interrupted run", async () => {
+    const tmp = join(stateDir, "profile-before-b.tmp");
+
+    await mkdir(tmp, {recursive: true});
+    await writeFile(join(tmp, "junk"), "stale");
+
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {
+      restored: false,
+    });
+    assert.equal(existsSync(tmp), false);
+    assert.equal(existsSync(join(stateDir, "profile-before-b", "junk")), false);
+    assert.equal(
+      await readFile(join(stateDir, "profile-before-b", "marker"), "utf8"),
+      "live",
+    );
+  });
+
+  it("a failed snapshot copy leaves no snapshot and the live profile untouched", async () => {
+    await assert.rejects(
+      prepareProfileForPhaseB(stateDir, {copy: halfCopy}),
+      /ENOSPC/,
+    );
+
+    assert.equal(existsSync(join(stateDir, "profile-before-b")), false);
+    assert.equal(existsSync(join(stateDir, "profile-before-b.tmp")), false);
+    assert.equal(
+      await readFile(join(stateDir, "profile", "marker"), "utf8"),
+      "live",
+    );
+
+    // The next run snapshots normally instead of restoring from a half copy.
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {
+      restored: false,
+    });
+  });
+
+  it("a failed restore copy leaves the profile and the snapshot intact", async () => {
+    await prepareProfileForPhaseB(stateDir);
+    await writeFile(join(stateDir, "profile", "marker"), "changed by phase B");
+
+    await assert.rejects(
+      prepareProfileForPhaseB(stateDir, {copy: failingCopy}),
+      /ENOSPC/,
+    );
+
+    assert.equal(
+      await readFile(join(stateDir, "profile", "marker"), "utf8"),
+      "changed by phase B",
+    );
+    assert.equal(
+      await readFile(join(stateDir, "profile-before-b", "marker"), "utf8"),
+      "live",
+    );
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: true});
+    assert.equal(
+      await readFile(join(stateDir, "profile", "marker"), "utf8"),
+      "live",
+    );
+  });
+
+  it("restores via a temp copy and leaves no .tmp behind", async () => {
+    await prepareProfileForPhaseB(stateDir);
+    await prepareProfileForPhaseB(stateDir);
+
+    assert.equal(existsSync(join(stateDir, "profile.tmp")), false);
+    assert.equal(existsSync(join(stateDir, "profile-before-b.tmp")), false);
+  });
+});
+
+describe("GATE-001 recordFailureOf guards its own bookkeeping", () => {
+  it("rethrows the original error when state cannot be read or written", async () => {
+    const original = new Error("the step failed");
+
+    await assert.rejects(
+      recordFailureOf(join(root, "no-such-dir"), "reload", async () => {
+        throw original;
+      }),
+      (error) => error === original,
+    );
   });
 });

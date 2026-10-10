@@ -9,7 +9,15 @@
 // Specs write into state.json through mergePhase / recordResult /
 // recordNetlify, never by editing the file themselves.
 
-import {cp, mkdir, readFile, rm, stat, writeFile} from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {formatIdentity} from "./buildIdentity.mjs";
@@ -293,22 +301,29 @@ export const recordFailureOf = async (stateDir, key, run, {label} = {}) => {
   try {
     return await run();
   } catch (error) {
-    const existing = (await readState(stateDir)).results[key];
+    // Bookkeeping must never replace the step's own error.
+    try {
+      const existing = (await readState(stateDir)).results[key];
 
-    if (existing?.status !== "fail") {
-      const message = (error instanceof Error ? error.message : String(error))
-        // eslint-disable-next-line no-control-regex
-        .replace(/\u001b\[[0-9;]*m/g, "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line !== "")
-        .slice(0, 3)
-        .join(" ");
+      if (existing?.status !== "fail") {
+        const message = (error instanceof Error ? error.message : String(error))
+          // eslint-disable-next-line no-control-regex
+          .replace(/\u001b\[[0-9;]*m/g, "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line !== "")
+          .slice(0, 3)
+          .join(" ");
 
-      await recordResult(stateDir, key, {
-        status: "fail",
-        detail: label ? `${label}: ${message}` : message,
-      });
+        await recordResult(stateDir, key, {
+          status: "fail",
+          detail: label ? `${label}: ${message}` : message,
+        });
+      }
+    } catch (recordError) {
+      console.error(
+        `could not record the failure of "${key}": ${recordError instanceof Error ? recordError.message : recordError}`,
+      );
     }
 
     throw error;
@@ -347,20 +362,57 @@ const withRetries = async (run) => {
  * snapshots the profile (Chrome must be closed) and a rerun restores it first.
  * Phase A deletes the snapshot with the rest of the dir.
  *
+ * Both directions copy to a `.tmp` sibling and rename it into place. A copy
+ * that dies halfway (ENOSPC, Ctrl-C) therefore never leaves a partial snapshot
+ * to be restored from, and the live profile is only removed after the copy
+ * that replaces it is complete.
+ *
  * @param {string} stateDir
+ * @param {{copy?: (from: string, to: string) => Promise<void>}} [options]  copy is injectable for tests
  * @returns {Promise<{restored: boolean}>}
  */
-export const prepareProfileForPhaseB = async (stateDir) => {
+export const prepareProfileForPhaseB = async (
+  stateDir,
+  {copy = (from, to) => cp(from, to, {recursive: true})} = {},
+) => {
   const {profileDir, snapshotDir} = statePaths(stateDir);
   const exists = async (/** @type {string} */ path) =>
     stat(path).then(
       () => true,
       () => false,
     );
+  const removeDir = (/** @type {string} */ path) =>
+    withRetries(() => rm(path, {recursive: true, force: true}));
+
+  /**
+   * Copies `from` to `${to}.tmp` (replacing a stale one), then renames it to
+   * `to`, removing the existing `to` first when `replace` is set.
+   */
+  const copyInto = async (
+    /** @type {string} */ from,
+    /** @type {string} */ to,
+    /** @type {boolean} */ replace,
+  ) => {
+    const tmp = `${to}.tmp`;
+
+    await removeDir(tmp);
+
+    try {
+      await withRetries(() => copy(from, tmp));
+    } catch (error) {
+      await removeDir(tmp).catch(() => {});
+      throw error;
+    }
+
+    if (replace) {
+      await removeDir(to);
+    }
+
+    await withRetries(() => rename(tmp, to));
+  };
 
   if (await exists(snapshotDir)) {
-    await withRetries(() => rm(profileDir, {recursive: true, force: true}));
-    await withRetries(() => cp(snapshotDir, profileDir, {recursive: true}));
+    await copyInto(snapshotDir, profileDir, true);
 
     return {restored: true};
   }
@@ -371,7 +423,7 @@ export const prepareProfileForPhaseB = async (stateDir) => {
     );
   }
 
-  await withRetries(() => cp(profileDir, snapshotDir, {recursive: true}));
+  await copyInto(profileDir, snapshotDir, false);
 
   return {restored: false};
 };
