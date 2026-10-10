@@ -5,6 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {afterEach, beforeEach, describe, it} from "node:test";
 import {
+  assertInsideGateDir,
   assertNewBuild,
   assertPhaseAPassed,
   mergePhase,
@@ -26,6 +27,14 @@ const identity = (deployId) => ({
   commit: "abc1234",
   deployId,
   context: "production",
+});
+// What a passed phase A leaves in state.json (see phaseAIncompleteReason).
+const finishedA = (deployId = "d1") => ({
+  identity: identity(deployId),
+  reloadDetail: "Phase A pass.",
+  profileMarker: "token",
+  networkSummary: "0 non-GET request(s)",
+  exitCode: 0,
 });
 
 let root;
@@ -109,9 +118,25 @@ describe("GATE-001 G4 phase B load", () => {
     );
   });
 
-  it("starts B, keeps A and drops results and Netlify data of an earlier B run", async () => {
+  it("fails before changing anything when phase A did not pass", async () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", {identity: identity("d1")});
+    await recordResult(stateDir, "cliParity", {
+      status: "fail",
+      detail: "boom",
+      phase: "A",
+    });
+
+    await assert.rejects(
+      startPhaseB({stateDir, url: URL_A}),
+      /Phase A did not pass \(.*reloadDetail.*cliParity.*\); rerun phase A before phase B/s,
+    );
+    assert.equal((await readState(stateDir)).b, undefined);
+  });
+
+  it("starts B, keeps A and drops results and Netlify data of an earlier B run", async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await mergePhase(stateDir, "A", finishedA("d1"));
     await recordResult(stateDir, "reload", {
       status: "pass",
       detail: "ok",
@@ -562,6 +587,158 @@ describe("GATE-001 recordFailureOf guards its own bookkeeping", () => {
         throw original;
       }),
       (error) => error === original,
+    );
+  });
+});
+
+describe("GATE-001 target directory containment", () => {
+  it("accepts only a direct child of <root>/.gate", () => {
+    assert.doesNotThrow(() => assertInsideGateDir(join(root, ".gate", "prod"), root));
+    assert.doesNotThrow(() => assertInsideGateDir(join(root, ".gate", "prod")));
+  });
+
+  it("rejects the root, .gate itself, a sibling, a parent and nested paths", () => {
+    for (const bad of [
+      root,
+      join(root, ".gate"),
+      join(root, ".gate", ".."),
+      join(root, ".gate", "..", ".."),
+      join(root, ".gate", "."),
+      join(root, "other", "prod"),
+      join(root, ".gate", "a", "b"),
+      join(root, ".gate-x", "prod"),
+      join(root, "src"),
+    ]) {
+      assert.throws(() => assertInsideGateDir(bad, root), /\.gate/, bad);
+      assert.throws(() => assertInsideGateDir(bad), /\.gate/, bad);
+    }
+  });
+
+  it("rejects a .gate dir that belongs to another root when a root is given", () => {
+    assert.throws(
+      () => assertInsideGateDir(join(root, "elsewhere", ".gate", "prod"), root),
+      /\.gate/,
+    );
+  });
+
+  it("targetDir rejects unsafe slugs", () => {
+    for (const slug of ["", ".", "..", "../x", "a/b", "A", "x y"]) {
+      assert.throws(() => targetDir(slug, root), /slug/i, JSON.stringify(slug));
+    }
+    assert.equal(targetDir("host-prod", root), join(root, ".gate", "host-prod"));
+  });
+
+  it("phase A deletes nothing outside .gate/<slug>", async () => {
+    await writeFile(join(root, "keep.txt"), "keep");
+    await mkdir(join(root, ".gate"), {recursive: true});
+    await writeFile(join(root, ".gate", "sibling.txt"), "keep");
+
+    for (const bad of [
+      root,
+      join(root, ".gate"),
+      join(root, ".gate", ".."),
+      join(root, "other"),
+    ]) {
+      await assert.rejects(
+        startPhaseA({stateDir: bad, target: "x", url: URL_A, root}),
+        /\.gate/,
+        bad,
+      );
+    }
+
+    assert.equal(await readFile(join(root, "keep.txt"), "utf8"), "keep");
+    assert.equal(await readFile(join(root, ".gate", "sibling.txt"), "utf8"), "keep");
+  });
+
+  it("the profile snapshot step deletes nothing outside .gate/<slug>", async () => {
+    await mkdir(join(root, "profile"), {recursive: true});
+    await writeFile(join(root, "profile", "keep.txt"), "keep");
+    await mkdir(join(root, "profile-before-b"), {recursive: true});
+
+    await assert.rejects(prepareProfileForPhaseB(root), /\.gate/);
+    assert.equal(await readFile(join(root, "profile", "keep.txt"), "utf8"), "keep");
+    assert.equal(existsSync(join(root, "profile-before-b")), true);
+  });
+});
+
+describe("GATE-001 phase A refuses to wipe a pending A to B", () => {
+  const seed = async (patchA = finishedA()) => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await mergePhase(stateDir, "A", patchA);
+    await writeFile(join(stateDir, "profile", "marker.txt"), "keep");
+  };
+  const markerSurvives = async () =>
+    (await readFile(join(stateDir, "profile", "marker.txt"), "utf8")) === "keep";
+
+  it("refuses when phase A passed and phase B has not run, leaving everything", async () => {
+    await seed();
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+      /phase A already passed.*--fresh/is,
+    );
+    assert.equal(await markerSurvives(), true);
+    assert.equal((await readState(stateDir)).a.identity.deployId, "d1");
+  });
+
+  it("also refuses after phase B ran, so a finished record is not lost unasked", async () => {
+    await seed();
+    await startPhaseB({stateDir, url: URL_A});
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+      /--fresh/,
+    );
+    assert.equal(await markerSurvives(), true);
+  });
+
+  it("starts over with fresh: true", async () => {
+    await seed();
+
+    const state = await startPhaseA({
+      stateDir,
+      target: "prod",
+      url: URL_A,
+      fresh: true,
+    });
+
+    assert.deepEqual(state.results, {});
+    assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), false);
+  });
+
+  it("does not refuse when there is no state", async () => {
+    await assert.doesNotReject(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+    );
+  });
+
+  it("does not refuse when state.json is unreadable", async () => {
+    await seed();
+    await writeFile(join(stateDir, "state.json"), "{not json");
+
+    await assert.doesNotReject(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+    );
+  });
+
+  it("does not refuse when the earlier phase A did not pass", async () => {
+    await seed({identity: identity("d1")});
+    await recordResult(stateDir, "reload", {
+      status: "fail",
+      detail: "boom",
+      phase: "A",
+    });
+
+    await assert.doesNotReject(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+    );
+  });
+
+  it("does not refuse when Playwright exited non-zero in the earlier phase A", async () => {
+    await seed({...finishedA(), exitCode: 1});
+
+    await assert.doesNotReject(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
     );
   });
 });

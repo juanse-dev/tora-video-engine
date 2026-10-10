@@ -18,8 +18,9 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import {dirname, join, resolve} from "node:path";
+import {basename, dirname, isAbsolute, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {assertSafeSlug} from "../../../scripts/gateTarget.mjs";
 import {formatIdentity} from "./buildIdentity.mjs";
 
 export const REPO_ROOT = resolve(
@@ -46,10 +47,44 @@ const RUN_HINT = "npm run gate -- --url=<target> --phase=<A|B>";
  */
 
 /**
+ * Phase A and the profile snapshot step delete directories under the state
+ * dir, so they only ever do it for a direct child of a `.gate` directory:
+ * `<root>/.gate/<slug>`. Without `root` the parent just has to be named
+ * `.gate`.
+ *
+ * @param {string} stateDir
+ * @param {string} [root]  the repo root the state dir must live under
+ */
+export const assertInsideGateDir = (stateDir, root) => {
+  const resolved = resolve(stateDir);
+  const gateDir = root ? resolve(root, ".gate") : dirname(resolved);
+  const inside = relative(gateDir, resolved);
+  const direct =
+    inside !== "" &&
+    !isAbsolute(inside) &&
+    !inside.includes("/") &&
+    !inside.includes("\\") &&
+    inside !== "." &&
+    inside !== "..";
+
+  if (basename(gateDir) !== ".gate" || !direct) {
+    throw new Error(
+      `Refusing to touch ${resolved}: a gate state directory must be a direct child of ${root ? gateDir : "a .gate directory"}.`,
+    );
+  }
+
+  return resolved;
+};
+
+/**
  * @param {string} slug
  * @param {string} [root]
  */
-export const targetDir = (slug, root = REPO_ROOT) => join(root, ".gate", slug);
+export const targetDir = (slug, root = REPO_ROOT) => {
+  assertSafeSlug(slug);
+
+  return assertInsideGateDir(join(root, ".gate", slug), root);
+};
 
 /** @param {string} stateDir */
 export const statePaths = (stateDir) => ({
@@ -130,9 +165,39 @@ const updateState = async (stateDir, change) => {
 };
 
 /**
+ * Whether the state in `stateDir` is a phase A that passed (so phase B can,
+ * or could, build on it). A missing or unreadable state.json is not.
+ *
+ * @param {string} stateDir
+ * @returns {Promise<GateState | null>}
+ */
+const readPassedPhaseA = async (stateDir) => {
+  /** @type {GateState} */
+  let state;
+
+  try {
+    state = await readState(stateDir);
+  } catch {
+    return null;
+  }
+
+  const exitCode = state.a?.exitCode;
+
+  return state.a?.identity &&
+    phaseAIncompleteReason(state) === null &&
+    (typeof exitCode !== "number" || exitCode === 0)
+    ? state
+    : null;
+};
+
+/**
  * Phase A: delete and recreate the target dir, write a fresh state.json.
  *
- * @param {{stateDir: string, target: string, url: string, now?: string}} options
+ * Refuses when the dir holds a phase A that passed (phase B pending, or
+ * already run) unless `fresh` is set: phase A cannot be redone once Deploy B
+ * is live without another deploy, and the profile it built is deleted here.
+ *
+ * @param {{stateDir: string, target: string, url: string, now?: string, fresh?: boolean, root?: string}} options
  * @returns {Promise<GateState>}
  */
 export const startPhaseA = async ({
@@ -140,8 +205,19 @@ export const startPhaseA = async ({
   target,
   url,
   now = new Date().toISOString(),
+  fresh = false,
+  root,
 }) => {
+  assertInsideGateDir(stateDir, root);
+
   const paths = statePaths(stateDir);
+  const earlier = fresh ? null : await readPassedPhaseA(stateDir);
+
+  if (earlier) {
+    throw new Error(
+      `Phase A already passed for ${earlier.url} (state at ${paths.statePath}) and ${earlier.b ? "phase B has run" : "phase B has not run yet"}. Running phase A again deletes that profile, and redoing A after Deploy B is live costs another deploy. ${earlier.b ? "To start a new release" : "Run phase B instead, or to start over"}, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
+    );
+  }
 
   await rm(stateDir, REMOVE_OPTIONS);
   await mkdir(paths.profileDir, {recursive: true});
@@ -200,6 +276,8 @@ export const startPhaseB = async ({
       `Phase A did not record a build identity (state at ${statePaths(stateDir).statePath}). Run phase A again until it passes the build-identity check.`,
     );
   }
+
+  assertPhaseAPassed(state);
 
   state.b = {startedAt: now};
   state.results = Object.fromEntries(
@@ -375,6 +453,8 @@ export const prepareProfileForPhaseB = async (
   stateDir,
   {copy = (from, to) => cp(from, to, {recursive: true})} = {},
 ) => {
+  assertInsideGateDir(stateDir);
+
   const {profileDir, snapshotDir} = statePaths(stateDir);
   const exists = async (/** @type {string} */ path) =>
     stat(path).then(
