@@ -8,7 +8,17 @@ import {
   waitForOwner,
 } from "../browser/helpers/localAssetPage.mjs";
 import {probeMp4} from "../helpers/ffmpeg.mjs";
-import {attachNetworkGuard} from "./helpers/networkGuard.mjs";
+import {
+  readGateEnv,
+  recordResult as recordGateResult,
+  statePaths,
+} from "./helpers/gateState.mjs";
+import {GOLDEN_ITEMS} from "./helpers/report.mjs";
+import {
+  attachNetworkGuard,
+  saveNetworkLog,
+  summarizeNetwork,
+} from "./helpers/networkGuard.mjs";
 
 // GATE-001 T3: the WEB-007 manual golden checklist on the bundled canonical
 // Story ("Deploy Friday"), against the deployed origin (`use.baseURL`). Phase A
@@ -20,33 +30,31 @@ import {attachNetworkGuard} from "./helpers/networkGuard.mjs";
 // reload that restores it, a render of it), so the describe is serial: after a
 // failure the remaining items are reported as not run.
 
-const PHASE = process.env.TORA_GATE_PHASE;
+const gate = readGateEnv();
 const CAPTION_EDIT = "WEB-007 golden caption";
 const ORIGINAL_FIRST_CAPTION =
   "Tora tiene una regla: Nunca desplegar en viernes.";
 const SECOND_CAPTION =
   "Pero es solo un cambio pequeño... qué es lo peor que podría pasar?";
+const FOLLOW_CAPTION = "WEB-007 Player follows the Active Story";
 const RENDER_TIMEOUT_MS = 220_000;
 
 // --- result recording ------------------------------------------------------
 
-const results = new Map();
-
 /**
- * GATE-001 INTEGRATION HOOK (T3 -> T1 report plumbing). The only place this
- * spec reports a WEB-007 checklist result. `key` is `web007.<item>`,
- * `status` is "passed" or "failed", `detail` is a short message (the failure
- * message when failed).
- *
- * T1's report module was not available when this spec was written. After
- * rebasing onto T1, replace the body with a call to its
- * `recordResult(stateDir, key, {status, detail})` (tests/gate/helpers/
- * report.mjs or gateState.mjs). Until then the results are kept in memory and
- * attached to the Playwright report as `web007-results.json`.
+ * Records one WEB-007 checklist item into state.json (GATE-001 T1's
+ * recordResult). `key` is a `golden.*` key of GOLDEN_ITEMS (report.mjs);
+ * `status` is "pass", "fail" or "skip"; `detail` is a short message (the
+ * failure message when failed). It is the only place this spec reports.
  */
-const recordResult = async (key, {status, detail}) => {
-  results.set(key, {status, detail});
-};
+const recordResult = (key, status, detail) =>
+  recordGateResult(gate.stateDir, key, {status, detail});
+
+const recorded = new Set();
+
+// Playwright colours assertion messages; the report is plain Markdown.
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (text) => text.replace(/\[[0-9;]*m/g, "");
 
 // --- browser ---------------------------------------------------------------
 
@@ -122,7 +130,11 @@ const startRender = async () => {
   await expect(shell()).toHaveAttribute("data-render-state", "rendering");
 };
 
-/** One checklist item = one test; the outcome goes through `recordResult`. */
+/**
+ * One checklist item = one test; the outcome goes through `recordResult`.
+ * `body` may return a string that becomes the recorded detail (default "ok");
+ * the report prints it after the item's label.
+ */
 const item = (key, title, body, {timeout} = {}) => {
   test(`${key}: ${title}`, async () => {
     if (timeout !== undefined) {
@@ -130,13 +142,21 @@ const item = (key, title, body, {timeout} = {}) => {
     }
 
     try {
-      await body();
-      await recordResult(`web007.${key}`, {status: "passed", detail: title});
+      const extra = await body();
+
+      recorded.add(key);
+      await recordResult(
+        key,
+        "pass",
+        typeof extra === "string" ? extra : "ok",
+      );
     } catch (error) {
-      await recordResult(`web007.${key}`, {
-        status: "failed",
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      recorded.add(key);
+      await recordResult(
+        key,
+        "fail",
+        stripAnsi(error instanceof Error ? error.message : String(error)),
+      );
       throw error;
     }
   });
@@ -145,7 +165,7 @@ const item = (key, title, body, {timeout} = {}) => {
 // --- the checklist ---------------------------------------------------------
 
 test.describe("WEB-007 golden on the bundled canonical Story", () => {
-  test.skip(PHASE === "B", "The WEB-007 golden runs in phase A only");
+  test.skip(gate.phase === "B", "The WEB-007 golden runs in phase A only");
   test.describe.configure({mode: "serial"});
 
   test.beforeAll(async ({}, testInfo) => {
@@ -158,22 +178,55 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       headless: headless !== false,
     });
     context = await browser.newContext({baseURL, acceptDownloads: true});
-    guard = attachNetworkGuard(context, {fixtureBuffers: []});
+    guard = attachNetworkGuard(context);
     page = await context.newPage();
     await openApp();
   });
 
-  test.afterAll(async ({}, testInfo) => {
-    await testInfo.attach("web007-results.json", {
-      body: JSON.stringify(Object.fromEntries(results), null, 2),
-      contentType: "application/json",
-    });
-    await context?.close();
-    await browser?.close();
+  test.afterAll(async () => {
+    try {
+      // Items that never ran (an earlier serial item failed, or the run was
+      // interrupted) are recorded as skipped, not left looking untested.
+      for (const {key} of GOLDEN_ITEMS) {
+        if (!recorded.has(key)) {
+          await recordResult(
+            key,
+            "skip",
+            "not run (an earlier item failed or the run was interrupted)",
+          );
+        }
+      }
+
+      // Save the guard's log whatever happened above, so a violation that
+      // appeared before a failing item is not lost.
+      if (guard !== null) {
+        await saveNetworkLog(
+          statePaths(gate.stateDir).networkPath,
+          "A:golden",
+          guard,
+        );
+
+        const violations = guard.violations();
+
+        if (violations.length > 0) {
+          await recordResult(
+            "noUpload",
+            "fail",
+            `WEB-007 golden context: ${violations.join("; ")}`,
+          );
+          throw new Error(
+            `Network guard violations in the WEB-007 golden context: ${violations.join("; ")}`,
+          );
+        }
+      }
+    } finally {
+      await context?.close();
+      await browser?.close();
+    }
   });
 
   item(
-    "loads-bundled-assets",
+    "golden.appLoads",
     "the app loads the canonical Story with the bundled poses and backgrounds",
     async () => {
       await expect(page.locator("#preview-heading")).toHaveText(
@@ -228,7 +281,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
     },
   );
 
-  item("caption-edit", "editing a caption updates the Player", async () => {
+  item("golden.captionEdit", "editing a caption updates the Player", async () => {
     await sceneItems().first().click();
     await page.getByLabel("Caption").fill(CAPTION_EDIT);
     await expectEditorClean();
@@ -236,7 +289,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
     await expect(sceneItems().first()).toContainText(CAPTION_EDIT);
   });
 
-  item("pose-change", "choosing another pose updates the Player", async () => {
+  item("golden.poseChange", "choosing another pose updates the Player", async () => {
     const catalog = page.getByRole("region", {name: "Available assets"});
     const coffee = catalog.getByRole("button", {name: /Coffee/});
 
@@ -251,7 +304,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
     ).toHaveCount(0);
   });
 
-  item("scene-reorder", "moving a scene reorders the Story and the Player", async () => {
+  item("golden.sceneReorder", "moving a scene reorders the Story and the Player", async () => {
     await page.getByRole("button", {name: "Move scene down"}).click();
     await expectEditorClean();
     await expect(sceneItems()).toHaveCount(4);
@@ -266,18 +319,18 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   });
 
   item(
-    "player-follows-active-story",
-    "the Player shows the Active Story: an invalid draft does not replace it",
+    "golden.playerFollowsStory",
+    "the Player shows the Active Story: an invalid draft never replaces it, a valid edit does",
     async () => {
-      await expect(page.locator("#preview-heading")).toHaveText(
-        "Deploy Friday",
-      );
-
-      await sceneItems().nth(1).click();
-
+      // The Player does not follow the selected scene, it shows the Active
+      // Story from its first frame: scene 0, after the reorder above.
       const caption = page.getByLabel("Caption");
+      const lines = preview().locator("[data-caption-line]");
 
-      await expect(caption).toHaveValue(CAPTION_EDIT);
+      await sceneItems().first().click();
+      await expect(caption).toHaveValue(SECOND_CAPTION);
+
+      // An invalid draft of scene 0 is pending and not in the Active Story.
       await caption.fill("");
       await expect(shell()).toHaveAttribute(
         "data-visual-state",
@@ -285,14 +338,21 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       );
       await expect(shell()).toHaveAttribute("data-visual-pending", "true");
       await expectPreviewCaption(SECOND_CAPTION);
+      expect(await lines.count()).toBeGreaterThan(0);
 
-      await caption.fill(CAPTION_EDIT);
+      // A valid edit of scene 0 becomes the Active Story and the Player follows.
+      await caption.fill(FOLLOW_CAPTION);
+      await expectEditorClean();
+      await expectPreviewCaption(FOLLOW_CAPTION);
+
+      // Restore: later items depend on scene 0's original caption.
+      await caption.fill(SECOND_CAPTION);
       await expectEditorClean();
       await expectPreviewCaption(SECOND_CAPTION);
     },
   );
 
-  item("yaml-export", "Export active Story YAML downloads the edited Story", async () => {
+  item("golden.yamlExport", "Export active Story YAML downloads the edited Story", async () => {
     const {filename, text} = await downloadActiveYaml();
     const story = parseYaml(text);
 
@@ -314,7 +374,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
     exportedYaml = text;
   });
 
-  item("reload-restores-edits", "a reload restores the edited Story", async () => {
+  item("golden.reloadRestores", "a reload restores the edited Story", async () => {
     expect(exportedYaml, "the yaml-export item must have run").not.toBeNull();
 
     await page.reload({waitUntil: "domcontentloaded"});
@@ -330,7 +390,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
     expect((await downloadActiveYaml()).text).toBe(exportedYaml);
   });
 
-  item("render-capability-ready", "browser MP4 rendering reports ready", async () => {
+  item("golden.renderCapability", "browser MP4 rendering reports ready", async () => {
     expect(
       await isBrowserRenderSupported(page),
       "Browser MP4 rendering must be ready in system Chrome",
@@ -342,7 +402,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   });
 
   item(
-    "pending-draft-blocks-render",
+    "golden.pendingDraftBlocks",
     "a pending visual or YAML draft blocks rendering until it is resolved",
     async () => {
       // A pending visual draft.
@@ -382,7 +442,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   );
 
   item(
-    "render-locks-authoring",
+    "golden.inFlightLocks",
     "an in-flight render locks authoring until it settles",
     async () => {
       const downloadPromise = page.waitForEvent("download", {
@@ -420,7 +480,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   );
 
   item(
-    "render-download-metadata",
+    "golden.renderDownload",
     "the downloaded MP4 is video-only H.264, 1080x1920, 30 FPS, 360 frames / 12 s",
     async () => {
       expect(renderedMp4, "the render item must have run").not.toBeNull();
@@ -436,8 +496,9 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       expect(info.durationSeconds).toBeCloseTo(12, 1);
       expect(info.hasAudio).toBe(false);
 
-      // Positive control that the frames are not black, and that the edited
-      // order was rendered (scene 1 and scene 4 look different).
+      // Positive control only: the frames are not black and two different
+      // scenes (1 and 4) do not decode to the same picture. It does not prove
+      // the edited order was rendered.
       const first = await decodeMp4Frame(renderedMp4.path, 1.5);
       const last = await decodeMp4Frame(renderedMp4.path, 10.5);
 
@@ -455,44 +516,58 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   );
 
   item(
-    "cancel-render",
+    "golden.cancelRender",
     "Cancel Render aborts the render and unlocks authoring",
     async () => {
       let downloaded = false;
-
-      page.on("download", () => {
+      const onDownload = () => {
         downloaded = true;
-      });
+      };
+      let endState;
 
-      await startRender();
-      await expect(shell()).toHaveAttribute("data-authoring-locked", "true");
-      await page.getByRole("button", {name: "Cancel Render"}).click();
-      await expect(shell()).toHaveAttribute("data-render-state", "cancelling");
-      await expect
-        .poll(() => shell().getAttribute("data-render-state"), {
-          timeout: 90_000,
-        })
-        .not.toMatch(/^(?:rendering|cancelling)$/);
-      await expect(shell()).toHaveAttribute("data-authoring-locked", "false");
-      await expect(page.getByLabel("Caption")).toBeEnabled();
+      page.on("download", onDownload);
+
+      try {
+        await startRender();
+        await expect(shell()).toHaveAttribute("data-authoring-locked", "true");
+        await page.getByRole("button", {name: "Cancel Render"}).click();
+        await expect(shell()).toHaveAttribute(
+          "data-render-state",
+          "cancelling",
+        );
+        await expect
+          .poll(() => shell().getAttribute("data-render-state"), {
+            timeout: 90_000,
+          })
+          .not.toMatch(/^(?:rendering|cancelling)$/);
+        await expect(shell()).toHaveAttribute(
+          "data-authoring-locked",
+          "false",
+        );
+        await expect(page.getByLabel("Caption")).toBeEnabled();
+        endState = await shell().getAttribute("data-render-state");
+      } finally {
+        page.off("download", onDownload);
+      }
+
       expect(downloaded).toBe(false);
 
       // Settled means "idle" (cancelled cleanly) or "cleanup-blocked" (the
-      // render's storage is still being released, the app's own designed
-      // state, as the existing Cancel Render spec accepts). Anything else,
-      // such as "success" or "failure", is wrong.
-      expect(["idle", "cleanup-blocked"]).toContain(
-        await shell().getAttribute("data-render-state"),
-      );
+      // render's storage is still being released: a known app behaviour the
+      // existing Cancel Render spec also accepts, tracked as a follow-up).
+      // Anything else, such as "success" or "failure", is wrong.
+      expect(["idle", "cleanup-blocked"]).toContain(endState);
+
+      return `Settled in "${endState}"${endState === "cleanup-blocked" ? " (known app behaviour after Cancel Render)" : ""}.`;
     },
     {timeout: 180_000},
   );
 
-  item(
-    "network-guard",
-    "no forbidden request: no uploads, no image bytes, only allowlisted telemetry",
-    async () => {
-      expect(guard.violations()).toEqual([]);
-    },
-  );
+  test("network-guard: no forbidden request in the golden context", () => {
+    test.info().annotations.push({
+      type: "network",
+      description: summarizeNetwork(guard),
+    });
+    expect(guard.violations()).toEqual([]);
+  });
 });

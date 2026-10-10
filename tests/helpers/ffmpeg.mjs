@@ -163,9 +163,10 @@ const parseRate = (value) => {
 
 /**
  * Facts about an MP4:
- * `{codec, width, height, fps, frames, hasAudio, durationSeconds}` of its
- * first video stream. `frames` is counted by decoding (`-count_frames`), not
- * read from the container header.
+ * `{codec, width, height, fps, frames, hasAudio, videoStreams, durationSeconds}`
+ * of its first video stream; `videoStreams` is how many video streams the
+ * file has. `frames` is counted by decoding (`-count_frames`), not read from
+ * the container header.
  */
 export const probeMp4 = async (path) => {
   const {ffprobe, dir} = resolveFfmpegBinaries();
@@ -191,7 +192,8 @@ export const probeMp4 = async (path) => {
   }
 
   const streams = metadata.streams ?? [];
-  const video = streams.find((stream) => stream.codec_type === "video");
+  const videoList = streams.filter((stream) => stream.codec_type === "video");
+  const video = videoList[0];
 
   if (video === undefined) {
     throw new Error(`probeMp4: ${path} has no video stream`);
@@ -204,6 +206,7 @@ export const probeMp4 = async (path) => {
     fps: parseRate(video.r_frame_rate ?? video.avg_frame_rate),
     frames: Number(video.nb_read_frames ?? video.nb_frames),
     hasAudio: streams.some((stream) => stream.codec_type === "audio"),
+    videoStreams: videoList.length,
     durationSeconds: Number(metadata.format?.duration),
   };
 };

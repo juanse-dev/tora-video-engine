@@ -759,18 +759,16 @@ const assertMp4Metadata = async (
   path,
   {expectedFrames = 30, expectedDuration = 1} = {},
 ) => {
-  const {codec, width, height, frames, hasAudio, durationSeconds} =
-    await probeMp4(path);
-  const frameCount = frames;
-  const duration = durationSeconds;
+  const info = await probeMp4(path);
 
-  expect(hasAudio).toBe(false);
-  expect(codec).toBe("h264");
-  expect(width).toBe(1080);
-  expect(height).toBe(1920);
-  expect(frameCount).toBe(expectedFrames);
-  expect(duration).toBeCloseTo(expectedDuration, 2);
-  expect(frameCount / duration).toBeCloseTo(30, 1);
+  expect(info.videoStreams).toBe(1);
+  expect(info.hasAudio).toBe(false);
+  expect(info.codec).toBe("h264");
+  expect(info.width).toBe(1080);
+  expect(info.height).toBe(1920);
+  expect(info.frames).toBe(expectedFrames);
+  expect(info.durationSeconds).toBeCloseTo(expectedDuration, 2);
+  expect(info.frames / info.durationSeconds).toBeCloseTo(30, 1);
 };
 
 test("required Chrome runtime renders the canonical 12-second Story golden", async ({

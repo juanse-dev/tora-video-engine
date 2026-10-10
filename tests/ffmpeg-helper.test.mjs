@@ -146,6 +146,7 @@ describe("probeMp4 and decodeFrame", () => {
     assert.equal(info.fps, 30);
     assert.equal(info.frames, 30);
     assert.equal(info.hasAudio, false);
+    assert.equal(info.videoStreams, 1);
     assert.ok(Math.abs(info.durationSeconds - 1) < 0.05, String(info));
   });
 

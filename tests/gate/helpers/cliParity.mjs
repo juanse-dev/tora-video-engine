@@ -27,35 +27,93 @@ const REPO_ROOT = resolve(
 const CLI_TIMEOUT_MS = 5 * 60_000;
 const OUTPUT_TAIL_CHARS = 4_000;
 
+const MAX_CAPTURED_CHARS = 64 * 1024;
+
+/** Appends to captured output, keeping only the last 64 KB. */
+const appendBounded = (current, chunk) => {
+  const next = current + chunk;
+
+  return next.length > MAX_CAPTURED_CHARS
+    ? next.slice(next.length - MAX_CAPTURED_CHARS)
+    : next;
+};
+
 /**
- * Runs a process to completion with output captured. `TORA_REMOTION_BROWSER_EXECUTABLE`
- * is inherited through `env`, which is how the CLI is pointed at system Chrome.
+ * Kills the child and everything it started (the CLI launches Chrome):
+ * `taskkill /T` on Windows, the child's process group elsewhere.
  */
-const runProcess = ({command, args, cwd, env}) =>
+const killProcessTree = (child) => {
+  if (child.pid === undefined) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    }).on("error", () => child.kill("SIGKILL"));
+
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+};
+
+/**
+ * Runs a process to completion with output captured (the last 64 KB of each
+ * stream). `TORA_REMOTION_BROWSER_EXECUTABLE` is inherited through `env`,
+ * which is how the CLI is pointed at system Chrome. On timeout the process
+ * tree is killed and the promise rejects only after the child has exited, so
+ * the caller can safely delete the files it was using.
+ */
+export const runProcess = ({
+  command,
+  args,
+  cwd,
+  env,
+  timeoutMs = CLI_TIMEOUT_MS,
+}) =>
   new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
-        new Error(`CLI render timed out after ${CLI_TIMEOUT_MS / 1000}s`),
-      );
-    }, CLI_TIMEOUT_MS);
+      timedOut = true;
+      killProcessTree(child);
+    }, timeoutMs);
 
-    child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stdout.on("data", (chunk) => {
+      stdout = appendBounded(stdout, chunk.toString());
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = appendBounded(stderr, chunk.toString());
+    });
     child.once("error", (error) => {
       clearTimeout(timer);
       reject(error);
     });
     child.once("close", (code) => {
       clearTimeout(timer);
+
+      if (timedOut) {
+        reject(
+          new Error(`CLI render timed out after ${timeoutMs / 1000}s`),
+        );
+
+        return;
+      }
+
       resolveRun({code, stdout, stderr});
     });
   });

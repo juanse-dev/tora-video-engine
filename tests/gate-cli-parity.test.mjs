@@ -11,7 +11,7 @@ import {
 import {tmpdir} from "node:os";
 import {basename, join} from "node:path";
 import {after, before, describe, it} from "node:test";
-import {renderWithCli} from "./gate/helpers/cliParity.mjs";
+import {renderWithCli, runProcess} from "./gate/helpers/cliParity.mjs";
 
 describe("renderWithCli", () => {
   let work;
@@ -175,5 +175,52 @@ describe("renderWithCli", () => {
     );
     assert.equal(ran, false);
     assert.deepEqual(await readdir(tempBase), []);
+  });
+});
+
+describe("runProcess", () => {
+  it("kills the process on timeout, waits for it to exit, and reports the timeout", async () => {
+    const work = await mkdtemp(join(tmpdir(), "tora-run-process-test-"));
+    const pidFile = join(work, "pid");
+
+    try {
+      await assert.rejects(
+        runProcess({
+          command: process.execPath,
+          args: [
+            "-e",
+            "require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 60000)",
+            pidFile,
+          ],
+          cwd: work,
+          env: process.env,
+          timeoutMs: 1_500,
+        }),
+        /timed out/u,
+      );
+
+      const pid = Number(await readFile(pidFile, "utf8"));
+
+      // The child is gone by the time runProcess has rejected.
+      assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+    } finally {
+      await rm(work, {recursive: true, force: true});
+    }
+  });
+
+  it("keeps only the last 64 KB of output", async () => {
+    const result = await runProcess({
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write('a'.repeat(300000) + 'TAIL')",
+      ],
+      cwd: tmpdir(),
+      env: process.env,
+    });
+
+    assert.equal(result.code, 0);
+    assert.ok(result.stdout.length <= 64 * 1024, String(result.stdout.length));
+    assert.ok(result.stdout.endsWith("TAIL"));
   });
 });
