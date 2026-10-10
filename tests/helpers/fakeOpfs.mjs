@@ -15,6 +15,8 @@
  * - `getDirectory()`: async accessor returning the fake root, which has
  *   `getFileHandle`, `removeEntry` and `entries`.
  * - option `abortRejects`: the sink's abort throws (best-effort abort tests).
+ * - options `writeFails` / `closeFails`: `write()` / `close()` reject with an
+ *   Error (not an abort), leaving the file open.
  * - option `writeGate`: a promise every `write()` awaits before it checks the
  *   state, so a test can abort the writable while a write is in flight.
  */
@@ -37,6 +39,10 @@ class FakeWritable extends WritableStream {
         file.pending.set(data, position);
       },
       close() {
+        if (options.closeFails === true) {
+          throw new Error("close failed");
+        }
+
         self.state = "closed";
         file.bytes = file.pending;
         events.push(`close:${name}`);
@@ -52,7 +58,24 @@ class FakeWritable extends WritableStream {
     });
 
     Object.defineProperty(this, "state", {get: () => self.state});
+
+    // A stream that already errored (for example a failed close) ignores the
+    // sink's abort. Record the caller's abort request anyway, as the platform
+    // releases the file when the owner aborts it.
+    const nativeAbort = this.abort.bind(this);
+
+    this.abort = async (reason) => {
+      try {
+        return await nativeAbort(reason);
+      } finally {
+        if (self.state === "open") {
+          self.state = "aborted";
+          events.push(`abort:${name}`);
+        }
+      }
+    };
     this.writeGate = options.writeGate;
+    this.writeFails = options.writeFails;
   }
 
   // FileSystemWritableFileStream.write(): the convenience writer that takes the
@@ -64,6 +87,10 @@ class FakeWritable extends WritableStream {
 
     if (this.state !== "open") {
       throw new TypeError("writable is not open");
+    }
+
+    if (this.writeFails === true) {
+      throw new Error("write failed");
     }
 
     const writer = this.getWriter();

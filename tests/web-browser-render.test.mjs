@@ -1213,6 +1213,64 @@ describe("issue #29 Tora-owned OPFS writer", () => {
     await inFlight;
   });
 
+  it("propagates a write failure that is not an abort, and aborts the writer", async () => {
+    const opfs = createFakeOpfs({writeFails: true});
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: async (options) => {
+          const writer = options.outputWritable.getWriter();
+
+          await writer.write({
+            type: "write",
+            position: 0,
+            data: new Uint8Array([1]),
+          });
+          await finalizeOutput(options);
+
+          return {getBlob: async () => new Blob(["x"]), internalState: {}};
+        },
+      }),
+      /write failed/,
+    );
+
+    const [[, file]] = [...opfs.files];
+
+    assert.equal(file.writable.state, "aborted");
+  });
+
+  it("propagates a close failure that is not an abort, and aborts the writer", async () => {
+    const opfs = createFakeOpfs({closeFails: true});
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: async (options) => {
+          const writer = options.outputWritable.getWriter();
+
+          await writer.write({
+            type: "write",
+            position: 0,
+            data: new Uint8Array([1]),
+          });
+          await writer.close();
+
+          return {getBlob: async () => new Blob(["x"]), internalState: {}};
+        },
+      }),
+      /close failed/,
+    );
+
+    const [[, file]] = [...opfs.files];
+
+    assert.equal(file.writable.state, "aborted");
+  });
+
   it("opens no OPFS writer when the local-asset recheck refuses to render", async () => {
     const opfs = createFakeOpfs();
     const localStory = {

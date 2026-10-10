@@ -161,7 +161,7 @@ Required behavior:
 - acquire the render lock **immediately before any OPFS cleanup / `renderMediaOnWeb()` call**;
 - if the lock is unavailable, do not start a second render. Show that another Tora tab is rendering and offer Retry/Cancel rather than relying on Remotion's module-local queue;
 - if `navigator.locks` is unavailable, disable v0.2 browser MP4 rendering because cross-tab safety for the required `web-fs` lifecycle cannot be guaranteed; preview/edit/YAML/CLI remain usable;
-- hold the lock across `renderMediaOnWeb()`, the public `getBlob()` call, download handoff on the success path, and Tora's OPFS cleanup;
+- hold the lock across `renderMediaOnWeb()`, reading the Tora-read OPFS File Blob (`getFile()` after the writer is closed), download handoff on the success path, and Tora's OPFS cleanup;
 - release it only after a successful Blob has been handed to the browser download flow and the render's temporary OPFS state is cleaned, including failure/cancel paths.
 
 ### Tora-owned Remotion OPFS cleanup
@@ -172,8 +172,8 @@ While holding the render lock, Tora owns cleanup of this prefix for its origin:
 
 1. obtain the OPFS root via `navigator.storage.getDirectory()`;
 2. **before every render starts, call the same awaitable `cleanupRemotionOpfsUntilEmpty()` helper defined below and do not call `renderMediaOnWeb()` until it has positively observed an empty `__remotion_render:` prefix**;
-3. run the web render and call the **public** Remotion `getBlob()`;
-4. while the OPFS backing file still exists, materialize one independent post-render Blob snapshot from the public Blob's bytes;
+3. run the web render, then read the Tora-read OPFS File Blob (`getFile()` after the writer is closed);
+4. while the OPFS backing file still exists, materialize one independent post-render Blob snapshot from the Tora-read OPFS File Blob's bytes;
 5. defensively recheck that the frozen Story snapshot still matches the live authoring state;
 6. hand the independent snapshot to the browser download flow and transition the UI to a non-cancellable finalizing state;
 7. call `cleanupRemotionOpfsUntilEmpty()` to delete the Remotion OPFS file(s);
@@ -199,7 +199,7 @@ Define one helper such as `cleanupRemotionOpfsUntilEmpty()` and use it for **bot
 6. provide **Retry cleanup**. Each retry reruns the bounded helper under the already-held lock. If a **pre-render** retry succeeds, **release the render Web Lock immediately**, clear the blocked state, and return to idle/render-ready **without starting or retaining the old render request**. The user's next Render click must reacquire the lock and rerun preflight from the beginning. If a **post-render** retry succeeds, clear the warning and release the lock as the final step of the already-completed render lifecycle;
 7. page unload may implicitly release the Web Lock, but the next session/new tab must reacquire the same unversioned lock and run this **same retry/backoff preflight helper** before rendering. It must never use a one-shot stale-file deletion. No idle/render-ready tab may retain the render lock merely while waiting for user input.
 
-A successfully returned **public Remotion Blob** must be materialized into one independent download Blob before post-render cleanup deletes its OPFS backing file. Tora must not reach around the public API and hand the internal OPFS File to the download flow. Once the independent Blob has been handed to the download flow, cancellation is no longer offered; cleanup failure transitions to `cleanup-blocked` while retaining the render lock. Cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
+A successfully read **Tora-read OPFS File Blob** must be materialized into one independent download Blob before post-render cleanup deletes its OPFS backing file. Tora must not hand the OPFS-backed File itself to the download flow. Once the independent Blob has been handed to the download flow, cancellation is no longer offered; cleanup failure transitions to `cleanup-blocked` while retaining the render lock. Cleanup failure must never be treated as permission to release the render lock and “retry on the next render”.
 
 Tests must inject/delay target closure so the first removal attempt fails and prove that both post-render and **new-session pre-render** cleanup wait/retry rather than passing only on fast local writer shutdown.
 
@@ -246,7 +246,7 @@ Do not auto-download an output after authoring state has somehow diverged from t
 
 When rendering succeeds:
 
-- obtain the finalized MP4 from the **public** Remotion `getBlob()`;
+- obtain the finalized MP4 as the Tora-read OPFS File Blob (`getFile()` after the writer is closed);
 - before OPFS cleanup, materialize one independent Blob snapshot from the returned Blob;
 - recheck the frozen Story snapshot before any download handoff;
 - create a temporary object URL from the independent Blob;
@@ -317,12 +317,12 @@ If organization policy forbids the required telemetry path, production deploymen
 - a completed render cannot auto-download as the current result if authoring state diverged from its snapshot;
 - final MP4 filename reuses WEB-005 `getDownloadBasename()` and is deterministic/bounded for arbitrary valid titles;
 - output timing/dimensions match the engine configuration, the canonical render is exactly 360 video frames / 12.0 seconds, and the MP4 contains no audio track;
-- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, public `getBlob()`, browser download handoff, and positively-completed final cleanup;
+- same-origin browser renders are mutually exclusive across tabs **and concurrently open Tora bundle versions** from awaitable pre-render OPFS cleanup through render, reading the Tora-read OPFS File Blob, browser download handoff, and positively-completed final cleanup;
 - Cancel Render is implemented with `AbortController`, waits for the render promise to settle, and performs the same locked cleanup path as failures;
 - delayed asynchronous writer shutdown cannot cause the render lock to be released early: cleanup retries/backoff until empty or enters `cleanup-blocked` while retaining the lock;
 - Cancel Render and a mid-render failure settle in `idle` / `failure` (not `cleanup-blocked`) with no `__remotion_render:` entries left, because Tora aborts the writer it owns (issue #29); the next render then succeeds;
 - repeated success/failure/cancel cycles leave no unbounded `__remotion_render:` OPFS accumulation in a long-lived tab;
-- the public Remotion `getBlob()` result is materialized once after rendering into an independent download Blob before OPFS cleanup, and Chrome can complete the resulting real MP4 download after cleanup removes the render files;
+- the Tora-read OPFS File Blob is materialized once after rendering into an independent download Blob before OPFS cleanup, and Chrome can complete the resulting real MP4 download after cleanup removes the render files;
 - Tora retains `web-fs` streaming during rendering, adds only that single required post-render snapshot, and adds no artificial browser MP4 artifact-size rejection beyond the existing Story/render policies;
 - local CLI rendering remains functional;
 - render failure cannot masquerade as success;
