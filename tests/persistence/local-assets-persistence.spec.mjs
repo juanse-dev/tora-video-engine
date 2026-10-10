@@ -1,6 +1,7 @@
 import {spawn} from "node:child_process";
+import {randomUUID} from "node:crypto";
 import {existsSync} from "node:fs";
-import {mkdtemp, readFile, rm} from "node:fs/promises";
+import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {createRequire} from "node:module";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
@@ -8,8 +9,15 @@ import {fileURLToPath} from "node:url";
 import {chromium, expect, test} from "@playwright/test";
 import {
   applyYaml,
+  BACKGROUND_BOTTOM_REGION,
+  BACKGROUND_TOP_REGION,
   decodeMp4Frame,
+  isCyan,
+  isMagenta,
+  isYellow,
   meanLuminance,
+  POSE_MAGENTA_REGION,
+  regionRatio,
   waitForOwner,
 } from "../browser/helpers/localAssetPage.mjs";
 import {
@@ -46,39 +54,6 @@ const REMOVE_OPTIONS = {
   force: true,
   maxRetries: 5,
   retryDelay: 200,
-};
-
-// Regions of the decoded 540x960 intro frame (same geometry as the local-asset
-// golden in tests/browser/browser-render-golden.spec.mjs).
-const FRAME_WIDTH = 540;
-const POSE_MAGENTA_REGION = {x: 230, y: 580, width: 80, height: 120};
-const BACKGROUND_TOP_REGION = {x: 20, y: 160, width: 500, height: 280};
-const BACKGROUND_BOTTOM_REGION = {x: 20, y: 770, width: 500, height: 170};
-
-// The region geometry and colour predicates below are duplicated from
-// tests/browser/browser-render-golden.spec.mjs (private there). Keep the two in
-// sync; extract a shared helper once the parallel ASSET-006 lane has landed.
-const isMagenta = (r, g, b) => r > 180 && g < 90 && b > 180;
-const isCyan = (r, g, b) => r < 90 && g > 150 && b > 150;
-const isYellow = (r, g, b) => r > 150 && g > 150 && b < 90;
-
-const regionRatio = (frame, {x, y, width, height}, predicate) => {
-  let count = 0;
-  let matching = 0;
-
-  for (let py = y; py < y + height; py += 2) {
-    for (let px = x; px < x + width; px += 2) {
-      const index = (py * FRAME_WIDTH + px) * 3;
-
-      count += 1;
-
-      if (predicate(frame[index], frame[index + 1], frame[index + 2])) {
-        matching += 1;
-      }
-    }
-  }
-
-  return matching / count;
 };
 
 const STORY = [
@@ -222,10 +197,24 @@ const launchProfile = async (userDataDir) => {
   return {context, page};
 };
 
-/** Relaunches the same profile, failing if the path is not the original one. */
-const relaunchProfile = async (userDataDir, originalUserDataDir) => {
-  expect(resolve(userDataDir)).toBe(resolve(originalUserDataDir));
-  // A fresh directory would not hold Chrome's profile yet.
+const PROFILE_MARKER = "tora-persistence-profile-marker";
+
+/** Drops a token file into the profile so a relaunch can prove it is the same dir. */
+const markProfile = async (userDataDir) => {
+  const token = randomUUID();
+
+  await writeFile(join(userDataDir, PROFILE_MARKER), token);
+
+  return token;
+};
+
+/**
+ * Relaunches a profile, failing unless it is the directory that was marked:
+ * the marker written before the restart must still be there, next to the
+ * Chrome profile the first run created.
+ */
+const relaunchProfile = async (userDataDir, token) => {
+  expect(await readFile(join(userDataDir, PROFILE_MARKER), "utf8")).toBe(token);
   expect(existsSync(join(userDataDir, "Default"))).toBe(true);
 
   return launchProfile(userDataDir);
@@ -454,6 +443,7 @@ test("local assets persist across reload, browser restart and a new build", asyn
 
     profiles.push(profileDir);
 
+    const profileToken = await markProfile(profileDir);
     let imported;
 
     await test.step("import and apply both fixtures through the UI", async () => {
@@ -516,7 +506,7 @@ test("local assets persist across reload, browser restart and a new build", asyn
 
     await test.step("restart: same profile, whole browser relaunched", async () => {
       await closeSession();
-      session = await relaunchProfile(profileDir, profiles[0]);
+      session = await relaunchProfile(profileDir, profileToken);
 
       const {page} = session;
 
@@ -586,11 +576,28 @@ test("local assets persist across reload, browser restart and a new build", asyn
 
       expect(served).toBe(indexB);
 
-      session = await relaunchProfile(profileDir, profiles[0]);
+      session = await relaunchProfile(profileDir, profileToken);
 
       const {page} = session;
 
       await openApp(page);
+
+      // The page really runs build B's code: every module script it loaded is
+      // referenced by B's index.html and by none of A's.
+      const moduleScripts = await page.evaluate(() =>
+        [...document.querySelectorAll("script[type=module]")].map((script) =>
+          script.getAttribute("src"),
+        ),
+      );
+
+      expect(moduleScripts.length).toBeGreaterThan(0);
+
+      for (const src of moduleScripts) {
+        expect(src).toBeTruthy();
+        expect(indexB).toContain(src);
+        expect(indexA).not.toContain(src);
+      }
+
       await mutePlayer(page);
 
       const restored = await expectLocalAssetsRestored(page, refs);
