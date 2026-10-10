@@ -100,6 +100,7 @@ Rulings made while building this (the full ledger is in the SDD progress file):
 - R6: the gate deletes only `Default/History*` from its dedicated profile before launch, because Chrome 154 on Windows crashes on a download when History lists an earlier session's download; site data is untouched.
 - R7: phase B snapshots the gate profile to `profile-before-b/` on its first run and restores it on reruns, so a flaky step 10 or 11 does not cost another production deploy cycle.
 - R8: phase A refuses to delete a passed phase A whose phase B has not completed unless `--fresh` is given, and the MP4 checks assert exactly one video stream.
+- R10: the network guard allows Netlify's Deploy Preview drawer POSTs (`sessions.bugsnag.com/` and `app.netlify.com/access-control/bb-api/api/v1/cdp/deploys/<hex id>/views`, 4096 bytes or less, signature checks still applying) only when the page's build context is known and is not `production`; the report's No-upload row says so.
 
 Changes from the final whole-branch review:
 

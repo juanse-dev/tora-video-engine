@@ -80,7 +80,7 @@ The runner exits with Playwright's exit code (non-zero when any check fails, or 
 - The build identity differs from phase A's, otherwise it fails with `Deploy B is not live yet: still <identity>`.
 - Assets are still there without re-import, render again, delete an in-use asset (blocked render, Story unchanged), **Import matching file** recovers it, render again.
 
-**Both phases:** a network guard watches every browser context. A violation is any request that is not GET/HEAD/OPTIONS (except Remotion's licence telemetry `register-usage-point`, 4096 bytes or less), and any request body that contains a PNG or JPEG signature or the bytes of a fixture. Violations fail the phase and are listed in the report.
+**Both phases:** a network guard watches every browser context. A violation is any request that is not GET/HEAD/OPTIONS (except Remotion's licence telemetry `register-usage-point`, 4096 bytes or less), and any request body that contains a PNG or JPEG signature or the bytes of a fixture. Violations fail the phase and are listed in the report. Deploy Preview pages load Netlify's drawer, whose two POSTs (`sessions.bugsnag.com/` and `app.netlify.com/.../deploys/<id>/views`, 4096 bytes or less) are allowed only when the page's build context is known and is not `production`, and the report says so.
 
 ## The report
 
