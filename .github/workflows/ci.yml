@@ -65,6 +65,8 @@ jobs:
         run: npm run test:persistence
 
       - name: Verify the deployed-gate suite against a local build
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
         run: |
           npm run gate -- --url=local --phase=A
           npm run gate -- --url=local --phase=B
@@ -74,8 +76,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gate-local
-          path: .gate/local/
-          if-no-files-found: ignore
+          path: |
+            .gate/local/
+            !.gate/local/profile/**
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Install Playwright Chromium

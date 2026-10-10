@@ -10,6 +10,8 @@ One command checks a deployed Tora origin end to end in a real system Chrome and
 
 Everything else (editing, persistence across reload, browser restart and a new deploy, rendering, downloads, the network check, CLI parity) is the suite.
 
+Agents and automated executors must never run the suite against `prod`; production runs are the owner's call (see [Remotion telemetry](#remotion-telemetry-production-safety)).
+
 ## Requirements
 
 - Node 22 and `npm ci` done in this checkout.
@@ -18,7 +20,7 @@ Everything else (editing, persistence across reload, browser restart and a new d
 
 ## Release procedure
 
-1. **Merge the release PR to `main`.** Wait until Netlify shows that deploy as **Published** (this is Deploy A).
+1. **Merge the release PR to `main`.** Wait until Netlify shows that deploy as **Published** (this is Deploy A). The deploy under test must include the build identity (GATE-001 G1, the `tora-build` meta in `index.html`); a build that predates it makes phase A fail with "the deployed build predates the GATE-001 build identity".
 2. **Run phase A** from the repository root:
 
    ```bash
@@ -50,7 +52,7 @@ npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>]
 | `--url=https://<origin>` | Any other https origin. `http://` is accepted only for loopback hosts. |
 | `--phase=A` / `--phase=B` | Phase A: after Deploy A. Phase B: after Deploy B. |
 | `--headed` | Show the browser window instead of running headless. |
-| `--only=<grep>` | Run only the tests whose title matches (Playwright `--grep`). Useful to debug one item; the report then lists the other items as not recorded. |
+| `--only=<grep>` | Run only the tests whose title matches (Playwright `--grep`). For debugging only: phase A still wipes `.gate/<target>/` first, and the report lists the other items as not recorded, so a full phase A must run before phase B. |
 
 The runner exits with Playwright's exit code (non-zero when any check fails, or when the optional Netlify check fails).
 
@@ -85,8 +87,7 @@ The report never contains the Netlify token or any secret.
 
 ### Where to paste it
 
-- The Record table rows go into the **Record** table of [ASSET-006 Part B](../assets/ASSET-006-persistence-and-production-verification.md), or into a new release record if you are verifying a later release (keep older records as history).
-- The golden checklist goes into the [Production release record](../web/production-deployment.md#production-release-record) of the deployment doc.
+Put the whole `report.md` into the release pull request description or the GitHub Release notes, or into a new release record for that release. Never edit older records: the existing ASSET-006 Part B Record and the WEB-007 [Production release record](../web/production-deployment.md#production-release-record) stay as history of the first gates.
 
 ## Netlify checks
 
