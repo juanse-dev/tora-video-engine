@@ -1268,3 +1268,102 @@ test("an unavailable ref (a read failure) in a ready library still offers Import
   await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
   await expect(blobImages(page)).toHaveCount(1);
 });
+
+// --- Story lifecycle never clears the library (ASSET-003 task 5) ---------------
+
+test("Reset project and YAML import leave My assets intact", async ({page}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+  const poseRef = localAssetRef("pose", pose.digest);
+  const backgroundRef = localAssetRef("background", background.digest);
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose, {label: "My cat"}),
+    fixtureRecord("background", background, {label: "Sky"}),
+  ]);
+
+  const expectLibraryIntact = async () => {
+    await expect(
+      section(page, "pose").getByRole("heading", {name: "My assets · 1"}),
+    ).toBeVisible();
+    await expect(
+      section(page, "background").getByRole("heading", {name: "My assets · 1"}),
+    ).toBeVisible();
+    await expect(cardFor(page, "pose", pose.digest)).toContainText("My cat");
+    await expect(cardFor(page, "background", background.digest)).toContainText(
+      "Sky",
+    );
+  };
+
+  // Use both local assets in the Story.
+  await cardFor(page, "pose", pose.digest).locator("button[aria-pressed]").click();
+  await cardFor(page, "background", background.digest)
+    .locator("button[aria-pressed]")
+    .click();
+
+  const used = await yamlSource(page);
+
+  expect(used).toContain(`pose: ${poseRef}`);
+  expect(used).toContain(`background: ${backgroundRef}`);
+
+  // Reset project: the Story goes back to the default, the library stays.
+  await page.getByRole("button", {name: "Reset project"}).click();
+
+  const discard = page.getByRole("button", {
+    name: "Discard current state and reset",
+  });
+
+  if (await discard.isVisible()) {
+    await discard.click();
+  }
+
+  await expect(
+    cardFor(page, "pose", pose.digest).locator("button[aria-pressed]"),
+  ).toHaveAttribute("aria-pressed", "false");
+
+  const afterReset = await yamlSource(page);
+
+  expect(afterReset).not.toContain("local:");
+  await expectLibraryIntact();
+
+  // YAML import: replace the Story from a file that does not use local assets.
+  await applyYaml(page, used);
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(
+    cardFor(page, "pose", pose.digest).locator("button[aria-pressed]"),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  const source = buildStoryYaml(
+    [{pose: "formal", background: "office"}],
+    "Imported without local assets",
+  );
+
+  await page.locator(".project-toolbar input[type=file]").setInputFiles({
+    name: "imported.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(source),
+  });
+
+  const confirmImport = page.getByRole("button", {
+    name: "Discard current work and import",
+  });
+
+  if (await confirmImport.isVisible()) {
+    await confirmImport.click();
+  }
+
+  await expect(
+    cardFor(page, "pose", pose.digest).locator("button[aria-pressed]"),
+  ).toHaveAttribute("aria-pressed", "false");
+
+  const imported = await yamlSource(page);
+
+  expect(imported).toContain("title: Imported without local assets");
+  expect(imported).not.toContain("local:");
+  await expectLibraryIntact();
+
+  // Nothing was only held in memory: the rows survive a reload.
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expectLibraryIntact();
+});

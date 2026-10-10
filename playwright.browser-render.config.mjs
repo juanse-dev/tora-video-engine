@@ -7,6 +7,7 @@ export default defineConfig({
     "browser-render-golden.spec.mjs",
     "local-asset-preview.spec.mjs",
     "local-asset-render-race.spec.mjs",
+    "my-assets-render.spec.mjs",
   ],
   timeout: 240_000,
   workers: 1,
