@@ -8,6 +8,7 @@
     "build": "remotion bundle src/index.ts",
     "render:smoke": "remotion render src/index.ts ToraVideo output/smoke.mp4 --codec=h264",
     "video": "node --experimental-strip-types scripts/render.ts",
+    "assets": "node --experimental-strip-types scripts/assets.ts",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "lint": "eslint src scripts && tsc",
     "web:dev": "vite",
