@@ -66,7 +66,7 @@ For v0.2, browser MP4 export is supported only when:
 - `canRender === true`; and
 - `resolvedOutputTarget === "web-fs"`.
 
-The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 **during the entire render**. v0.2 deliberately does not use that fallback. The accepted `web-fs` path instead streams render output to OPFS and returns the pinned public Remotion Blob snapshot at the end.
+The pinned renderer may otherwise resolve to `"arraybuffer"`, which uses an in-memory `BufferTarget` and retains the complete encoded MP4 **during the entire render**. v0.2 deliberately does not use that fallback. The accepted `web-fs` path instead streams render output to OPFS and returns the Tora-read OPFS File Blob at the end.
 
 If capability fails or resolves only to `arraybuffer`:
 
@@ -76,8 +76,6 @@ If capability fails or resolves only to `arraybuffer`:
 - mention YAML export and the existing local CLI as alternatives.
 
 Do not add a server fallback in this spec. The pinned renderer is given a Tora-owned `outputWritable` OPFS stream rather than its built-in `web-fs` target (see the implementation note under "Awaitable cleanup before and after render"); the capability check above still requires `web-fs` support.
-
-Do not add a server fallback in this spec.
 
 ## Render configuration
 
@@ -181,7 +179,7 @@ While holding the render lock, Tora owns cleanup of this prefix for its origin:
 7. call `cleanupRemotionOpfsUntilEmpty()` to delete the Remotion OPFS file(s);
 8. release the render lock after cleanup has positively observed an empty prefix.
 
-The distinction between Remotion's internal `webFsTarget.getBlob()` and the public `renderMediaOnWeb().getBlob()` remains normative. Chrome's current `web-fs` behavior can keep the returned public Blob lazily dependent on the OPFS-backed file: deleting the file can make later reads or an in-progress automatic download fail with `NotFoundError` / cancellation. Tora therefore performs exactly one full-payload **post-render** materialization into an independent Blob before cleanup. This does not replace the required `web-fs` streaming render path with the `arraybuffer` target: encoded bytes are still streamed to OPFS throughout rendering, and the extra memory is incurred only after the final MP4 already exists. Do not add another payload copy or an artificial encoded-output size limit.
+Because `getBlob()` is unavailable when `outputWritable` is used, Tora reads the finalized OPFS file itself (`getFile()` wrapped in a Blob); the distinction between that Tora-read OPFS File Blob and the independent download Blob remains normative. Chrome's current `web-fs` behavior can keep the Tora-read OPFS File Blob lazily dependent on the OPFS-backed file: deleting the file can make later reads or an in-progress automatic download fail with `NotFoundError` / cancellation. Tora therefore performs exactly one full-payload **post-render** materialization into an independent Blob before cleanup. This does not replace the required `web-fs` streaming render path with the `arraybuffer` target: encoded bytes are still streamed to OPFS throughout rendering, and the extra memory is incurred only after the final MP4 already exists. Do not add another payload copy or an artificial encoded-output size limit.
 
 On render failure or cancellation, there is no downloadable success Blob; run the same locked OPFS cleanup protocol and only then release the lock.
 
