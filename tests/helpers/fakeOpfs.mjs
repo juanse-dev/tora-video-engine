@@ -15,6 +15,8 @@
  * - `getDirectory()`: async accessor returning the fake root, which has
  *   `getFileHandle`, `removeEntry` and `entries`.
  * - option `abortRejects`: the sink's abort throws (best-effort abort tests).
+ * - option `writeGate`: a promise every `write()` awaits before it checks the
+ *   state, so a test can abort the writable while a write is in flight.
  */
 class FakeWritable extends WritableStream {
   constructor(name, file, events, options) {
@@ -50,11 +52,20 @@ class FakeWritable extends WritableStream {
     });
 
     Object.defineProperty(this, "state", {get: () => self.state});
+    this.writeGate = options.writeGate;
   }
 
   // FileSystemWritableFileStream.write(): the convenience writer that takes the
   // lock for the duration of one write.
   async write(chunk) {
+    if (this.writeGate !== undefined) {
+      await this.writeGate;
+    }
+
+    if (this.state !== "open") {
+      throw new TypeError("writable is not open");
+    }
+
     const writer = this.getWriter();
 
     try {

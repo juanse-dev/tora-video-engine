@@ -169,25 +169,44 @@ const defaultGetRenderDirectory = (): Promise<RenderDirectory> =>
  * Wraps the OPFS writer so Tora can always release it. The renderer locks the
  * stream it is given (`getWriter()`), and a locked stream cannot be aborted, so
  * the renderer gets this forwarding stream while Tora keeps the unlocked
- * writer. After `abort()` the renderer's late `close()` and `write()` calls
- * become no-ops instead of failing on an aborted file.
+ * writer. After `abort()` the renderer's in-flight and late `write()` /
+ * `close()` calls settle quietly instead of failing on an aborted file.
+ * `isClosed()` reports whether the renderer finalized (closed) the output.
  */
 const createOwnedOpfsOutput = (
   writable: FileSystemWritableFileStream,
-): {stream: WritableStream<FileSystemWriteChunkType>; abort: () => Promise<void>} => {
+): {
+  stream: WritableStream<FileSystemWriteChunkType>;
+  abort: () => Promise<void>;
+  isClosed: () => boolean;
+} => {
   let aborted = false;
+  let closed = false;
 
   return {
     stream: new WritableStream<FileSystemWriteChunkType>({
       write: async (chunk) => {
-        if (!aborted) {
-          await writable.write(chunk);
+        if (aborted) {
+          return;
         }
+
+        await writable.write(chunk).catch((error: unknown) => {
+          if (!aborted) {
+            throw error;
+          }
+        });
       },
       close: async () => {
-        if (!aborted) {
-          await writable.close();
+        if (aborted) {
+          return;
         }
+
+        await writable.close().catch((error: unknown) => {
+          if (!aborted) {
+            throw error;
+          }
+        });
+        closed = true;
       },
       abort: async () => {
         aborted = true;
@@ -208,6 +227,7 @@ const createOwnedOpfsOutput = (
         // file that is still locked.
       }
     },
+    isClosed: () => closed,
   };
 };
 
@@ -514,6 +534,12 @@ export const renderStoryMediaOnWeb = async (
       allowHtmlInCanvas: false,
       onFrame: withBrowserFrameDuration,
     });
+
+    if (!output.isClosed()) {
+      throw new Error(
+        "Browser render failed: the renderer did not finalize its output.",
+      );
+    }
 
     return {
       // With `outputWritable` the renderer cannot produce the Blob itself.

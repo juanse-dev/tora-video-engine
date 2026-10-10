@@ -26,6 +26,12 @@ import {
 
 const readyCapability = async () => ({kind: "ready"});
 
+// What the pinned renderer does when a render finishes: finalizing the Output
+// closes the stream it was given.
+function finalizeOutput(options) {
+  return options.outputWritable.getWriter().close();
+}
+
 describe("WEB-006 browser rendering", () => {
   it("checks H.264 MP4 capability with muted video and requires web-fs", async () => {
     let seen = null;
@@ -230,6 +236,7 @@ describe("WEB-006 browser rendering", () => {
       getDirectory: createFakeOpfs().getDirectory,
       render: async (options) => {
         seen = options;
+        await finalizeOutput(options);
 
         return {
           getBlob: async () => new Blob(["video"]),
@@ -617,6 +624,7 @@ describe("ASSET-004 render transaction with local assets", () => {
       localAssetSources: lockedSources,
       render: async (options) => {
         seen = options;
+        await finalizeOutput(options);
 
         return {getBlob: async () => new Blob(["v"]), internalState: {}};
       },
@@ -647,8 +655,9 @@ describe("ASSET-004 render transaction with local assets", () => {
         component: () => null,
         getDirectory: createFakeOpfs().getDirectory,
         localAssetSources,
-        render: async () => {
+        render: async (options) => {
           rendered += 1;
+          await finalizeOutput(options);
 
           return {getBlob: async () => new Blob(["v"]), internalState: {}};
         },
@@ -1138,6 +1147,70 @@ describe("issue #29 Tora-owned OPFS writer", () => {
       }),
       /original failure/,
     );
+  });
+
+  it("rejects and aborts the writer when the render resolves without finalizing its output", async () => {
+    const opfs = createFakeOpfs();
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: async (options) => {
+          const writer = options.outputWritable.getWriter();
+
+          await writer.write({
+            type: "write",
+            position: 0,
+            data: new Uint8Array([1]),
+          });
+
+          return {getBlob: async () => new Blob(["x"]), internalState: {}};
+        },
+      }),
+      /did not finalize/,
+    );
+
+    const [[, file]] = [...opfs.files];
+
+    assert.equal(file.writable.state, "aborted");
+  });
+
+  it("swallows a write that fails because the writer was aborted while it was in flight", async () => {
+    let release;
+    const writeGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const opfs = createFakeOpfs({writeGate});
+    let inFlight;
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(exampleStory, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: opfs.getDirectory,
+        render: async (options) => {
+          const writer = options.outputWritable.getWriter();
+
+          // Like mediabunny: a fire-and-forget write that is still pending
+          // when the render fails.
+          inFlight = writer.write({
+            type: "write",
+            position: 0,
+            data: new Uint8Array([1]),
+          });
+          inFlight.catch(() => undefined);
+          throw new Error("boom while writing");
+        },
+      }),
+      /boom while writing/,
+    );
+
+    release();
+    // The late write must settle quietly instead of surfacing a TypeError from
+    // the aborted file to the renderer's stream.
+    await inFlight;
   });
 
   it("opens no OPFS writer when the local-asset recheck refuses to render", async () => {
