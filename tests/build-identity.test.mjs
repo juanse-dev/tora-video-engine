@@ -86,6 +86,20 @@ describe("GATE-001 G1 build identity (vite plugin)", () => {
     ]);
   });
 
+  it("resolves the identity lazily, once, on the first transform", () => {
+    let calls = 0;
+    const plugin = buildIdentityPlugin(() => {
+      calls += 1;
+
+      return {commit: "abc1234", deployId: "local-1", context: "local"};
+    });
+
+    assert.equal(calls, 0);
+    plugin.transformIndexHtml();
+    plugin.transformIndexHtml();
+    assert.equal(calls, 1);
+  });
+
   it("round-trips through the gate's parser", () => {
     const identity = {commit: "abc1234", deployId: "local-1", context: "local"};
 

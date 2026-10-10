@@ -260,3 +260,58 @@ describe("GATE-001 G7 report", () => {
     }
   });
 });
+
+describe("GATE-001 G7 failures that never went through recordResult", () => {
+  it("is FAIL and lists the Playwright failure when the phase exited non-zero", () => {
+    const state = phaseAState();
+
+    state.a.exitCode = 1;
+    state.a.playwrightSummary = "1) build-identity.spec.mjs\nError: boom\nat line 3";
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /^Result: FAIL$/m);
+    assert.match(report, /## Failures\n\n- \*\*Playwright, phase A\*\*: exited with code 1\n/);
+    assert.match(report, /```\n1\) build-identity\.spec\.mjs\nError: boom\nat line 3\n```/);
+    assert.doesNotMatch(report, /^None\.$/m);
+  });
+
+  it("is FAIL for a phase B exit code even when every recorded result passed", () => {
+    const state = fullState();
+
+    state.b.exitCode = 1;
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /^Result: FAIL$/m);
+    assert.match(report, /- \*\*Playwright, phase B\*\*: exited with code 1\n/);
+  });
+
+  it("treats exit code 0 as no failure", () => {
+    const state = fullState();
+
+    state.a.exitCode = 0;
+    state.b.exitCode = 0;
+
+    assert.match(renderReport(state, state.results), /^Result: PASS$/m);
+  });
+
+  it("lists a result under a key outside the table, such as a guard violation", () => {
+    const state = phaseAState();
+
+    state.results.buildIdentity = {
+      status: "fail",
+      detail:
+        "Network guard: 2 violation(s): PUT https://evil.example/up: request body contains a PNG signature; POST https://x.example/p: POST is not allowed",
+      phase: "A",
+    };
+
+    const report = renderReport(state, state.results);
+
+    assert.match(report, /^Result: FAIL$/m);
+    assert.match(
+      report,
+      /- \*\*buildIdentity\*\* \(phase A\): Network guard: 2 violation\(s\): PUT https:\/\/evil\.example\/up: request body contains a PNG signature; POST https:\/\/x\.example\/p/,
+    );
+  });
+});

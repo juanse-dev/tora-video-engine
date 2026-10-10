@@ -26,11 +26,14 @@
  *
  * @typedef {{name?: string, version: string}} BrowserInfo
  *
- * Per-phase data. startedAt is set by the runner; identity by
+ * Per-phase data. The runner sets startedAt, finishedAt, exitCode (Playwright's)
+ * and playwrightSummary (first lines of a failing run); identity is set by
  * build-identity.spec; the rest by the gate spec (T2). refs is phase A only.
  * @typedef {{
  *   startedAt: string,
  *   finishedAt?: string,
+ *   exitCode?: number,
+ *   playwrightSummary?: string,
  *   identity?: BuildIdentity,
  *   browser?: BrowserInfo,
  *   refs?: {pose: string, background: string},
@@ -234,6 +237,18 @@ export const renderReport = (state, results) => {
     return `- [ ] ${label} (${result.status})${detail}`;
   });
 
+  // Results under keys the tables do not show (a spec's own failure, for
+  // example the build-identity guard) must still reach the failure list.
+  const known = new Set([...RECORD_ROWS, ...GOLDEN_ITEMS].map(({key}) => key));
+
+  for (const [key, result] of Object.entries(results)) {
+    if (!known.has(key) && result.status === "fail") {
+      failures.push(
+        `- **${key}**${result.phase ? ` (phase ${result.phase})` : ""}: ${oneLine(result.detail)}`,
+      );
+    }
+  }
+
   const netlifyEntries = /** @type {Array<["A" | "B", NetlifyResult]>} */ (
     ["A", "B"]
       .filter((phase) => state.netlify?.[phase])
@@ -257,6 +272,23 @@ export const renderReport = (state, results) => {
               `- Phase ${phase}: ${netlifyWord[result.status]}. ${oneLine(result.detail)}`,
           )
           .join("\n");
+
+  // A non-zero Playwright exit is a failure even when no spec recorded one
+  // (a timeout, a crash, a thrown assertion).
+  for (const [phase, data] of /** @type {Array<["A" | "B", PhaseState | undefined]>} */ ([
+    ["A", a],
+    ["B", b],
+  ])) {
+    if (data && typeof data.exitCode === "number" && data.exitCode !== 0) {
+      const summary = data.playwrightSummary
+        ? `\n\`\`\`\n${data.playwrightSummary}\n\`\`\``
+        : "";
+
+      failures.push(
+        `- **Playwright, phase ${phase}**: exited with code ${data.exitCode}${summary}`,
+      );
+    }
+  }
 
   const verdict =
     failures.length > 0

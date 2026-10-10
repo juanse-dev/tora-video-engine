@@ -9,6 +9,8 @@
 // records whether the deploy has Functions. It only ever issues GET, and the
 // token never leaves the Authorization header (it is not in any result).
 
+import {URL} from "node:url";
+
 export const NETLIFY_API = "https://api.netlify.com/api/v1";
 export const NETLIFY_SITE = "tora-video-engine.netlify.app";
 
@@ -156,4 +158,30 @@ export const checkNetlifyDeploy = async ({
           : `Netlify API request failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+};
+
+/**
+ * Whether the check applies to a target at all. Returns null when it does, or
+ * the "skip" result to record when it does not (a local target, or a host that
+ * is not a Netlify site, which would otherwise always fail the commit check).
+ *
+ * @param {{url: string, local: boolean}} target
+ * @returns {NetlifyResult | null}
+ */
+export const netlifyApplicability = ({url, local}) => {
+  if (local) {
+    return {status: "skip", detail: "not applicable to a local target"};
+  }
+
+  let host = "";
+
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Falls through to "not a Netlify site".
+  }
+
+  return host.endsWith(".netlify.app")
+    ? null
+    : {status: "skip", detail: "not a Netlify site"};
 };

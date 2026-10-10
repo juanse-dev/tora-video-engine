@@ -9,6 +9,7 @@ import {
   mergePhase,
   readGateEnv,
   readState,
+  recordFailureOf,
   recordNetlify,
   recordResult,
   startPhaseA,
@@ -233,5 +234,41 @@ describe("GATE-001 G3 readGateEnv", () => {
 
   it("rejects a bad phase", () => {
     assert.throws(() => readGateEnv({...full, TORA_GATE_PHASE: "C"}), /TORA_GATE_PHASE/);
+  });
+});
+
+describe("GATE-001 recordFailureOf", () => {
+  beforeEach(async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+  });
+
+  it("returns the value and records nothing on success", async () => {
+    assert.equal(await recordFailureOf(stateDir, "buildIdentity", async () => 7), 7);
+    assert.deepEqual((await readState(stateDir)).results, {});
+  });
+
+  it("records a fail result with the message and rethrows", async () => {
+    await assert.rejects(
+      recordFailureOf(stateDir, "buildIdentity", async () => {
+        throw new Error("no meta here\n\nsecond line");
+      }),
+      /no meta here/,
+    );
+
+    const {results} = await readState(stateDir);
+
+    assert.equal(results.buildIdentity.status, "fail");
+    assert.match(results.buildIdentity.detail, /no meta here/);
+  });
+
+  it("keeps a more specific failure that was already recorded", async () => {
+    await assert.rejects(
+      recordFailureOf(stateDir, "buildIdentity", async () => {
+        await recordResult(stateDir, "buildIdentity", {status: "fail", detail: "listed violations"});
+        throw new Error("expect(received).toEqual(expected)");
+      }),
+    );
+
+    assert.equal((await readState(stateDir)).results.buildIdentity.detail, "listed violations");
   });
 });

@@ -6,6 +6,12 @@
 //   - any request whose body contains a PNG (89 50 4E 47) or JPEG (FF D8 FF)
 //     signature, or the bytes of a fixture, whatever the method or host.
 //
+// Limit: Chromium may report postDataBuffer() as null or truncated for large
+// or streamed (ReadableStream) bodies, so the signature and fixture checks can
+// miss such a body. The method rule does not depend on the body: any non-GET
+// request outside the allowlist is still a violation, which is what catches an
+// upload sent that way.
+//
 // The guard observes (it does not block): violations fail the phase at the
 // end, listing each one. Every non-GET request and every contacted host is
 // kept for artifacts/network.json (saveNetworkLog) and the report.

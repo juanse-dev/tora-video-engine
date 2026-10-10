@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {
   checkNetlifyDeploy,
+  netlifyApplicability,
   NETLIFY_API,
   NETLIFY_SITE,
 } from "../scripts/gateNetlify.mjs";
@@ -297,5 +298,37 @@ describe("GATE-001 G8 Netlify check", () => {
     assert.equal(result.status, "fail");
     assert.match(result.detail, /not a Netlify deploy/);
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("GATE-001 G8 when the Netlify check applies", () => {
+  it("applies to *.netlify.app targets", () => {
+    for (const url of [
+      "https://tora-video-engine.netlify.app",
+      "https://deploy-preview-3--tora-video-engine.netlify.app",
+    ]) {
+      assert.equal(netlifyApplicability({url, local: false}), null);
+    }
+  });
+
+  it("skips a local target", () => {
+    assert.deepEqual(netlifyApplicability({url: "http://127.0.0.1:4190", local: true}), {
+      status: "skip",
+      detail: "not applicable to a local target",
+    });
+  });
+
+  it("skips hosts outside netlify.app instead of failing them", () => {
+    for (const url of [
+      "https://example.com",
+      "http://127.0.0.1:5000",
+      "https://evilnetlify.app",
+      "https://netlify.app.example.com",
+    ]) {
+      assert.deepEqual(netlifyApplicability({url, local: false}), {
+        status: "skip",
+        detail: "not a Netlify site",
+      });
+    }
   });
 });

@@ -272,3 +272,38 @@ export const assertNewBuild = (stateA, identityB) => {
     );
   }
 };
+
+/**
+ * Runs `run`; when it throws, records a fail result under `key` (unless a more
+ * specific fail is already recorded there) and rethrows. Specs wrap their body
+ * in this so a failure that surfaces only as an exception still reaches the
+ * report.
+ *
+ * @template T
+ * @param {string} stateDir
+ * @param {string} key
+ * @param {() => Promise<T>} run
+ * @returns {Promise<T>}
+ */
+export const recordFailureOf = async (stateDir, key, run) => {
+  try {
+    return await run();
+  } catch (error) {
+    const existing = (await readState(stateDir)).results[key];
+
+    if (existing?.status !== "fail") {
+      const message = (error instanceof Error ? error.message : String(error))
+        // eslint-disable-next-line no-control-regex
+        .replace(/\u001b\[[0-9;]*m/g, "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line !== "")
+        .slice(0, 3)
+        .join(" ");
+
+      await recordResult(stateDir, key, {status: "fail", detail: message});
+    }
+
+    throw error;
+  }
+};

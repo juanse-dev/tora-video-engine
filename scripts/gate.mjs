@@ -5,7 +5,13 @@
 // Sets the gate environment, runs `playwright test --config=playwright.gate.config.mjs`
 // (through process.execPath, no bare npx), then merges the optional Netlify API
 // check (G8) into state and renders .gate/<target>/report.md. Exits with
-// Playwright's code (or 1 when the Netlify check fails).
+// Playwright's code, or 1 when the Netlify check fails: with NETLIFY_AUTH_TOKEN
+// set, a failing check makes the exit code 1 even if every test passed. The
+// check only runs for *.netlify.app targets; other hosts record "skip".
+//
+// A non-zero Playwright exit is stored in state (exitCode plus the first lines
+// of the failure) so the report lists it and its verdict is FAIL, even when no
+// spec recorded a result.
 
 import {spawn} from "node:child_process";
 import console from "node:console";
@@ -23,7 +29,8 @@ import {
   targetDir,
 } from "../tests/gate/helpers/gateState.mjs";
 import {writeReport} from "../tests/gate/helpers/report.mjs";
-import {checkNetlifyDeploy} from "./gateNetlify.mjs";
+import {checkNetlifyDeploy, netlifyApplicability} from "./gateNetlify.mjs";
+import {summarizePlaywrightOutput} from "./gateSummary.mjs";
 import {
   buildGateEnv,
   parseGateArgs,
@@ -36,24 +43,43 @@ const PLAYWRIGHT_CLI = createRequire(import.meta.url).resolve(
   "@playwright/test/cli",
 );
 
+const OUTPUT_TAIL_BYTES = 200_000;
+
 /**
+ * Runs Playwright, echoing its output and keeping the tail of it.
+ *
  * @param {string[]} args
  * @param {NodeJS.ProcessEnv} env
- * @returns {Promise<number>}
+ * @returns {Promise<{code: number, output: string}>}
  */
 const runPlaywright = (args, env) =>
   new Promise((resolveRun) => {
     const child = spawn(process.execPath, [PLAYWRIGHT_CLI, ...args], {
       cwd: ROOT,
       env,
-      stdio: "inherit",
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    let output = "";
+    const keep = (/** @type {Buffer} */ chunk) => {
+      output = (output + chunk.toString()).slice(-OUTPUT_TAIL_BYTES);
+    };
+
+    child.stdout.on("data", (chunk) => {
+      process.stdout.write(chunk);
+      keep(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      keep(chunk);
     });
 
     child.on("error", (error) => {
       console.error(`Could not start Playwright: ${error.message}`);
-      resolveRun(1);
+      resolveRun({code: 1, output: output || error.message});
     });
-    child.on("exit", (code, signal) => resolveRun(code ?? (signal ? 1 : 0)));
+    child.on("close", (code, signal) =>
+      resolveRun({code: code ?? (signal ? 1 : 0), output}),
+    );
   });
 
 /** @param {string[]} argv */
@@ -95,7 +121,7 @@ export const main = async (argv) => {
     "--config=playwright.gate.config.mjs",
     ...(args.only ? ["--grep", args.only] : []),
   ];
-  const code = await runPlaywright(playwrightArgs, {
+  const {code, output} = await runPlaywright(playwrightArgs, {
     ...inherited,
     ...buildGateEnv({target, phase, headed: args.headed, stateDir}),
   });
@@ -103,16 +129,22 @@ export const main = async (argv) => {
   let netlifyFailed = false;
 
   try {
-    await mergePhase(stateDir, phase, {finishedAt: new Date().toISOString()});
+    await mergePhase(stateDir, phase, {
+      finishedAt: new Date().toISOString(),
+      exitCode: code,
+      ...(code !== 0
+        ? {playwrightSummary: summarizePlaywrightOutput(output)}
+        : {}),
+    });
 
     const state = await readState(stateDir);
-    const result = target.local
-      ? {status: /** @type {const} */ ("skip"), detail: "not applicable to a local target"}
-      : await checkNetlifyDeploy({
+    const result =
+      netlifyApplicability(target) ??
+      (await checkNetlifyDeploy({
           token,
           identity: state[phase === "A" ? "a" : "b"]?.identity,
           isProduction: target.name === "prod",
-        });
+        }));
 
     await recordNetlify(stateDir, phase, result);
     netlifyFailed = result.status === "fail";

@@ -54,20 +54,33 @@ export const formatBuildIdentity = ({
   context,
 }: BuildIdentity): string => `${commit}/${deployId}/${context}`;
 
-export const buildIdentityPlugin = (identity: BuildIdentity): Plugin => ({
-  name: "tora-build-identity",
-  transformIndexHtml: () => [
-    {
-      tag: "meta",
-      attrs: {name: "tora-build", content: formatBuildIdentity(identity)},
-      injectTo: "head",
+// The identity is resolved on the first HTML transform (a build, or the first
+// page served by dev/preview), not when the config loads, so loading the
+// config never spawns git.
+export const buildIdentityPlugin = (
+  identity: BuildIdentity | (() => BuildIdentity),
+): Plugin => {
+  let resolved: BuildIdentity | undefined;
+
+  return {
+    name: "tora-build-identity",
+    transformIndexHtml: () => {
+      resolved ??= typeof identity === "function" ? identity() : identity;
+
+      return [
+        {
+          tag: "meta",
+          attrs: {name: "tora-build", content: formatBuildIdentity(resolved)},
+          injectTo: "head",
+        },
+      ];
     },
-  ],
-});
+  };
+};
 
 export default defineConfig({
   base: "/",
-  plugins: [buildIdentityPlugin(resolveBuildIdentity())],
+  plugins: [buildIdentityPlugin(() => resolveBuildIdentity())],
   build: {
     outDir: "dist/web",
   },

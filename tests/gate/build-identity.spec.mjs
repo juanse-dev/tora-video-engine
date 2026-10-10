@@ -1,6 +1,16 @@
 import {expect, test} from "@playwright/test";
-import {formatIdentity, readPageBuildIdentity} from "./helpers/buildIdentity.mjs";
-import {mergePhase, readGateEnv, readState, statePaths} from "./helpers/gateState.mjs";
+import {
+  formatIdentity,
+  readPageBuildIdentity,
+} from "./helpers/buildIdentity.mjs";
+import {
+  mergePhase,
+  readGateEnv,
+  readState,
+  recordFailureOf,
+  recordResult,
+  statePaths,
+} from "./helpers/gateState.mjs";
 import {attachNetworkGuard, saveNetworkLog} from "./helpers/networkGuard.mjs";
 
 // GATE-001 T1: prove which build the suite is testing. Opens the target, reads
@@ -18,29 +28,42 @@ test(`phase ${gate.phase}: records the deployed build identity`, async ({
 }) => {
   const guard = attachNetworkGuard(context);
 
-  await page.goto("/", {waitUntil: "load"});
+  // Any failure here (missing meta, a guard violation, a timeout) is recorded
+  // under "buildIdentity" so the report lists it, then rethrown.
+  await recordFailureOf(gate.stateDir, "buildIdentity", async () => {
+    await page.goto("/", {waitUntil: "load"});
 
-  const identity = await readPageBuildIdentity(page);
+    const identity = await readPageBuildIdentity(page);
 
-  await mergePhase(gate.stateDir, gate.phase, {
-    identity,
-    browser: {name: "Chrome", version: browser.version()},
+    await mergePhase(gate.stateDir, gate.phase, {
+      identity,
+      browser: {name: "Chrome", version: browser.version()},
+    });
+
+    const state = await readState(gate.stateDir);
+
+    test.info().annotations.push({
+      type: "build-identity",
+      description:
+        gate.phase === "B" && state.a.identity
+          ? `A ${formatIdentity(state.a.identity)} -> B ${formatIdentity(identity)}`
+          : `${gate.phase} ${formatIdentity(identity)}`,
+    });
+
+    await saveNetworkLog(
+      statePaths(gate.stateDir).networkPath,
+      `${gate.phase}:build-identity`,
+      guard,
+    );
+    const violations = guard.violations();
+
+    if (violations.length > 0) {
+      await recordResult(gate.stateDir, "buildIdentity", {
+        status: "fail",
+        detail: `Network guard: ${violations.length} violation(s): ${violations.join("; ")}`,
+      });
+    }
+
+    expect(violations).toEqual([]);
   });
-
-  const state = await readState(gate.stateDir);
-
-  test.info().annotations.push({
-    type: "build-identity",
-    description:
-      gate.phase === "B" && state.a.identity
-        ? `A ${formatIdentity(state.a.identity)} -> B ${formatIdentity(identity)}`
-        : `${gate.phase} ${formatIdentity(identity)}`,
-  });
-
-  await saveNetworkLog(
-    statePaths(gate.stateDir).networkPath,
-    `${gate.phase}:build-identity`,
-    guard,
-  );
-  expect(guard.violations()).toEqual([]);
 });
