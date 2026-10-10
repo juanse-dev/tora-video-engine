@@ -79,9 +79,11 @@ export const MyAssetsSection = ({
       kind={kind}
       sceneNumbers={sceneNumbersUsingRef(activeStory, assetRef)}
       unavailableMessage={unavailableMessage}
-      // Only a missing or damaged copy in a usable library can be restored.
+      // Only a disabled or unavailable LIBRARY hides the action (R11); a ref
+      // that is unavailable in a ready library (for example a read failure)
+      // can still be restored by importing the original file.
       onImportMatching={
-        ready && kind !== "unavailable"
+        ready
           ? (file) => {
               manage.clearNotice();
               void imports.importMatchingFile(file, assetRef);

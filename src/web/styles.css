@@ -654,11 +654,11 @@ h1 {
   padding: 0 8px 8px;
 }
 
-.local-asset-placeholder {
+.missing-local-asset-card {
   padding: 0;
 }
 
-.local-asset-placeholder span {
+.missing-local-asset-card span {
   font-size: 11px;
   line-height: 1.4;
 }

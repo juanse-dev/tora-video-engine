@@ -17,8 +17,8 @@ type MissingLocalAssetCardProps = {
   /** Why the ref is unavailable here (library status message or the ref's detail). */
   unavailableMessage?: string;
   /**
-   * Import matching file. Omit when nothing can be changed (library disabled
-   * or unavailable, or an unavailable ref): the card then shows no actions.
+   * Import matching file. Omit when the library itself is disabled or
+   * unavailable (nothing can be changed): the card then shows no actions.
    */
   onImportMatching?: (file: File) => void;
   /** An App transition panel is open: imports cannot start. */
@@ -41,7 +41,7 @@ export const MissingLocalAssetCard = ({
   importDisabled = false,
 }: MissingLocalAssetCardProps) => {
   const className =
-    "asset-card local-asset-card selected current local-asset-placeholder";
+    "asset-card local-asset-card selected current missing-local-asset-card";
   const action =
     onImportMatching === undefined ? null : (
       <div className="local-asset-actions">

@@ -4,7 +4,11 @@ import type {
   LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {LocalAssetImportError, type ImportPhase} from "./assetLibrary/importAsset.ts";
-import {AssetLibraryContext} from "./assetLibraryContext.ts";
+import type {AssetLibrary} from "./assetLibrary/library.ts";
+import {
+  AssetLibraryContext,
+  type AssetLibraryContextValue,
+} from "./assetLibraryContext.ts";
 import {
   importPhaseText,
   runLocalAssetImport,
@@ -51,8 +55,27 @@ export const useLocalAssetImport = (
   contextRef.current = context;
   onImportedRef.current = onImported;
 
-  const importFile = useCallback(
-    async (file: File) => {
+  const reportFailure = useCallback((message: string, error?: unknown) => {
+    // Expected failures (a rejected file, a storage error) are not logged.
+    if (error !== undefined && !(error instanceof LocalAssetImportError)) {
+      console.error("My assets import failed:", error);
+    }
+
+    setOutcome({kind: "error", text: message});
+  }, []);
+
+  /**
+   * The part both imports share: the re-entrancy guard, the phase and message
+   * state, and the catch-all. `start` runs the import (and returns once it is
+   * done, or once the mismatch dialog took over the lock).
+   */
+  const runImport = useCallback(
+    async (
+      start: (
+        current: AssetLibraryContextValue,
+        library: AssetLibrary,
+      ) => Promise<void>,
+    ) => {
       const current = contextRef.current;
       const library = current === null ? null : libraryFromContext(current);
 
@@ -65,6 +88,22 @@ export const useLocalAssetImport = (
       setPhase("reading");
 
       try {
+        await start(current, library);
+      } catch (error) {
+        reportFailure(UNEXPECTED_IMPORT_MESSAGE, error);
+      } finally {
+        runningRef.current = false;
+        // With the mismatch dialog open the phase stays clear until its
+        // "Saving…" (Use it as replacement) or its end.
+        setPhase(null);
+      }
+    },
+    [reportFailure],
+  );
+
+  const importFile = useCallback(
+    (file: File) =>
+      runImport(async (current, library) => {
         const result = await runLocalAssetImport({
           file,
           category,
@@ -77,37 +116,15 @@ export const useLocalAssetImport = (
         if (result.ok) {
           setOutcome({kind: "success", text: result.message});
         } else {
-          if (!(result.error instanceof LocalAssetImportError)) {
-            console.error("My assets import failed:", result.error);
-          }
-
-          setOutcome({kind: "error", text: result.message});
+          reportFailure(result.message, result.error);
         }
-      } catch (error) {
-        console.error("My assets import failed:", error);
-        setOutcome({kind: "error", text: UNEXPECTED_IMPORT_MESSAGE});
-      } finally {
-        runningRef.current = false;
-        setPhase(null);
-      }
-    },
-    [category],
+      }),
+    [category, runImport, reportFailure],
   );
 
   const importMatchingFile = useCallback(
-    async (file: File, missingRef: LocalAssetRef) => {
-      const current = contextRef.current;
-      const library = current === null ? null : libraryFromContext(current);
-
-      if (current === null || library === null || runningRef.current) {
-        return;
-      }
-
-      runningRef.current = true;
-      setOutcome(null);
-      setPhase("reading");
-
-      try {
+    (file: File, missingRef: LocalAssetRef) =>
+      runImport(async (current, library) => {
         const result = await runMatchingFileImport({
           file,
           category,
@@ -132,26 +149,10 @@ export const useLocalAssetImport = (
         if (result.kind === "restored") {
           setOutcome({kind: "success", text: result.message});
         } else if (result.kind === "failed") {
-          if (
-            result.error !== undefined &&
-            !(result.error instanceof LocalAssetImportError)
-          ) {
-            console.error("My assets import failed:", result.error);
-          }
-
-          setOutcome({kind: "error", text: result.message});
+          reportFailure(result.message, result.error);
         }
-      } catch (error) {
-        console.error("My assets import failed:", error);
-        setOutcome({kind: "error", text: UNEXPECTED_IMPORT_MESSAGE});
-      } finally {
-        runningRef.current = false;
-        // With the mismatch dialog open, the phase stays clear until its
-        // "Saving…" (Use it as replacement) or its end.
-        setPhase(null);
-      }
-    },
-    [category],
+      }),
+    [category, runImport, reportFailure],
   );
 
   const clearOutcome = useCallback(() => setOutcome(null), []);

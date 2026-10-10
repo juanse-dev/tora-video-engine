@@ -1221,3 +1221,50 @@ test("a stale import message is cleared when a rename or delete runs", async ({
   await card.getByRole("button", {name: "Delete Renamed", exact: true}).click();
   await expect(statusLine(page, "pose")).toHaveText("");
 });
+
+test("an unavailable ref (a read failure) in a ready library still offers Import matching file", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // Makes reading an asset row fail while the flag is set; the Story's
+    // local-asset resolution then reports every ref as "unavailable".
+    const nativeGet = IDBObjectStore.prototype.get;
+
+    window.__failAssetRead = false;
+    IDBObjectStore.prototype.get = function (...args) {
+      if (window.__failAssetRead && this.name === "assets") {
+        throw new Error("simulated read failure");
+      }
+
+      return nativeGet.apply(this, args);
+    };
+  });
+
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, []);
+  await page.evaluate(() => {
+    window.__failAssetRead = true;
+  });
+  await applyYaml(page, buildStoryYaml([{pose: ref, background: "office"}]));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  const card = missingCard(page, ref);
+
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Local pose unavailable");
+  await expect(card).toContainText("simulated read failure");
+  // The library itself is ready (the toolbar is there), so recovery is offered.
+  await expect(importInput(page, "pose").first()).toBeEnabled();
+  await expect(card.locator('input[type="file"]')).toHaveCount(1);
+
+  await page.evaluate(() => {
+    window.__failAssetRead = false;
+  });
+  await card.locator('input[type="file"]').setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(card).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
+  await expect(blobImages(page)).toHaveCount(1);
+});
