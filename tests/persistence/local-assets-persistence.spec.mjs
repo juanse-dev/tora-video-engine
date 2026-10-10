@@ -22,6 +22,11 @@ import {
 // preview on a fixed port, build A from dist/web, build B from dist/web-b) and
 // its browser profiles (persistent contexts on temporary user-data dirs, system
 // Chrome so the final MP4 render can encode H.264).
+//
+// Build A is whatever is in dist/web: CI runs `npm run web:build` first, so it
+// is fresh there. Locally, rebuild (`npm run web:build`) after changing src/,
+// otherwise this spec verifies a stale build. If dist/web is absent the spec
+// builds it itself.
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const PORT = 4180;
@@ -35,6 +40,14 @@ const VITE_CLI = join(
   "vite.js",
 );
 
+// Chrome can hold a just-closed profile for a moment on Windows (EBUSY).
+const REMOVE_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 5,
+  retryDelay: 200,
+};
+
 // Regions of the decoded 540x960 intro frame (same geometry as the local-asset
 // golden in tests/browser/browser-render-golden.spec.mjs).
 const FRAME_WIDTH = 540;
@@ -42,6 +55,9 @@ const POSE_MAGENTA_REGION = {x: 230, y: 580, width: 80, height: 120};
 const BACKGROUND_TOP_REGION = {x: 20, y: 160, width: 500, height: 280};
 const BACKGROUND_BOTTOM_REGION = {x: 20, y: 770, width: 500, height: 170};
 
+// The region geometry and colour predicates below are duplicated from
+// tests/browser/browser-render-golden.spec.mjs (private there). Keep the two in
+// sync; extract a shared helper once the parallel ASSET-006 lane has landed.
 const isMagenta = (r, g, b) => r > 180 && g < 90 && b > 180;
 const isCyan = (r, g, b) => r < 90 && g > 150 && b > 150;
 const isYellow = (r, g, b) => r > 150 && g > 150 && b < 90;
@@ -130,40 +146,68 @@ const startPreview = async (outDir) => {
   );
   let output = "";
   let exited = false;
+  let spawnError = null;
 
   child.stdout.on("data", (chunk) => (output += chunk));
   child.stderr.on("data", (chunk) => (output += chunk));
+  // A failed spawn emits "error" (and no "exit"): surface it from the poll.
+  child.on("error", (error) => {
+    spawnError = error;
+    exited = true;
+  });
   child.on("exit", () => {
     exited = true;
   });
 
-  await expect
-    .poll(
-      async () => {
-        if (exited) {
-          throw new Error(`vite preview exited early\n${output}`);
-        }
+  const stop = async () => {
+    if (!exited) {
+      const gone = new Promise((done) => child.once("exit", done));
 
-        return reachable();
-      },
-      {timeout: 30_000, message: `vite preview (${outDir}) on ${ORIGIN}`},
-    )
-    .toBe(true);
+      child.kill();
 
-  return {
-    async stop() {
-      if (!exited) {
-        const gone = new Promise((done) => child.once("exit", done));
+      // Escalate if SIGTERM is ignored.
+      const forced = setTimeout(() => child.kill("SIGKILL"), 5_000);
 
-        child.kill();
+      try {
         await gone;
+      } finally {
+        clearTimeout(forced);
       }
+    }
 
-      await expect
-        .poll(reachable, {timeout: 15_000, message: "server released port"})
-        .toBe(false);
-    },
+    await expect
+      .poll(reachable, {timeout: 15_000, message: "server released port"})
+      .toBe(false);
   };
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          if (spawnError !== null) {
+            throw new Error(`vite preview failed to start: ${spawnError}`);
+          }
+
+          if (exited) {
+            throw new Error(`vite preview exited early
+${output}`);
+          }
+
+          return reachable();
+        },
+        {timeout: 30_000, message: `vite preview (${outDir}) on ${ORIGIN}`},
+      )
+      .toBe(true);
+  } catch (error) {
+    // Never leave the child running when start-up did not complete.
+    if (!exited) {
+      child.kill("SIGKILL");
+    }
+
+    throw error;
+  }
+
+  return {stop};
 };
 
 // --- browser profiles ------------------------------------------------------
@@ -208,11 +252,18 @@ const openApp = async (page) => {
 
 /** Issue #24: mute before anything can play. */
 const mutePlayer = async (page) => {
-  const mute = page.getByRole("button", {name: "Mute sound"});
+  // exact: "Unmute sound" also contains "mute sound", and clicking it would
+  // turn the sound back on. Idempotent: a muted Player is left as it is.
+  const mute = page.getByRole("button", {name: "Mute sound", exact: true});
+  const unmute = page.getByRole("button", {name: "Unmute sound", exact: true});
 
-  if ((await mute.count()) > 0) {
+  await expect(mute.or(unmute)).toBeVisible();
+
+  if (await mute.isVisible()) {
     await mute.click();
   }
+
+  await expect(unmute).toBeVisible();
 };
 
 const yamlSource = async (page) => {
@@ -553,9 +604,7 @@ test("local assets persist across reload, browser restart and a new build", asyn
   } finally {
     await session?.context.close().catch(() => {});
     await server?.stop().catch(() => {});
-    await rm(join(ROOT, BUILD_B_DIR), {recursive: true, force: true});
-    await Promise.all(
-      profiles.map((dir) => rm(dir, {recursive: true, force: true})),
-    );
+    await rm(join(ROOT, BUILD_B_DIR), REMOVE_OPTIONS);
+    await Promise.all(profiles.map((dir) => rm(dir, REMOVE_OPTIONS)));
   }
 });
