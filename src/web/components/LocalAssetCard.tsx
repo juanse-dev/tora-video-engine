@@ -40,6 +40,9 @@ export const LocalAssetCard = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const renameButtonRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
+  // Identifies the current edit session; a save that finishes after its
+  // session ended (or after a newer one began) must not touch the editor.
+  const editSessionRef = useRef(0);
 
   useEffect(() => {
     if (editing) {
@@ -91,6 +94,7 @@ export const LocalAssetCard = ({
   const label = entry.row.value.label;
 
   const stopEditing = () => {
+    editSessionRef.current += 1;
     restoreFocusRef.current = true;
     setEditing(false);
     setError(null);
@@ -100,11 +104,17 @@ export const LocalAssetCard = ({
       return;
     }
 
+    const session = editSessionRef.current;
+
     setSaving(true);
 
     const message = await onRename(draft);
 
     setSaving(false);
+
+    if (session !== editSessionRef.current) {
+      return; // the edit this save belonged to is over
+    }
 
     if (message === null) {
       stopEditing();
@@ -124,12 +134,13 @@ export const LocalAssetCard = ({
             aria-label={`New name for ${label}`}
             aria-invalid={error !== null}
             value={draft}
+            disabled={saving}
             onChange={(event) => {
               setDraft(event.target.value);
               setError(null);
             }}
             onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) {
+              if (event.nativeEvent.isComposing || saving) {
                 return;
               }
 
@@ -151,7 +162,7 @@ export const LocalAssetCard = ({
             <button type="button" onClick={() => void save()} disabled={saving}>
               Save
             </button>
-            <button type="button" onClick={stopEditing}>
+            <button type="button" onClick={stopEditing} disabled={saving}>
               Cancel
             </button>
           </div>
@@ -202,6 +213,7 @@ export const LocalAssetCard = ({
             type="button"
             aria-label={`Rename ${label}`}
             onClick={() => {
+              editSessionRef.current += 1;
               setDraft(label);
               setError(null);
               setEditing(true);

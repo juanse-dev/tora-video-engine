@@ -1526,3 +1526,52 @@ test("a failed Use it as replacement keeps the dialog open and the Story frozen,
   await expect(missingCard(page, ref)).toBeVisible();
   expect(await yamlSource(page)).toBe(yamlBefore);
 });
+
+// --- Codex round 1 ------------------------------------------------------------------
+
+test("while a rename is being saved, Cancel, Escape and the input are locked, and it completes on release", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const input = card.getByRole("textbox");
+
+  // Hold the library lock request that the rename mutation makes.
+  await page.evaluate(() => {
+    const nativeRequest = navigator.locks.request.bind(navigator.locks);
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    window.__releaseRename = release;
+    navigator.locks.request = (name, ...rest) =>
+      name === "tora-video-engine:asset-library"
+        ? gate.then(() => nativeRequest(name, ...rest))
+        : nativeRequest(name, ...rest);
+  });
+
+  await card.getByRole("button", {name: "Rename My cat", exact: true}).click();
+  await input.fill("Held name");
+  await card.getByRole("button", {name: "Save"}).click();
+
+  await expect(card.getByRole("button", {name: "Save"})).toBeDisabled();
+  await expect(card.getByRole("button", {name: "Cancel"})).toBeDisabled();
+  await expect(input).toBeDisabled();
+
+  // Escape and Enter do nothing while the save is in flight.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Enter");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue("Held name");
+
+  await page.evaluate(() => window.__releaseRename());
+  await expect(input).toHaveCount(0);
+  await expect(card).toContainText("Held name");
+  await expect(
+    card.getByRole("button", {name: "Rename Held name", exact: true}),
+  ).toBeEnabled();
+});
