@@ -1131,6 +1131,29 @@ describe("stageLocalAssetsForStory: staging", () => {
     );
   });
 
+  it("stages a digest once when several files share it and still reaches later digests", async () => {
+    const root = await makeRoot();
+    const first = buildPng({width: 1});
+    const second = buildPng({width: 2});
+
+    await put(root, "poses/a.png", first);
+    await put(root, "poses/b.png", first);
+    await put(root, "poses/c.png", second);
+
+    const stagedRefs = [];
+    const {staged} = await stageInto(
+      storyOf([poseRefOf(first), "office"], [poseRefOf(second), "office"]),
+      root,
+      {onStaged: (ref) => stagedRefs.push(ref)},
+    );
+
+    assert.deepEqual(stagedRefs, [poseRefOf(first), poseRefOf(second)]);
+    assert.deepEqual(Object.keys(staged.sources), [
+      poseRefOf(first),
+      poseRefOf(second),
+    ]);
+  });
+
   it("snapshots bytes: editing the source after a match cannot change the staged file", async () => {
     const root = await makeRoot();
     const pose = await fixture("pose-magenta.png");
@@ -1321,6 +1344,40 @@ describe("renderStory staging", () => {
       /Remotion render failed/u,
     );
 
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(outputPath), {code: "ENOENT"});
+  });
+
+  it("removes the temporary directory when only some categories were staged", async () => {
+    const pose = await fixture("pose-magenta.png");
+    const root = await makeRoot();
+
+    await put(root, "poses/p.png", pose);
+
+    const {storyPath, tempBase, outputPath} = await setup(
+      storyYaml(poseRefOf(pose), `local:background:sha256:${MISSING_DIGEST}`),
+    );
+    let spawned = 0;
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        localAssetsRoot: root,
+        runRemotion: async () => {
+          spawned += 1;
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof MissingLocalAssetsError);
+        assert.match(error.message, /1 local asset is missing/u);
+        assert.match(error.message, /^Background:$/mu);
+        assert.doesNotMatch(error.message, /^Pose:$/mu);
+
+        return true;
+      },
+    );
+
+    assert.equal(spawned, 0);
     assert.deepEqual(await readdir(tempBase), []);
     await assert.rejects(stat(outputPath), {code: "ENOENT"});
   });
