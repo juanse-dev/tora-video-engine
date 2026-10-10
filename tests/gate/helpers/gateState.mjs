@@ -201,11 +201,7 @@ const readPassedPhaseA = async (stateDir) => {
     return null;
   }
 
-  const exitCode = state.a?.exitCode;
-
-  return state.a?.identity &&
-    phaseAIncompleteReason(state) === null &&
-    (typeof exitCode !== "number" || exitCode === 0)
+  return state.a?.identity && phaseAIncompleteReason(state) === null
     ? state
     : null;
 };
@@ -545,6 +541,8 @@ export const prepareProfileForPhaseB = async (
 
 /**
  * Why phase A cannot be trusted as the base for phase B, or null when it can.
+ * The one predicate behind both the phase B precondition and the `--fresh`
+ * check in `startPhaseA`.
  *
  * @param {Pick<GateState, "a" | "results">} state
  * @returns {string | null}
@@ -556,6 +554,21 @@ export const phaseAIncompleteReason = (state) => {
     if (!state.a?.[field]) {
       reasons.push(`state.a.${field} is missing`);
     }
+  }
+
+  // A Playwright run that died before recording an item-level failure (for
+  // example a beforeAll that could not launch Chrome) leaves these unset or
+  // non-zero even when the three fields above were filled earlier.
+  if (!state.a?.finishedAt) {
+    reasons.push("state.a.finishedAt is missing (phase A did not finish)");
+  }
+
+  const exitCode = state.a?.exitCode;
+
+  if (typeof exitCode !== "number") {
+    reasons.push("state.a.exitCode is missing (Playwright exit code unknown)");
+  } else if (exitCode !== 0) {
+    reasons.push(`Playwright exit code ${exitCode}`);
   }
 
   for (const [key, result] of Object.entries(state.results ?? {})) {

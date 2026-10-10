@@ -35,6 +35,7 @@ const finishedA = (deployId = "d1") => ({
   reloadDetail: "Phase A pass.",
   profileMarker: "token",
   networkSummary: "0 non-GET request(s)",
+  finishedAt: "2026-10-10T10:05:00.000Z",
   exitCode: 0,
 });
 
@@ -132,6 +133,28 @@ describe("GATE-001 G4 phase B load", () => {
       startPhaseB({stateDir, url: URL_A}),
       /Phase A did not pass \(.*reloadDetail.*cliParity.*\); rerun phase A before phase B/s,
     );
+    assert.equal((await readState(stateDir)).b, undefined);
+  });
+
+  it("startPhaseB refuses a phase A that exited non-zero even with every field recorded", async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await mergePhase(stateDir, "A", {...finishedA("d1"), exitCode: 1});
+
+    await assert.rejects(
+      startPhaseB({stateDir, url: URL_A}),
+      /Phase A did not pass \(Playwright exit code 1\); rerun phase A before phase B/,
+    );
+    assert.equal((await readState(stateDir)).b, undefined);
+  });
+
+  it("startPhaseB refuses a phase A that never finished", async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+
+    const {finishedAt, ...unfinished} = finishedA("d1");
+
+    await mergePhase(stateDir, "A", unfinished);
+
+    await assert.rejects(startPhaseB({stateDir, url: URL_A}), /finishedAt/);
     assert.equal((await readState(stateDir)).b, undefined);
   });
 
@@ -441,6 +464,8 @@ describe("GATE-001 phase B precondition", () => {
       reloadDetail: "Phase A pass.",
       profileMarker: "token",
       networkSummary: "0 non-GET request(s)",
+      finishedAt: "2026-10-10T10:05:00.000Z",
+      exitCode: 0,
     },
     results: {reload: {status: "pending", detail: "x", phase: "A"}},
   });
@@ -470,6 +495,35 @@ describe("GATE-001 phase B precondition", () => {
     state.results.cliParity = {status: "fail", detail: "boom", phase: "A"};
 
     assert.match(phaseAIncompleteReason(state), /cliParity/);
+  });
+
+  it("refuses a phase A whose Playwright run exited non-zero, naming the exit code", () => {
+    const state = passed();
+
+    state.a.exitCode = 1;
+
+    assert.match(phaseAIncompleteReason(state), /Playwright exit code 1/);
+    assert.throws(
+      () => assertPhaseAPassed(state),
+      /^Error: Phase A did not pass \(Playwright exit code 1\); rerun phase A before phase B$/,
+    );
+  });
+
+  it("refuses a phase A that never finished, naming finishedAt", () => {
+    const state = passed();
+
+    delete state.a.finishedAt;
+
+    assert.match(phaseAIncompleteReason(state), /finishedAt/);
+    assert.throws(() => assertPhaseAPassed(state), /finishedAt.*rerun phase A/);
+  });
+
+  it("refuses a phase A with no recorded exit code", () => {
+    const state = passed();
+
+    delete state.a.exitCode;
+
+    assert.match(phaseAIncompleteReason(state), /exit code/i);
   });
 
   it("ignores failures stamped for phase B", () => {
