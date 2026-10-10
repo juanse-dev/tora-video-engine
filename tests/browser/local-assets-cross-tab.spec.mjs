@@ -61,6 +61,19 @@ const CONVERGE = {timeout: 15_000};
 // wait 1-2 s per action. Bring the tab being driven to the front.
 const drive = (tab) => tab.bringToFront();
 
+// App also refreshes asset readiness when a window gets focus. Counting focus
+// events on B proves that B's convergence below came from A's BroadcastChannel
+// message, not from B being brought to the front.
+const countFocusEvents = async (tab) => {
+  await tab.evaluate(() => {
+    window.__focusEvents = 0;
+    window.addEventListener("focus", () => {
+      window.__focusEvents += 1;
+    });
+  });
+};
+const focusEvents = (tab) => tab.evaluate(() => window.__focusEvents);
+
 const label = (page, category, digest) =>
   cardFor(page, category, digest).locator(".asset-card-copy strong");
 
@@ -131,7 +144,8 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
 
   expect(before).toContain(`pose: ${poseRef}`);
 
-  // A renames the asset.
+  // A renames the asset. B stays behind A from here until it has converged.
+  await countFocusEvents(b);
   await drive(page);
 
   const cardA = cardFor(page, "pose", pose.digest);
@@ -143,8 +157,6 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
   await cardA.getByRole("textbox").press("Enter");
   await expect(label(page, "pose", pose.digest)).toHaveText("Renamed in A");
 
-  await drive(b);
-
   // B's card shows the new label; the ref, its Story and its Player do not change.
   await expect(label(b, "pose", pose.digest)).toHaveText(
     "Renamed in A",
@@ -152,10 +164,14 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
   );
   await expect(cards(b, "pose")).toHaveCount(1);
   await expect(cardFor(b, "pose", pose.digest)).toContainText("Current");
-  expect(await yamlSource(b)).toBe(before);
   await expect(blobImages(b)).toHaveCount(1);
   await expect(previewPlaceholders(b)).toHaveCount(0);
   await expect(missingCard(b, poseRef)).toHaveCount(0);
+  // B converged without ever getting focus.
+  expect(await focusEvents(b)).toBe(0);
+
+  await drive(b);
+  expect(await yamlSource(b)).toBe(before);
 });
 
 test("deleting an in-use asset in tab A leaves tab B with the missing card and a Player placeholder", async ({
@@ -188,6 +204,7 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
   // A deletes it; the asset is in use in A's Story too, so A asks first.
   const dialog = page.getByRole("dialog");
 
+  await countFocusEvents(b);
   await drive(page);
   await cardFor(page, "pose", pose.digest)
     .getByRole("button", {name: "Delete pose-magenta", exact: true})
@@ -195,8 +212,6 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
   await dialog.getByRole("button", {name: "Delete asset anyway"}).click();
   await expect(dialog).toHaveCount(0);
   await expect(cards(page, "pose")).toHaveCount(0);
-
-  await drive(b);
 
   // B converges: no card, a missing recovery card, a placeholder, render blocked.
   await expect(cards(b, "pose")).toHaveCount(0, CONVERGE);
@@ -220,7 +235,11 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
     /local asset\(s\) are unavailable/u,
     CONVERGE,
   );
+  // B converged without ever getting focus.
+  expect(await focusEvents(b)).toBe(0);
+
   // Deleting never edits a Story.
+  await drive(b);
   expect(await yamlSource(b)).toBe(before);
 });
 
