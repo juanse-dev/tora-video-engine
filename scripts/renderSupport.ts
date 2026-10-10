@@ -61,6 +61,7 @@ export const getRemotionCliPath = (): string =>
 export const buildRenderArgs = (
   outputPath: string,
   propsPath: string,
+  publicDir?: string,
 ): string[] => {
   const browserExecutable = getRemotionBrowserExecutable();
 
@@ -76,5 +77,6 @@ export const buildRenderArgs = (
     ...(browserExecutable === null
       ? []
       : [`--browser-executable=${browserExecutable}`]),
+    ...(publicDir === undefined ? [] : [`--public-dir=${publicDir}`]),
   ];
 };

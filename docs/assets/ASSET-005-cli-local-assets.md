@@ -1,6 +1,6 @@
 # ASSET-005 — CLI local assets
 
-> Status: **Proposed**
+> Status: **Implemented**. `npm run assets` lists refs by content; `npm run video` stages matching originals into a temporary public directory and fails before Remotion starts when a ref is missing; verified by `npm test` and a real render in `npm run test:cli-e2e`.
 >
 > Depends on: ASSET-001, ASSET-002 tasks 1–2 (fixtures, `imageInspection.ts`, `hash.ts`). Independent of ASSET-003/004. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
@@ -41,7 +41,8 @@ Browser → CLI: export YAML in the browser, copy the exact original image files
 | --- | --- | --- |
 | create | `scripts/localAssets.ts` | Scanner, render resolver/stager, inventory, error formatting. |
 | create | `scripts/assets.ts` | `npm run assets` entry point. |
-| modify | `scripts/render.ts` | Resolve and stage local assets before spawning Remotion. |
+| create | `scripts/renderStory.ts` | `renderStory` moved out of `render.ts` (which runs `main()` on load) so tests can import it; takes injectable `runRemotion`, `tempBase`, `localAssetsRoot`. |
+| modify | `scripts/render.ts` | Now only the CLI entry point; staging happens in `renderStory.ts`. |
 | modify | `scripts/renderSupport.ts` | `buildRenderArgs(outputPath, propsPath, publicDir?)`. |
 | modify | `package.json` | `"assets": "node --experimental-strip-types scripts/assets.ts"`, `"test:cli-e2e": "node --experimental-strip-types --test tests/cli-local-assets.e2e.mjs"`. |
 | modify | `.gitignore` | Ignore `local-assets/*` but keep `local-assets/README.md`. |
@@ -160,9 +161,9 @@ After `loadStory` (which already runs after stale-output removal):
 
 ## Tasks
 
-- [ ] **1. Scanner + inventory + `npm run assets`.** `scanCategory`, `inventoryLocalAssets`, `scripts/assets.ts`, `.gitignore`, `local-assets/README.md`.
-- [ ] **2. Render staging.** `stageLocalAssetsForStory`, `MissingLocalAssetsError`, changes to `render.ts` / `renderSupport.ts`.
-- [ ] **3. End-to-end render + docs.** `stories/ci-local-assets.yaml` (two short scenes using the digests of `pose-magenta.png` and `background-cyan.jpg`), `tests/cli-local-assets.e2e.mjs`, CI step, root README.
+- [x] **1. Scanner + inventory + `npm run assets`.** `scanCategory`, `inventoryLocalAssets`, `scripts/assets.ts`, `.gitignore`, `local-assets/README.md`.
+- [x] **2. Render staging.** `stageLocalAssetsForStory`, `MissingLocalAssetsError`, changes to `render.ts` / `renderSupport.ts`.
+- [x] **3. End-to-end render + docs.** `stories/ci-local-assets.yaml` (two short scenes using the digests of `pose-magenta.png` and `background-cyan.jpg`), `tests/cli-local-assets.e2e.mjs`, CI step, root README.
 
 ## Tests
 
@@ -207,3 +208,19 @@ Watching folders, manifests, remote downloads, syncing with the browser, arbitra
 ## Done when
 
 All tasks are ticked: a YAML exported from the browser renders from the CLI after copying the exact files into `local-assets/<category>/`; missing files fail before Remotion starts with the documented message; `npm run assets` prints complete refs; bundled-only renders are unchanged.
+
+## Implementation notes
+
+Rulings made while implementing (R1–R9):
+
+- **R1:** the e2e is never run in a way that lets Remotion download a browser: local runs set `TORA_REMOTION_BROWSER_EXECUTABLE` to an installed Chrome and CI uses `/usr/bin/google-chrome`. A normal `npm run video` without that variable may download a browser the first time it renders.
+- **R2:** the e2e runs Remotion's `ffprobe`/`ffmpeg` through `process.execPath` plus the Remotion CLI entry, never a bare `npx` (not spawnable without a shell on Windows).
+- **R3:** `relativePath` in scan results and inventory lines is relative to the category folder; the printed line adds the root and category folder.
+- **R4:** printed paths (inventory lines and the `searched:` line of `MissingLocalAssetsError`) use the shared `displayRoot` helper, so with the default root they read `local-assets/<category>/`.
+- **R5:** the root and the category folders are checked with `stat` (a symlinked `poses/` works); entries inside keep `lstat` and symlinks there are skipped.
+- **R6:** `displayRoot` shows a root inside the working directory relative to it and a root outside it as an absolute path (no `../..` chains).
+- **R7:** `renderStory` lives in `scripts/renderStory.ts` with injectable dependencies; `render.ts` stays the entry point.
+- **R8:** an empty or whitespace `TORA_LOCAL_ASSETS_ROOT` counts as unset; the "No ... folder found" message names the root through `displayRoot` (the default root prints the spec text exactly); an existing category folder with no files prints `<root>/<category>/ (no files)`; the e2e spawns have a 5 minute timeout.
+- **R9:** cleanup of the temporary directory on a signal (Ctrl+C during Remotion) is deferred to a follow-up; the leak class predates this work and needs its own design (forwarding signals to the Remotion child) and tests.
+- Staged files use the category value as folder name: `__local-assets/pose/<digest>.<ext>` and `__local-assets/background/<digest>.<ext>`.
+- `stories/ci-local-assets.yaml` embeds the digests of the committed fixtures; the e2e fails with a clear message if the fixtures are regenerated without updating it.

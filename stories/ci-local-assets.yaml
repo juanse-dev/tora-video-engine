@@ -1,0 +1,19 @@
+# Used by tests/cli-local-assets.e2e.mjs. The refs are the SHA-256 digests of
+# tests/fixtures/local-assets/pose-magenta.png and background-cyan.jpg; update
+# them if those fixtures are regenerated.
+title: "CI Local Assets"
+
+scenes:
+  - type: intro
+    pose: local:pose:sha256:e572d1a4c4908ab8ee783693c99a050b45a28fa030e48e645b64e354651a0ca7
+    background: local:background:sha256:3470d1d2f387e4e55b88e8139f84bde89dc8a9b015827ec638ecf5af9a8fdc06
+    animation: fade
+    text: "Local assets."
+    duration: 1
+
+  - type: intro
+    pose: formal
+    background: office
+    animation: fade
+    text: "Bundled control."
+    duration: 1
