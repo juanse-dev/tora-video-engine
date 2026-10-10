@@ -661,7 +661,7 @@ describe("GATE-001 target directory containment", () => {
   });
 });
 
-describe("GATE-001 phase A refuses to wipe a pending A to B", () => {
+describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
   const seed = async (patchA = finishedA()) => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", patchA);
@@ -681,15 +681,50 @@ describe("GATE-001 phase A refuses to wipe a pending A to B", () => {
     assert.equal((await readState(stateDir)).a.identity.deployId, "d1");
   });
 
-  it("also refuses after phase B ran, so a finished record is not lost unasked", async () => {
+  it("refuses while phase B has started but not finished", async () => {
     await seed();
     await startPhaseB({stateDir, url: URL_A});
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+      /phase B has not completed.*--fresh/is,
+    );
+    assert.equal(await markerSurvives(), true);
+  });
+
+  it("refuses after a failed phase B (Playwright exit code or a failed result)", async () => {
+    await seed();
+    await startPhaseB({stateDir, url: URL_A});
+    await mergePhase(stateDir, "B", {finishedAt: "t", exitCode: 1});
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+      /--fresh/,
+    );
+
+    await mergePhase(stateDir, "B", {exitCode: 0});
+    await recordResult(stateDir, "deleteReimport", {
+      status: "fail",
+      detail: "boom",
+      phase: "B",
+    });
 
     await assert.rejects(
       startPhaseA({stateDir, target: "prod", url: URL_A}),
       /--fresh/,
     );
     assert.equal(await markerSurvives(), true);
+  });
+
+  it("proceeds without --fresh after a completed, passing phase B", async () => {
+    await seed();
+    await startPhaseB({stateDir, url: URL_A});
+    await mergePhase(stateDir, "B", {finishedAt: "t", exitCode: 0});
+
+    const state = await startPhaseA({stateDir, target: "prod", url: URL_A});
+
+    assert.equal(state.b, undefined);
+    assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), false);
   });
 
   it("starts over with fresh: true", async () => {

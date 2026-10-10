@@ -37,7 +37,7 @@ Agents and automated executors must never run the suite against `prod`; producti
 
 6. Open `.gate/prod/report.md` and paste it (see below).
 
-Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between A and B. To protect that window, phase A refuses to start when `.gate/<target>/state.json` shows a phase A that passed (whether phase B is still pending or already ran), unless you pass `--fresh`. Use `--fresh` only when you really mean to throw that state and profile away: for example a rehearsal you are repeating, or the phase A of the next release after phase B finished.
+Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between A and B. To protect that window, phase A refuses to start when `.gate/<target>/state.json` shows a phase A that passed and phase B has not completed (it has not run, failed, or was interrupted), unless you pass `--fresh`. Use `--fresh` only when you really mean to throw that state and profile away, for example a rehearsal you are repeating. Once phase B has completed and passed, the phase A of the next release starts without `--fresh`.
 
 Phase B stops immediately, before it builds or opens a browser, if phase A's state is missing, was recorded for another URL, or phase A did not pass.
 
@@ -62,7 +62,7 @@ node scripts/gate.mjs --url=prod --phase=A
 | `--url=https://<origin>` | Any other https origin (state under `.gate/host-<host>/`). `http://` is accepted only for loopback hosts. |
 | `--phase=A` / `--phase=B` | Phase A: after Deploy A. Phase B: after Deploy B. |
 | `--headed` | Show the browser window instead of running headless. |
-| `--fresh` | Phase A only. Start over even though `.gate/<target>/` holds a phase A that passed. Without it, phase A refuses and tells you so. |
+| `--fresh` | Phase A only. Start over even though `.gate/<target>/` holds a passed phase A whose phase B has not completed. Without it, phase A refuses and tells you so. |
 | `--only=<grep>` | Run only the tests whose title matches (Playwright `--grep`). For debugging only: phase A still wipes `.gate/<target>/` first, and the report lists the other items as not recorded, so a full phase A must run before phase B. |
 
 The runner exits with Playwright's exit code (non-zero when any check fails, or when the optional Netlify check fails).
@@ -149,7 +149,7 @@ The suite only reads the static site and writes to its own profile under `.gate/
 | `Deploy B is not live yet: still <identity>` | Netlify has not published a new deploy at that URL. Wait until Deploy B is **Published**, then run phase B again. |
 | `Phase B needs phase A's state` / `Phase A was run for <other url>` | Run phase A first, on this machine, for the same URL. Phase A recreates `.gate/<target>/`; do not run it again between A and B. |
 | `Phase A did not pass (...); rerun phase A before phase B` | Phase A's state is incomplete or has a failing item, so phase B cannot build on it. Fix the cause and rerun phase A (with `--fresh` if it refuses). If Deploy B is already live, that rerun tests the Deploy B build, so a clean A to B comparison costs one more deploy (a Deploy C): merge another commit, run phase A against it, then run phase B once it is published. Avoid this by merging Deploy B only after the report reads `PHASE A PASSED (phase B pending)`. |
-| `Phase A already passed for <url> ...` | Phase A refused to delete a passed phase A. Run phase B if it is pending. Pass `--fresh` only to throw the earlier state and profile away on purpose. |
+| `Phase A already passed for <url> ...` | Phase A refused to delete a passed phase A whose phase B has not completed. Run (or rerun) phase B. Pass `--fresh` only to throw the earlier state and profile away on purpose. |
 | `--url is required` from PowerShell | `npm.ps1` dropped the `--` and npm did not export the flags. Run `npm.cmd run gate -- --url=... --phase=...` or `node scripts/gate.mjs --url=... --phase=...`. |
 | Port 4190 is already in use (`--url=local`) | Another process holds the port, often a leftover `vite preview` or another gate run. Stop it and retry. |
 | Chrome is not found | Install Google Chrome (the suite launches `channel: "chrome"`). Do not run `npx playwright install`. |

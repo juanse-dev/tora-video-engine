@@ -191,11 +191,26 @@ const readPassedPhaseA = async (stateDir) => {
 };
 
 /**
+ * Whether phase B ran to the end and passed: finished, Playwright exit 0, and
+ * no failed phase B result. Anything else leaves the A to B window open.
+ *
+ * @param {Pick<GateState, "b" | "results">} state
+ */
+const phaseBCompleted = (state) =>
+  Boolean(state.b?.finishedAt) &&
+  state.b?.exitCode === 0 &&
+  !Object.values(state.results ?? {}).some(
+    (result) => result.phase === "B" && result.status === "fail",
+  );
+
+/**
  * Phase A: delete and recreate the target dir, write a fresh state.json.
  *
- * Refuses when the dir holds a phase A that passed (phase B pending, or
- * already run) unless `fresh` is set: phase A cannot be redone once Deploy B
- * is live without another deploy, and the profile it built is deleted here.
+ * Refuses when the dir holds a phase A that passed and whose A to B window is
+ * still open (phase B not run, failed or incomplete) unless `fresh` is set:
+ * phase A cannot be redone once Deploy B is live without another deploy, and
+ * the profile it built is deleted here. After a completed, passing phase B the
+ * next phase A starts without `--fresh`.
  *
  * @param {{stateDir: string, target: string, url: string, now?: string, fresh?: boolean, root?: string}} options
  * @returns {Promise<GateState>}
@@ -213,9 +228,9 @@ export const startPhaseA = async ({
   const paths = statePaths(stateDir);
   const earlier = fresh ? null : await readPassedPhaseA(stateDir);
 
-  if (earlier) {
+  if (earlier && !phaseBCompleted(earlier)) {
     throw new Error(
-      `Phase A already passed for ${earlier.url} (state at ${paths.statePath}) and ${earlier.b ? "phase B has run" : "phase B has not run yet"}. Running phase A again deletes that profile, and redoing A after Deploy B is live costs another deploy. ${earlier.b ? "To start a new release" : "Run phase B instead, or to start over"}, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
+      `Phase A already passed for ${earlier.url} (state at ${paths.statePath}) and ${earlier.b ? "phase B has not completed (it failed or was interrupted)" : "phase B has not run yet"}. Running phase A again deletes that profile, and redoing A after Deploy B is live costs another deploy. Run phase B instead, or to start over, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
     );
   }
 
