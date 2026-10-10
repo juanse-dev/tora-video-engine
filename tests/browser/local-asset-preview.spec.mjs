@@ -441,6 +441,10 @@ test("Cancel Render during local asset preparation unlocks authoring without OPF
   await expect(page.locator(".render-banner")).toContainText(
     "Checking local assets…",
   );
+  // The check has no measurable progress: no 0% bar yet.
+  await expect(
+    page.locator("progress[aria-label='Browser render progress']"),
+  ).toHaveCount(0);
   await expect(page.getByLabel("YAML source")).toBeDisabled();
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-authoring-locked",

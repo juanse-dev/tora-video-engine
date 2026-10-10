@@ -858,7 +858,9 @@ export const App = () => {
       message: hasLocalRefs
         ? "Checking local assets…"
         : "Preparing browser render and cleaning temporary storage…",
-      progress: 0,
+      // The asset check has no measurable progress; the bar appears with the
+      // transaction's own preparing phase.
+      progress: hasLocalRefs ? null : 0,
     });
 
     let prepareLocalAssets:
@@ -940,6 +942,7 @@ export const App = () => {
           ? {
               ...current,
               message: "Preparing browser render and cleaning temporary storage…",
+              progress: 0,
             }
           : current,
       );
