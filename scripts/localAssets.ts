@@ -1,6 +1,6 @@
-import {lstat, open, readdir} from "node:fs/promises";
+import {lstat, mkdir, open, readdir, stat, writeFile} from "node:fs/promises";
 import type {Stats} from "node:fs";
-import {join} from "node:path";
+import {dirname, isAbsolute, join, relative, resolve, sep} from "node:path";
 import {sha256Hex} from "../src/localAssets/hash.ts";
 import {
   checkLocalAssetByteSize,
@@ -11,7 +11,11 @@ import type {
   ImageRejection,
   InspectedImage,
 } from "../src/localAssets/imageInspection.ts";
+import {collectStoryLocalAssetUsages} from "../src/localAssets/readiness.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
+import {STAGED_LOCAL_ASSETS_DIR} from "../src/localAssets/sources.ts";
+import type {LocalAssetSourceMap} from "../src/localAssets/sources.ts";
+import type {Story} from "../src/story/schema.ts";
 import type {
   LocalAssetCategory,
   LocalAssetRef,
@@ -40,7 +44,8 @@ export type CandidateResult =
     };
 
 export type ScanDeps = {
-  lstat?: typeof import("node:fs/promises").lstat;
+  stat?: typeof import("node:fs/promises").stat; // root and category folders (follows symlinks)
+  lstat?: typeof import("node:fs/promises").lstat; // entries inside a category (symlinks are skipped)
   readdir?: typeof import("node:fs/promises").readdir;
   open?: typeof import("node:fs/promises").open;
   onCandidateStart?: (relativePath: string) => void; // test instrumentation
@@ -50,6 +55,25 @@ export type ScanDeps = {
 /** The root for this process: the test/CI override, else `local-assets`. */
 export const getLocalAssetsRoot = (): string =>
   process.env.TORA_LOCAL_ASSETS_ROOT ?? LOCAL_ASSETS_ROOT;
+
+/**
+ * The root as shown to people: relative to the current working directory
+ * (`local-assets` for the default root) with `/` separators. A root outside
+ * the working directory is shown as an absolute path instead of `../..` chains.
+ * Shared by `npm run assets` and the missing-asset error so they cannot diverge.
+ */
+export const displayRoot = (
+  root: string,
+  cwd: string = process.cwd(),
+): string => {
+  const absolute = resolve(cwd, root);
+  const fromCwd = relative(cwd, absolute);
+  const inside =
+    !isAbsolute(fromCwd) && fromCwd !== ".." && !fromCwd.startsWith(`..${sep}`);
+  const shown = inside ? fromCwd : absolute;
+
+  return shown === "" ? "." : shown.split("\\").join("/");
+};
 
 const isErrnoCode = (error: unknown, code: string): boolean =>
   typeof error === "object" &&
@@ -68,18 +92,19 @@ const categoryDirectory = (
 ): string => join(root, categoryFolder[category]);
 
 /**
- * True when `<root>/<categoryFolder>` is a real directory. A missing folder,
- * a file, or a symbolic link yields false. Other errors propagate.
+ * True when `<root>/<categoryFolder>` is a directory, or a symlink to one
+ * (the folder itself may be linked, e.g. into a cloud drive). A missing or
+ * dangling folder, or a file, yields false. Other errors propagate.
  */
 export const categoryFolderExists = async (
   root: string,
   category: LocalAssetCategory,
   deps: ScanDeps = {},
 ): Promise<boolean> => {
-  const lstatImpl = deps.lstat ?? lstat;
+  const statImpl = deps.stat ?? stat;
 
   try {
-    const stats = await lstatImpl(categoryDirectory(root, category));
+    const stats = await statImpl(categoryDirectory(root, category));
 
     return stats.isDirectory();
   } catch (error) {
@@ -273,10 +298,10 @@ export const inventoryLocalAssets = async (
   poses: InventoryLine[];
   backgrounds: InventoryLine[];
 }> => {
-  const lstatImpl = deps.lstat ?? lstat;
+  const statImpl = deps.stat ?? stat;
 
   try {
-    const stats = await lstatImpl(root);
+    const stats = await statImpl(root);
 
     if (!stats.isDirectory()) {
       return {rootExists: false, poses: [], backgrounds: []};
@@ -293,4 +318,142 @@ export const inventoryLocalAssets = async (
   const backgrounds = await inventoryCategory(root, "background", deps);
 
   return {rootExists: true, poses, backgrounds};
+};
+
+export type StagedLocalAssets = {sources: LocalAssetSourceMap};
+
+export class MissingLocalAssetsError extends Error {
+  override name = "MissingLocalAssetsError";
+}
+
+const stagedExtension = (mimeType: InspectedImage["mimeType"]): string => {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/webp":
+      return "webp";
+  }
+};
+
+const categoryHeading = {pose: "Pose", background: "Background"} as const;
+
+const formatMissingLocalAssets = (
+  root: string,
+  missing: ReturnType<typeof collectStoryLocalAssetUsages>,
+): string => {
+  const count = missing.length;
+  const lines = [
+    count === 1
+      ? "Cannot render Story: 1 local asset is missing."
+      : `Cannot render Story: ${count} local assets are missing.`,
+  ];
+
+  for (const category of ["pose", "background"] as const) {
+    const inCategory = missing.filter((usage) => usage.category === category);
+
+    if (inCategory.length === 0) {
+      continue;
+    }
+
+    lines.push("", `${categoryHeading[category]}:`);
+
+    for (const [index, usage] of inCategory.entries()) {
+      if (index > 0) {
+        lines.push("");
+      }
+
+      lines.push(
+        `  ${usage.ref}`,
+        `  used by scenes: ${usage.sceneIndexes.map((scene) => scene + 1).join(", ")}`,
+        `  searched: ${displayRoot(root)}/${categoryFolder[category]}/`,
+      );
+    }
+  }
+
+  lines.push(
+    "",
+    "Copy the original PNG/JPEG/WebP file into that folder (any filename),",
+    "or replace the reference in the Story. Run `npm run assets` to list the refs",
+    "of the files that are there.",
+  );
+
+  return lines.join("\n");
+};
+
+/**
+ * Requires every local ref in the Story. Writes matches into
+ * `${publicDir}/${STAGED_LOCAL_ASSETS_DIR}/<category>/<digest>.<ext>`.
+ * Skips categories with no required refs; stops a category as soon as all its digests are staged.
+ * Throws MissingLocalAssetsError before anything is spawned.
+ *
+ * Each match is written from the in-memory bytes before the next file is
+ * read, so later edits to the source cannot change what renders.
+ */
+export const stageLocalAssetsForStory = async (
+  story: Story,
+  options: {
+    root: string;
+    publicDir: string;
+    onStaged?: (ref: LocalAssetRef, stagedPath: string) => Promise<void> | void;
+  },
+  deps: ScanDeps = {},
+): Promise<StagedLocalAssets> => {
+  const usages = collectStoryLocalAssetUsages(story);
+  const sources: Partial<Record<LocalAssetRef, LocalAssetSourceMap[LocalAssetRef]>> =
+    {};
+  const missing: typeof usages = [];
+
+  for (const category of ["pose", "background"] as const) {
+    const required = new Map(
+      usages
+        .filter((usage) => usage.category === category)
+        .map((usage) => [usage.digest, usage]),
+    );
+
+    if (required.size === 0) {
+      continue;
+    }
+
+    const stagedDigests = new Set<string>();
+
+    for await (const candidate of scanCategory(options.root, category, deps)) {
+      if (!candidate.ok || !required.has(candidate.digest)) {
+        continue;
+      }
+
+      if (stagedDigests.has(candidate.digest)) {
+        continue;
+      }
+
+      const sourcePath = `${STAGED_LOCAL_ASSETS_DIR}/${category}/${candidate.digest}.${stagedExtension(candidate.image.mimeType)}`;
+      const stagedPath = join(options.publicDir, ...sourcePath.split("/"));
+
+      await mkdir(dirname(stagedPath), {recursive: true});
+      await writeFile(stagedPath, candidate.bytes);
+
+      stagedDigests.add(candidate.digest);
+      sources[candidate.ref] = {kind: "static", path: sourcePath};
+      await options.onStaged?.(candidate.ref, stagedPath);
+
+      if (stagedDigests.size === required.size) {
+        break;
+      }
+    }
+
+    for (const [digest, usage] of required) {
+      if (!stagedDigests.has(digest)) {
+        missing.push(usage);
+      }
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new MissingLocalAssetsError(
+      formatMissingLocalAssets(options.root, missing),
+    );
+  }
+
+  return {sources};
 };

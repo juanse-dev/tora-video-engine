@@ -1,17 +1,12 @@
 import {
   categoryFolder,
   categoryFolderExists,
+  displayRoot,
   getLocalAssetsRoot,
   inventoryLocalAssets,
 } from "./localAssets.ts";
 import type {InventoryLine} from "./localAssets.ts";
 import type {LocalAssetCategory} from "../src/localAssets/refs.ts";
-
-const displayRoot = (root: string): string => {
-  const normalized = root.replace(/\\/gu, "/").replace(/\/+$/u, "");
-
-  return normalized === "" ? "/" : normalized;
-};
 
 const formatLines = (
   root: string,

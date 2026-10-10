@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readdir,
   readFile,
   rm,
   stat,
@@ -17,10 +18,14 @@ import {after, describe, it} from "node:test";
 import {fileURLToPath} from "node:url";
 import {
   categoryFolderExists,
+  displayRoot,
   inventoryLocalAssets,
   LOCAL_ASSETS_ROOT,
+  MissingLocalAssetsError,
   scanCategory,
+  stageLocalAssetsForStory,
 } from "../scripts/localAssets.ts";
+import {renderStory} from "../scripts/renderStory.ts";
 import {buildRenderArgs} from "../scripts/renderSupport.ts";
 import {sha256Hex} from "../src/localAssets/hash.ts";
 import {
@@ -150,6 +155,29 @@ describe("local asset inventory with missing folders", () => {
 
     assert.equal(await categoryFolderExists(root, "pose"), true);
     assert.equal(await categoryFolderExists(root, "background"), false);
+  });
+});
+
+describe("displayRoot", () => {
+  it("shows the default root literally", () => {
+    assert.equal(displayRoot("local-assets"), "local-assets");
+    assert.equal(displayRoot("./local-assets/"), "local-assets");
+  });
+
+  it("shows roots inside the working directory relative to it", () => {
+    const cwd = resolve("some", "project");
+
+    assert.equal(displayRoot(join(cwd, "a", "b"), cwd), "a/b");
+    assert.equal(displayRoot(cwd, cwd), ".");
+  });
+
+  it("shows roots outside the working directory as absolute forward-slash paths", async () => {
+    const root = await makeRoot();
+
+    assert.equal(
+      displayRoot(root, join(root, "elsewhere")),
+      resolve(root).split("\\").join("/"),
+    );
   });
 });
 
@@ -554,17 +582,140 @@ describe("local asset scanner: symlinks", () => {
   });
 });
 
-describe("npm run assets", () => {
-  const runAssets = (root) =>
-    spawnSync(
-      process.execPath,
-      ["--experimental-strip-types", "scripts/assets.ts"],
-      {
-        cwd: repoRoot,
-        env: {...process.env, TORA_LOCAL_ASSETS_ROOT: root},
-        encoding: "utf8",
-      },
+describe("local asset scanner: symlinked folders", () => {
+  it("follows a symlinked category folder but still skips symlinked entries", async (context) => {
+    const root = await makeRoot();
+    const outside = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+
+    await put(outside, "real.png", pose);
+    await put(outside, "other/inner.png", buildPng({width: 3}));
+    await mkdir(root, {recursive: true});
+
+    try {
+      await symlink(outside, join(root, "poses"), "dir");
+      await symlink(
+        join(outside, "other"),
+        join(outside, "linkdir"),
+        "dir",
+      );
+    } catch (error) {
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        context.skip("symlinks are not permitted here");
+
+        return;
+      }
+
+      throw error;
+    }
+
+    assert.equal(await categoryFolderExists(root, "pose"), true);
+
+    const {poses} = await inventoryLocalAssets(root);
+
+    assert.deepEqual(
+      poses.map((line) => line.relativePath),
+      ["other/inner.png", "real.png"],
     );
+  });
+
+  it("follows a symlinked root", async (context) => {
+    const target = await makeRoot();
+    const holder = await makeRoot();
+    const link = join(holder, "local-assets");
+
+    await put(target, "poses/p.png", buildPng());
+
+    try {
+      await symlink(target, link, "dir");
+    } catch (error) {
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        context.skip("symlinks are not permitted here");
+
+        return;
+      }
+
+      throw error;
+    }
+
+    const inventory = await inventoryLocalAssets(link);
+
+    assert.equal(inventory.rootExists, true);
+    assert.equal(inventory.poses.length, 1);
+  });
+
+  it("treats a dangling category symlink as missing", async (context) => {
+    const root = await makeRoot();
+
+    try {
+      await symlink(join(root, "nowhere"), join(root, "poses"), "dir");
+    } catch (error) {
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        context.skip("symlinks are not permitted here");
+
+        return;
+      }
+
+      throw error;
+    }
+
+    assert.equal(await categoryFolderExists(root, "pose"), false);
+    assert.deepEqual(await collect(scanCategory(root, "pose")), []);
+  });
+});
+
+describe("npm run assets", () => {
+  const runAssets = (root, {cwd = repoRoot, useDefaultRoot = false} = {}) => {
+    const env = {...process.env};
+
+    delete env.TORA_LOCAL_ASSETS_ROOT;
+
+    if (!useDefaultRoot) {
+      env.TORA_LOCAL_ASSETS_ROOT = root;
+    }
+
+    return spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        join(repoRoot, "scripts", "assets.ts"),
+      ],
+      {cwd, env, encoding: "utf8"},
+    );
+  };
+
+  it("prints the default root as local-assets/<category>/ relative to cwd", async () => {
+    const cwd = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+
+    await put(cwd, "local-assets/poses/my-cat.png", pose);
+
+    const result = runAssets(undefined, {cwd, useDefaultRoot: true});
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      [
+        "local-assets/poses/my-cat.png",
+        `  local:pose:sha256:${nodeSha(pose)}`,
+        "",
+        "local-assets/backgrounds/ (folder not found — create it and copy images into it)",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("shows an in-cwd override root relative to cwd", async () => {
+    const cwd = await makeRoot();
+
+    await put(cwd, "my/assets/backgrounds/old.gif", buildGifSignature());
+
+    const result = runAssets("my/assets", {cwd});
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^my\/assets\/poses\/ \(folder not found/mu);
+    assert.match(result.stdout, /^my\/assets\/backgrounds\/old\.gif$/mu);
+  });
 
   it("prints the not-found message and exits 0 without a root", async () => {
     const root = join(await makeRoot(), "missing");
@@ -639,10 +790,582 @@ describe("npm run assets", () => {
   });
 });
 
+const MISSING_DIGEST = "a".repeat(64);
+
+const sceneOf = (pose, background) => ({
+  type: "intro",
+  pose,
+  background,
+  animation: "fade",
+  text: "Hi",
+  duration: 1,
+});
+
+const storyOf = (...pairs) => ({
+  title: "T",
+  scenes: pairs.map(([pose, background]) => sceneOf(pose, background)),
+});
+
+const poseRefOf = (bytes) => `local:pose:sha256:${nodeSha(bytes)}`;
+const backgroundRefOf = (bytes) => `local:background:sha256:${nodeSha(bytes)}`;
+
+const stageInto = async (story, root, options = {}, deps = {}) => {
+  const publicDir = await makeRoot();
+  const staged = await stageLocalAssetsForStory(
+    story,
+    {root, publicDir, ...options},
+    deps,
+  );
+
+  return {publicDir, staged};
+};
+
+const MISSING_FOOTER = [
+  "Copy the original PNG/JPEG/WebP file into that folder (any filename),",
+  "or replace the reference in the Story. Run `npm run assets` to list the refs",
+  "of the files that are there.",
+];
+
+describe("stageLocalAssetsForStory: missing assets", () => {
+  it("fails with MissingLocalAssetsError, not ENOENT, for a README-only root", async () => {
+    const root = await makeRoot();
+
+    await writeFile(join(root, "README.md"), "hi");
+
+    await assert.rejects(
+      stageInto(
+        storyOf([`local:pose:sha256:${MISSING_DIGEST}`, "office"]),
+        root,
+      ),
+      (error) => {
+        assert.ok(error instanceof MissingLocalAssetsError);
+        assert.notEqual(error.code, "ENOENT");
+
+        return true;
+      },
+    );
+  });
+
+  it("reports a root that does not exist the same way", async () => {
+    const root = join(await makeRoot(), "nope");
+
+    await assert.rejects(
+      stageInto(
+        storyOf([`local:pose:sha256:${MISSING_DIGEST}`, "office"]),
+        root,
+      ),
+      MissingLocalAssetsError,
+    );
+  });
+
+  it("does not let a background placed only in poses/ satisfy a background ref", async () => {
+    const root = await makeRoot();
+    const background = await fixture("background-cyan.jpg");
+    const ref = backgroundRefOf(background);
+
+    await put(root, "poses/bg.jpg", background);
+
+    const story = storyOf(["formal", ref], ["formal", "office"], ["panic", ref]);
+
+    await assert.rejects(stageInto(story, root), (error) => {
+      assert.ok(error instanceof MissingLocalAssetsError);
+      assert.equal(
+        error.message,
+        [
+          "Cannot render Story: 1 local asset is missing.",
+          "",
+          "Background:",
+          `  ${ref}`,
+          "  used by scenes: 1, 3",
+          `  searched: ${displayRoot(root)}/backgrounds/`,
+          "",
+          ...MISSING_FOOTER,
+        ].join("\n"),
+      );
+
+      return true;
+    });
+  });
+
+  it("groups by category (Pose first), keeps first-appearance order and pluralizes", async () => {
+    const root = await makeRoot();
+    const bgRef = `local:background:sha256:${"b".repeat(64)}`;
+    const poseA = `local:pose:sha256:${"c".repeat(64)}`;
+    const poseB = `local:pose:sha256:${"d".repeat(64)}`;
+    const story = storyOf(
+      [poseB, bgRef],
+      ["formal", bgRef],
+      [poseA, "office"],
+      [poseB, "office"],
+    );
+
+    await assert.rejects(stageInto(story, root), (error) => {
+      assert.ok(error instanceof MissingLocalAssetsError);
+      assert.equal(
+        error.message,
+        [
+          "Cannot render Story: 3 local assets are missing.",
+          "",
+          "Pose:",
+          `  ${poseB}`,
+          "  used by scenes: 1, 4",
+          `  searched: ${displayRoot(root)}/poses/`,
+          "",
+          `  ${poseA}`,
+          "  used by scenes: 3",
+          `  searched: ${displayRoot(root)}/poses/`,
+          "",
+          "Background:",
+          `  ${bgRef}`,
+          "  used by scenes: 1, 2",
+          `  searched: ${displayRoot(root)}/backgrounds/`,
+          "",
+          ...MISSING_FOOTER,
+        ].join("\n"),
+      );
+
+      return true;
+    });
+  });
+
+  it("prints the default root literally as local-assets/<category>/", async () => {
+    const cwd = await makeRoot();
+    const previous = process.cwd();
+
+    process.chdir(cwd);
+
+    try {
+      await assert.rejects(
+        stageInto(
+          storyOf([`local:pose:sha256:${MISSING_DIGEST}`, "office"]),
+          LOCAL_ASSETS_ROOT,
+        ),
+        (error) => {
+          assert.match(error.message, /^ {2}searched: local-assets\/poses\/$/mu);
+
+          return true;
+        },
+      );
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  it("never lets rejected files satisfy a ref", async () => {
+    const root = await makeRoot();
+    const gif = buildGifSignature();
+    const apng = buildApng();
+    const huge = buildPng({width: 9000, height: 9000});
+    const text = buildTextBytes();
+
+    await put(root, "poses/a.png", gif);
+    await put(root, "poses/b.png", apng);
+    await put(root, "poses/c.png", huge);
+    await put(root, "poses/fake.png", text);
+
+    const story = storyOf(
+      [poseRefOf(gif), "office"],
+      [poseRefOf(apng), "office"],
+      [poseRefOf(huge), "office"],
+      [poseRefOf(text), "office"],
+    );
+
+    await assert.rejects(stageInto(story, root), (error) => {
+      assert.ok(error instanceof MissingLocalAssetsError);
+      assert.match(error.message, /4 local assets are missing/u);
+
+      return true;
+    });
+  });
+});
+
+describe("stageLocalAssetsForStory: bundled-only stories", () => {
+  it("does not touch the root or the filesystem", async () => {
+    const forbidden = () => {
+      throw new Error("filesystem must not be touched");
+    };
+    const {publicDir, staged} = await stageInto(
+      storyOf(["formal", "office"], ["coffee", "server-room"]),
+      join(await makeRoot(), "nope"),
+      {},
+      {stat: forbidden, lstat: forbidden, readdir: forbidden, open: forbidden},
+    );
+
+    assert.deepEqual(staged, {sources: {}});
+    assert.deepEqual(await readdir(publicDir), []);
+  });
+});
+
+describe("stageLocalAssetsForStory: staging", () => {
+  it("stages originals under __local-assets/<category>/<digest>.<ext>", async () => {
+    const root = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+    const background = await fixture("background-cyan.jpg");
+    const webp = await fixture("background-noext");
+    const renamed = buildPng({width: 5, height: 7});
+
+    await put(root, "poses/pose-magenta.png", pose);
+    await put(root, "poses/photo.jpg", renamed);
+    await put(root, "backgrounds/background-cyan.jpg", background);
+    await put(root, "backgrounds/background-noext", webp);
+
+    const story = storyOf(
+      [poseRefOf(pose), backgroundRefOf(background)],
+      [poseRefOf(renamed), backgroundRefOf(webp)],
+    );
+    const {publicDir, staged} = await stageInto(story, root);
+
+    const expected = [
+      [poseRefOf(pose), pose, `__local-assets/pose/${nodeSha(pose)}.png`],
+      [
+        poseRefOf(renamed),
+        renamed,
+        `__local-assets/pose/${nodeSha(renamed)}.png`,
+      ],
+      [
+        backgroundRefOf(background),
+        background,
+        `__local-assets/background/${nodeSha(background)}.jpg`,
+      ],
+      [
+        backgroundRefOf(webp),
+        webp,
+        `__local-assets/background/${nodeSha(webp)}.webp`,
+      ],
+    ];
+
+    assert.deepEqual(
+      staged.sources,
+      Object.fromEntries(
+        expected.map(([ref, , path]) => [ref, {kind: "static", path}]),
+      ),
+    );
+
+    for (const [, original, path] of expected) {
+      assert.deepEqual(
+        Buffer.from(await readFile(join(publicDir, ...path.split("/")))),
+        Buffer.from(original),
+      );
+    }
+
+    await assert.rejects(stat(join(repoRoot, "public", "__local-assets")), {
+      code: "ENOENT",
+    });
+  });
+
+  it("resolves a nested file and stages identical bytes once", async () => {
+    const root = await makeRoot();
+    const nestedOnly = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+
+    await put(root, "poses/a.png", pose);
+    await put(root, "poses/a/b/pic.png", pose);
+    await put(root, "poses/z.png", pose);
+    await put(nestedOnly, "poses/a/b/pic.png", pose);
+
+    const stagedRefs = [];
+    const {publicDir, staged} = await stageInto(
+      storyOf([poseRefOf(pose), "office"]),
+      root,
+      {onStaged: (ref, stagedPath) => stagedRefs.push([ref, stagedPath])},
+    );
+
+    assert.equal(stagedRefs.length, 1);
+    assert.equal(stagedRefs[0][0], poseRefOf(pose));
+    assert.equal(
+      resolve(stagedRefs[0][1]),
+      resolve(publicDir, "__local-assets", "pose", `${nodeSha(pose)}.png`),
+    );
+    assert.deepEqual(Object.keys(staged.sources), [poseRefOf(pose)]);
+    assert.equal((await inventoryLocalAssets(root)).poses.length, 3);
+
+    const nested = await stageInto(
+      storyOf([poseRefOf(pose), "office"]),
+      nestedOnly,
+    );
+
+    assert.deepEqual(Object.keys(nested.staged.sources), [poseRefOf(pose)]);
+  });
+
+  it("stops a category as soon as every digest is staged", async () => {
+    const root = await makeRoot();
+    const files = [];
+
+    for (let index = 0; index < 10; index += 1) {
+      files.push(buildPng({width: index + 1, height: 1}));
+      await put(root, `poses/${index}.png`, files[index]);
+      await put(root, `backgrounds/${index}.png`, files[index]);
+    }
+
+    const {opened, deps} = spyOpen();
+
+    await stageInto(storyOf([poseRefOf(files[0]), "office"]), root, {}, deps);
+
+    assert.equal(opened.length, 1);
+    assert.ok(opened[0].includes("poses"), opened[0]);
+  });
+
+  it("stops each required category independently", async () => {
+    const root = await makeRoot();
+    const files = [];
+
+    for (let index = 0; index < 5; index += 1) {
+      files.push(buildPng({width: index + 1, height: 1}));
+      await put(root, `poses/${index}.png`, files[index]);
+      await put(root, `backgrounds/${index}.png`, files[index]);
+    }
+
+    const {opened, deps} = spyOpen();
+
+    await stageInto(
+      storyOf([poseRefOf(files[1]), backgroundRefOf(files[2])]),
+      root,
+      {},
+      deps,
+    );
+
+    assert.equal(opened.filter((path) => path.includes("poses")).length, 2);
+    assert.equal(
+      opened.filter((path) => path.includes("backgrounds")).length,
+      3,
+    );
+  });
+
+  it("snapshots bytes: editing the source after a match cannot change the staged file", async () => {
+    const root = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+    const source = join(root, "poses", "p.png");
+
+    await put(root, "poses/p.png", pose);
+
+    const {publicDir} = await stageInto(
+      storyOf([poseRefOf(pose), "office"]),
+      root,
+      {
+        onStaged: async () => {
+          await writeFile(source, buildTextBytes());
+        },
+      },
+    );
+    const stagedPath = join(
+      publicDir,
+      "__local-assets",
+      "pose",
+      `${nodeSha(pose)}.png`,
+    );
+
+    assert.equal(nodeSha(await readFile(stagedPath)), nodeSha(pose));
+    assert.notEqual(nodeSha(await readFile(source)), nodeSha(pose));
+  });
+
+  it("writes a match before reading the next file", async () => {
+    const root = await makeRoot();
+    const first = buildPng({width: 1});
+    const second = buildPng({width: 2});
+
+    await put(root, "poses/0.png", first);
+    await put(root, "poses/1.png", second);
+
+    const publicDir = await makeRoot();
+    const stagedPath = join(
+      publicDir,
+      "__local-assets",
+      "pose",
+      `${nodeSha(first)}.png`,
+    );
+    let existedWhenSecondOpened = null;
+    const deps = {
+      open: async (...args) => {
+        if (String(args[0]).endsWith("1.png")) {
+          existedWhenSecondOpened = await stat(stagedPath).then(
+            () => true,
+            () => false,
+          );
+        }
+
+        return open(...args);
+      },
+    };
+
+    await stageLocalAssetsForStory(
+      storyOf([poseRefOf(first), "office"], [poseRefOf(second), "office"]),
+      {root, publicDir},
+      deps,
+    );
+
+    assert.equal(existedWhenSecondOpened, true);
+  });
+});
+
+describe("renderStory staging", () => {
+  const storyYaml = (pose, background = "office") =>
+    [
+      'title: "T2"',
+      "scenes:",
+      "  - type: intro",
+      `    pose: ${pose}`,
+      `    background: ${background}`,
+      "    animation: fade",
+      '    text: "Hi"',
+      "    duration: 1",
+      "",
+    ].join("\n");
+
+  const setup = async (yaml) => {
+    const directory = await makeRoot();
+    const slug = `t2-${nodeSha(directory).slice(0, 12)}`;
+    const storyPath = join(directory, `${slug}.yaml`);
+    const tempBase = join(directory, "tmp");
+
+    await mkdir(tempBase);
+    await writeFile(storyPath, yaml);
+
+    return {
+      storyPath,
+      tempBase,
+      outputPath: join(repoRoot, "output", `${slug}.mp4`),
+    };
+  };
+
+  it("keeps the bundled-only command line and props", async () => {
+    const {storyPath, tempBase} = await setup(storyYaml("formal"));
+    const calls = [];
+
+    const outputPath = await renderStory(storyPath, {
+      tempBase,
+      runRemotion: async (_executable, args) => {
+        const propsArg = args.find((arg) => arg.startsWith("--props="));
+
+        calls.push({
+          args,
+          props: JSON.parse(await readFile(propsArg.slice(8), "utf8")),
+        });
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.ok(!calls[0].args.some((arg) => arg.startsWith("--public-dir")));
+    assert.deepEqual(Object.keys(calls[0].props), ["story"]);
+    assert.deepEqual(await readdir(tempBase), []);
+    await rm(outputPath, {force: true});
+  });
+
+  it("stages local assets into a temporary public dir and cleans it up", async () => {
+    const pose = await fixture("pose-magenta.png");
+    const root = await makeRoot();
+
+    await put(root, "poses/any-name.bin", pose);
+
+    const {storyPath, tempBase, outputPath} = await setup(
+      storyYaml(poseRefOf(pose)),
+    );
+    const observed = [];
+
+    await renderStory(storyPath, {
+      tempBase,
+      localAssetsRoot: root,
+      runRemotion: async (_executable, args) => {
+        const publicArg = args.find((arg) => arg.startsWith("--public-dir="));
+        const propsArg = args.find((arg) => arg.startsWith("--props="));
+        const publicDir = publicArg.slice("--public-dir=".length);
+
+        observed.push({
+          publicDir,
+          props: JSON.parse(await readFile(propsArg.slice(8), "utf8")),
+          staged: await readFile(
+            join(publicDir, "__local-assets", "pose", `${nodeSha(pose)}.png`),
+          ),
+          copiedPublic: await readdir(publicDir),
+        });
+      },
+    });
+
+    assert.equal(observed.length, 1);
+    assert.ok(resolve(observed[0].publicDir).startsWith(resolve(tempBase)));
+    assert.deepEqual(observed[0].staged, pose);
+    assert.ok(observed[0].copiedPublic.includes("characters"));
+    assert.ok(observed[0].copiedPublic.includes("backgrounds"));
+    assert.deepEqual(observed[0].props.localAssetSources, {
+      [poseRefOf(pose)]: {
+        kind: "static",
+        path: `__local-assets/pose/${nodeSha(pose)}.png`,
+      },
+    });
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(join(repoRoot, "public", "__local-assets")), {
+      code: "ENOENT",
+    });
+    await rm(outputPath, {force: true});
+  });
+
+  it("removes the temporary directory and output when Remotion fails", async () => {
+    const pose = await fixture("pose-magenta.png");
+    const root = await makeRoot();
+
+    await put(root, "poses/p.png", pose);
+
+    const {storyPath, tempBase, outputPath} = await setup(
+      storyYaml(poseRefOf(pose)),
+    );
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        localAssetsRoot: root,
+        runRemotion: async () => {
+          await mkdir(dirname(outputPath), {recursive: true});
+          await writeFile(outputPath, "partial");
+          throw new Error("Remotion render failed with exit code 1");
+        },
+      }),
+      /Remotion render failed/u,
+    );
+
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(outputPath), {code: "ENOENT"});
+  });
+
+  it("fails before spawning when an asset is missing and leaves nothing behind", async () => {
+    const root = await makeRoot();
+    const {storyPath, tempBase, outputPath} = await setup(
+      storyYaml(`local:pose:sha256:${MISSING_DIGEST}`),
+    );
+    let spawned = 0;
+
+    await mkdir(dirname(outputPath), {recursive: true});
+    await writeFile(outputPath, "stale");
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        localAssetsRoot: root,
+        runRemotion: async () => {
+          spawned += 1;
+        },
+      }),
+      MissingLocalAssetsError,
+    );
+
+    assert.equal(spawned, 0);
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(outputPath), {code: "ENOENT"});
+  });
+});
+
 describe("bundled-only render args", () => {
   it("are unchanged when no public dir is given", () => {
     const args = buildRenderArgs("output/x.mp4", "props.json");
 
     assert.ok(!args.some((arg) => arg.startsWith("--public-dir")));
+    assert.deepEqual(args, buildRenderArgs("output/x.mp4", "props.json", undefined));
+  });
+
+  it("appends --public-dir after the existing arguments when given", () => {
+    const without = buildRenderArgs("output/x.mp4", "props.json");
+
+    assert.deepEqual(
+      buildRenderArgs("output/x.mp4", "props.json", "/tmp/tora/public"),
+      [...without, "--public-dir=/tmp/tora/public"],
+    );
   });
 });
