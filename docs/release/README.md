@@ -27,21 +27,31 @@ Agents and automated executors must never run the suite against `prod`; producti
    npm run gate -- --url=prod --phase=A
    ```
 
-3. **Merge a later commit to `main`** and wait for Netlify to publish it (Deploy B). Do not clear `.gate/prod/`, and run phase B on the same machine, in the same checkout, as phase A. The hours between the two runs do not matter.
-4. **Run phase B**:
+3. **Check `.gate/prod/report.md` first.** Merge the commit for Deploy B only after its result line reads `PHASE A PASSED (phase B pending)`. If phase A failed, fix that before Deploy B: once Deploy B is live, rerunning phase A tests the wrong build and costs another deploy (a Deploy C), see [Troubleshooting](#troubleshooting).
+4. **Merge a later commit to `main`** and wait for Netlify to publish it (Deploy B). Do not clear `.gate/prod/`, and run phase B on the same machine, in the same checkout, as phase A. The hours between the two runs do not matter.
+5. **Run phase B**:
 
    ```bash
    npm run gate -- --url=prod --phase=B
    ```
 
-5. Open `.gate/prod/report.md` and paste it (see below).
+6. Open `.gate/prod/report.md` and paste it (see below).
 
-Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between A and B. Phase B stops immediately if phase A's state is missing or was recorded for another URL.
+Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between A and B. To protect that window, phase A refuses to start when `.gate/<target>/state.json` shows a phase A that passed (whether phase B is still pending or already ran), unless you pass `--fresh`. Use `--fresh` only when you really mean to throw that state and profile away: for example a rehearsal you are repeating, or the phase A of the next release after phase B finished.
+
+Phase B stops immediately, before it builds or opens a browser, if phase A's state is missing, was recorded for another URL, or phase A did not pass.
 
 ## Commands
 
 ```bash
-npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>]
+npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>] [--fresh]
+```
+
+**Windows PowerShell 5.1.** Its `npm.ps1` shim drops the `--`, so npm treats `--url=...` as its own options (and prints `npm warn Unknown cli config "--url"`). The runner copes: it reads the flags npm exports as `npm_config_url`, `npm_config_phase`, `npm_config_only`, `npm_config_headed` and `npm_config_fresh`, so the commands in this guide work as written and the warnings are harmless. If you still see `--url is required`, run the same command through `npm.cmd`, or skip npm:
+
+```powershell
+npm.cmd run gate -- --url=prod --phase=A
+node scripts/gate.mjs --url=prod --phase=A
 ```
 
 | Option | Meaning |
@@ -49,9 +59,10 @@ npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>]
 | `--url=prod` | `https://tora-video-engine.netlify.app` |
 | `--url=preview:<n>` | The Deploy Preview of pull request `<n>`: `https://deploy-preview-<n>--tora-video-engine.netlify.app`. Use this to rehearse the suite on a PR before merging. |
 | `--url=local` | Builds and serves the app on `http://127.0.0.1:4190` (phase A builds `dist/web`; phase B builds a different, unminified copy into `dist/web-gate-b`). Needs no deploy. |
-| `--url=https://<origin>` | Any other https origin. `http://` is accepted only for loopback hosts. |
+| `--url=https://<origin>` | Any other https origin (state under `.gate/host-<host>/`). `http://` is accepted only for loopback hosts. |
 | `--phase=A` / `--phase=B` | Phase A: after Deploy A. Phase B: after Deploy B. |
 | `--headed` | Show the browser window instead of running headless. |
+| `--fresh` | Phase A only. Start over even though `.gate/<target>/` holds a phase A that passed. Without it, phase A refuses and tells you so. |
 | `--only=<grep>` | Run only the tests whose title matches (Playwright `--grep`). For debugging only: phase A still wipes `.gate/<target>/` first, and the report lists the other items as not recorded, so a full phase A must run before phase B. |
 
 The runner exits with Playwright's exit code (non-zero when any check fails, or when the optional Netlify check fails).
@@ -73,7 +84,7 @@ The runner exits with Playwright's exit code (non-zero when any check fails, or 
 
 ## The report
 
-The report is written to **`.gate/<target>/report.md`** (`prod`, `preview-<n>`, `local`, or the sanitized host), next to `state.json`, `profile/` and `artifacts/` (exported YAML, MP4s, decoded frames, `network.json`). `.gate/` is git-ignored.
+The report is written to **`.gate/<target>/report.md`** (`prod`, `preview-<n>`, `local`, or `host-<sanitized host>`), next to `state.json`, `profile/` and `artifacts/` (exported YAML, MP4s, decoded frames, `network.json`). `.gate/` is git-ignored.
 
 It contains, in this order:
 
@@ -102,6 +113,8 @@ When the variable is set, the **runner** (never the browser) makes read-only `GE
 
 It never calls a mutating endpoint and never prints the token. Local targets skip this check.
 
+**Edge Functions stay a manual Netlify check, even with a token.** The runner does not look for them, and the report's Netlify line says `Edge Functions: not checked (confirm in the Netlify UI)`. Open the deploy in the Netlify UI and confirm none are listed (see below).
+
 Use a personal access token (Netlify: User settings, Applications, Personal access tokens). Set it only for the current session:
 
 ```powershell
@@ -123,7 +136,7 @@ The report says `Netlify check: manual (no token)`. In the Netlify UI for the si
 
 - the deploy is **Published** and its status is **ready**;
 - the deploy's commit matches the commit in the report's Deploy A / Deploy B rows (the Netlify deploy ID is in the same row);
-- no Functions or Edge Functions are listed for the deploy.
+- no Functions or Edge Functions are listed for the deploy (Edge Functions need this manual check with or without a token).
 
 ## Remotion telemetry (production safety)
 
@@ -135,6 +148,9 @@ The suite only reads the static site and writes to its own profile under `.gate/
 | --- | --- |
 | `Deploy B is not live yet: still <identity>` | Netlify has not published a new deploy at that URL. Wait until Deploy B is **Published**, then run phase B again. |
 | `Phase B needs phase A's state` / `Phase A was run for <other url>` | Run phase A first, on this machine, for the same URL. Phase A recreates `.gate/<target>/`; do not run it again between A and B. |
+| `Phase A did not pass (...); rerun phase A before phase B` | Phase A's state is incomplete or has a failing item, so phase B cannot build on it. Fix the cause and rerun phase A (with `--fresh` if it refuses). If Deploy B is already live, that rerun tests the Deploy B build, so a clean A to B comparison costs one more deploy (a Deploy C): merge another commit, run phase A against it, then run phase B once it is published. Avoid this by merging Deploy B only after the report reads `PHASE A PASSED (phase B pending)`. |
+| `Phase A already passed for <url> ...` | Phase A refused to delete a passed phase A. Run phase B if it is pending. Pass `--fresh` only to throw the earlier state and profile away on purpose. |
+| `--url is required` from PowerShell | `npm.ps1` dropped the `--` and npm did not export the flags. Run `npm.cmd run gate -- --url=... --phase=...` or `node scripts/gate.mjs --url=... --phase=...`. |
 | Port 4190 is already in use (`--url=local`) | Another process holds the port, often a leftover `vite preview` or another gate run. Stop it and retry. |
 | Chrome is not found | Install Google Chrome (the suite launches `channel: "chrome"`). Do not run `npx playwright install`. |
 | CLI parity cannot find a browser | Point Remotion's CLI at Chrome with `TORA_REMOTION_BROWSER_EXECUTABLE`. PowerShell: `$env:TORA_REMOTION_BROWSER_EXECUTABLE = "C:\Program Files\Google\Chrome\Application\chrome.exe"`. bash: `export TORA_REMOTION_BROWSER_EXECUTABLE=/usr/bin/google-chrome`. |
