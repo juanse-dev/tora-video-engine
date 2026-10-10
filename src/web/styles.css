@@ -492,6 +492,177 @@ h1 {
   color: #e2e8f0;
 }
 
+.asset-category h5 {
+  margin: 14px 0 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.my-assets-disclosure,
+.my-assets-status,
+.my-assets-empty {
+  margin: 0 0 10px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.my-assets-toolbar,
+.my-assets-paging {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.my-assets-toolbar .file-button,
+.local-asset-actions .file-button,
+.my-assets-paging button,
+.local-asset-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  padding: 6px 10px;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.my-assets-toolbar .file-button,
+.local-asset-actions .file-button {
+  position: relative;
+}
+
+.local-asset-actions .file-button {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.my-assets-paging button:disabled,
+.local-asset-actions button:disabled,
+.my-assets-toolbar .file-button:has(input:disabled),
+.local-asset-actions .file-button:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.my-assets-error {
+  color: #fecaca;
+}
+
+.local-asset-rename {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.local-asset-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #e2e8f0;
+  background: #070a0f;
+  font-size: 12px;
+}
+
+.local-asset-rename-error {
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.local-asset-rename .local-asset-actions {
+  padding: 0;
+}
+
+/* A local card is a non-interactive wrapper around a selection button and an
+   actions row (siblings, never nested). */
+.local-asset-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  cursor: default;
+}
+
+/* The grid cells are narrow (four poses per row): stretch and wrap instead of
+   letting a button centre overflowing content. */
+.local-asset-select {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.local-asset-thumbnail-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 8px;
+  overflow: hidden;
+  color: #94a3b8;
+  background: #070a0f;
+  font-size: 11px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.background-grid .local-asset-thumbnail-fallback {
+  aspect-ratio: 16 / 9;
+}
+
+.local-badge {
+  display: inline-block;
+  justify-self: start;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.local-asset-card .asset-card-copy {
+  min-width: 0;
+}
+
+.local-asset-card .asset-card-copy strong {
+  overflow-wrap: anywhere;
+}
+
+.local-asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.missing-local-asset-card {
+  padding: 0;
+}
+
+.missing-local-asset-card span {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .animation-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -573,6 +744,11 @@ h1 {
 .file-button {
   display: inline-flex;
   align-items: center;
+}
+
+.file-button:focus-within {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .file-button input {

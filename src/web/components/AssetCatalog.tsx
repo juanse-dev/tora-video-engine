@@ -4,7 +4,12 @@ import {
   backgroundCatalog,
   toraPoseCatalog,
 } from "../../assets.ts";
+import type {
+  LocalBackgroundRef,
+  LocalPoseRef,
+} from "../../localAssets/refs.ts";
 import type {VisualSceneDraft} from "../visualDraft.ts";
+import {MyAssetsSection} from "./MyAssetsSection.tsx";
 
 type AssetCatalogProps = {
   scene: VisualSceneDraft;
@@ -36,6 +41,7 @@ export const AssetCatalog = ({
 
       <div className="asset-category">
         <h4>Tora poses</h4>
+        <h5 className="asset-subheading">Bundled</h5>
         <div className="asset-grid pose-grid">
           {Object.values(toraPoseCatalog).map((asset) => {
             const selected = scene.pose === asset.storyValue;
@@ -69,10 +75,17 @@ export const AssetCatalog = ({
             );
           })}
         </div>
+        <MyAssetsSection
+          category="pose"
+          selectedValue={scene.pose}
+          // The section only lists refs of its own category.
+          onSelect={(ref) => onChange({pose: ref as LocalPoseRef})}
+        />
       </div>
 
       <div className="asset-category">
         <h4>Backgrounds</h4>
+        <h5 className="asset-subheading">Bundled</h5>
         <div className="asset-grid background-grid">
           {Object.values(backgroundCatalog).map((asset) => {
             const selected = scene.background === asset.storyValue;
@@ -106,6 +119,13 @@ export const AssetCatalog = ({
             );
           })}
         </div>
+        <MyAssetsSection
+          category="background"
+          selectedValue={scene.background}
+          onSelect={(ref) =>
+            onChange({background: ref as LocalBackgroundRef})
+          }
+        />
       </div>
 
       <div className="asset-category">
