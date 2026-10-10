@@ -139,6 +139,10 @@ test("the Player does not advance while a local image is still loading", async (
     })
     .toBeGreaterThan(0);
 
+  // The Story has no audio. Muting keeps Remotion from waiting on the
+  // shared AudioContext to resume after buffering, which never settles on
+  // a Linux runner without an audio device.
+  await page.getByRole("button", {name: "Mute sound"}).click();
   const playButton = page.getByRole("button", {name: "Play video"});
   await expect(playButton).toBeVisible();
   await playButton.click();
