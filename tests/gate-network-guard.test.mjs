@@ -6,8 +6,10 @@ import {join} from "node:path";
 import {describe, it} from "node:test";
 import {
   attachNetworkGuard,
+  combineGuards,
   classifyRequest,
   saveNetworkLog,
+  summarizeNetwork,
   TELEMETRY_MAX_BYTES,
 } from "./gate/helpers/networkGuard.mjs";
 
@@ -219,5 +221,67 @@ describe("GATE-001 G6 saveNetworkLog", () => {
     } finally {
       await rm(dir, {recursive: true, force: true});
     }
+  });
+});
+
+describe("GATE-001 G6 combineGuards", () => {
+  it("merges several contexts' guards into one", () => {
+    const first = new EventEmitter();
+    const second = new EventEmitter();
+    const a = attachNetworkGuard(first);
+    const b = attachNetworkGuard(second);
+
+    first.emit("request", fakeRequest({url: `${APP}/index.html`}));
+    first.emit("request", fakeRequest({method: "POST", url: TELEMETRY, body: Buffer.alloc(3)}));
+    second.emit("request", fakeRequest({url: "https://other.example/x"}));
+    second.emit("request", fakeRequest({method: "PUT", url: "https://evil.example/up", body: PNG}));
+
+    const all = combineGuards([a, b]);
+
+    assert.deepEqual(all.hosts(), [
+      "evil.example",
+      "other.example",
+      "tora-video-engine.netlify.app",
+      "www.remotion.pro",
+    ]);
+    assert.equal(all.log().length, 2);
+    assert.equal(all.violations().length, 1);
+    assert.match(all.violations()[0], /^PUT https:\/\/evil\.example\/up/);
+  });
+
+  it("sees guards added later", () => {
+    const guards = [];
+    const all = combineGuards(guards);
+    const context = new EventEmitter();
+
+    guards.push(attachNetworkGuard(context));
+    context.emit("request", fakeRequest({method: "DELETE", url: `${APP}/x`}));
+
+    assert.equal(all.violations().length, 1);
+  });
+});
+
+describe("GATE-001 G6 summarizeNetwork", () => {
+  it("groups identical requests", () => {
+    const context = new EventEmitter();
+    const guard = attachNetworkGuard(context);
+
+    for (let count = 0; count < 3; count += 1) {
+      context.emit("request", fakeRequest({method: "POST", url: TELEMETRY, body: Buffer.alloc(120)}));
+    }
+
+    context.emit("request", fakeRequest({url: `${APP}/index.html`}));
+
+    assert.equal(
+      summarizeNetwork(guard),
+      `3 non-GET request(s) (3 x POST ${TELEMETRY}, 120 B); hosts: tora-video-engine.netlify.app, www.remotion.pro; 0 violation(s)`,
+    );
+  });
+
+  it("says so when there are none", () => {
+    assert.equal(
+      summarizeNetwork(attachNetworkGuard(new EventEmitter())),
+      "0 non-GET request(s); hosts: none; 0 violation(s)",
+    );
   });
 });

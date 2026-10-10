@@ -227,12 +227,30 @@ export const saveNetworkLog = async (networkPath, label, guard) => {
  * @param {ReturnType<typeof attachNetworkGuard>} guard
  */
 export const summarizeNetwork = (guard) => {
-  const log = guard.log();
-  const posts = log.filter((entry) => entry.method !== "GET");
+  const posts = guard.log().filter((entry) => entry.method !== "GET");
+  const groups = new Map();
 
-  return `${posts.length} non-GET request(s)${
-    posts.length > 0
-      ? ` (${posts.map((entry) => `${entry.method} ${entry.url}, ${entry.bytes} B`).join("; ")})`
-      : ""
-  }; hosts: ${guard.hosts().join(", ") || "none"}; ${guard.violations().length} violation(s)`;
+  for (const entry of posts) {
+    const label = `${entry.method} ${entry.url}, ${entry.bytes} B`;
+
+    groups.set(label, (groups.get(label) ?? 0) + 1);
+  }
+
+  const detail = [...groups]
+    .map(([label, count]) => (count > 1 ? `${count} x ${label}` : label))
+    .join("; ");
+
+  return `${posts.length} non-GET request(s)${detail ? ` (${detail})` : ""}; hosts: ${guard.hosts().join(", ") || "none"}; ${guard.violations().length} violation(s)`;
 };
+
+/**
+ * One guard over several contexts (a browser relaunched with the same profile
+ * is a new context). `guards` may be extended after the call.
+ *
+ * @param {Array<ReturnType<typeof attachNetworkGuard>>} guards
+ */
+export const combineGuards = (guards) => ({
+  violations: () => guards.flatMap((guard) => guard.violations()),
+  log: () => guards.flatMap((guard) => guard.log()),
+  hosts: () => [...new Set(guards.flatMap((guard) => guard.hosts()))].sort(),
+});
