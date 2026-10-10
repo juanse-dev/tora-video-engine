@@ -1,34 +1,70 @@
 // GATE-001 G2: argument parsing and target resolution for scripts/gate.mjs.
 // Pure (no I/O) so it is unit-tested in tests/gate-runner.test.mjs.
 
+import process from "node:process";
 import {URL} from "node:url";
 
 export const PROD_ORIGIN = "https://tora-video-engine.netlify.app";
 export const LOCAL_ORIGIN = "http://127.0.0.1:4190";
 
 export const USAGE = [
-  "Usage: npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>]",
+  "Usage: npm run gate -- --url=<target> --phase=<A|B> [--headed] [--only=<grep>] [--fresh]",
   "  target: prod | preview:<n> | local | https://<origin>",
+  "  --fresh: phase A only; start over even when a finished phase A is waiting for phase B",
+  "  Windows PowerShell 5.1 (npm.ps1) can drop the `--`; use `npm.cmd run gate -- ...` or `node scripts/gate.mjs ...`.",
 ].join("\n");
+
+const SHELL_HINT =
+  "Windows PowerShell 5.1 can drop the `--` from `npm run gate -- ...`; use `npm.cmd run gate -- --url=<target> --phase=<A|B>` or `node scripts/gate.mjs --url=<target> --phase=<A|B>`.";
+
+/**
+ * A target slug becomes a directory name under .gate/, and phase A deletes
+ * that directory, so it must be a plain name: never empty, "." or "..", and
+ * only lower-case letters, digits, "." and "-".
+ *
+ * @param {unknown} slug
+ * @returns {string}
+ */
+export const assertSafeSlug = (slug) => {
+  if (
+    typeof slug !== "string" ||
+    slug === "" ||
+    slug === "." ||
+    slug === ".." ||
+    !/^[a-z0-9.-]+$/.test(slug)
+  ) {
+    throw new Error(
+      `Unsafe target slug ${JSON.stringify(slug)}: a slug must be non-empty, not "." or "..", and use only a-z, 0-9, "." and "-".`,
+    );
+  }
+
+  return slug;
+};
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /**
- * @typedef {{url: string, phase: "A" | "B", headed: boolean, only: string | undefined}} GateArgs
+ * @typedef {{url: string, phase: "A" | "B", headed: boolean, only: string | undefined, fresh: boolean}} GateArgs
  * @typedef {{name: string, slug: string, url: string, local: boolean}} GateTarget
  */
 
 /**
+ * Windows PowerShell 5.1 runs npm through npm.ps1, which drops the `--`, so
+ * npm swallows `--url=x --phase=A` as its own config and exports them as
+ * npm_config_url, npm_config_phase, ... with an empty argv. When argv has no
+ * --url, those variables are used instead.
+ *
  * @param {string[]} argv
+ * @param {Record<string, string | undefined>} [env]
  * @returns {GateArgs}
  */
-export const parseGateArgs = (argv) => {
+export const parseGateArgs = (argv, env = process.env) => {
   /** @type {Record<string, string | true>} */
   const values = {};
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    const match = /^--(url|phase|only|headed)(?:=(.*))?$/.exec(arg);
+    const match = /^--(url|phase|only|headed|fresh)(?:=(.*))?$/.exec(arg);
 
     if (!match) {
       throw new Error(`Unknown argument "${arg}".`);
@@ -36,12 +72,12 @@ export const parseGateArgs = (argv) => {
 
     const [, name, inline] = match;
 
-    if (name === "headed") {
+    if (name === "headed" || name === "fresh") {
       if (inline !== undefined) {
-        throw new Error("--headed takes no value.");
+        throw new Error(`--${name} takes no value.`);
       }
 
-      values.headed = true;
+      values[name] = true;
       continue;
     }
 
@@ -61,8 +97,26 @@ export const parseGateArgs = (argv) => {
     values[name] = value;
   }
 
+  if (values.url === undefined) {
+    for (const name of ["url", "phase", "only"]) {
+      const fromNpm = env[`npm_config_${name}`];
+
+      if (values[name] === undefined && fromNpm) {
+        values[name] = fromNpm;
+      }
+    }
+
+    for (const name of ["headed", "fresh"]) {
+      if (values[name] === undefined && env[`npm_config_${name}`] === "true") {
+        values[name] = true;
+      }
+    }
+  }
+
   if (typeof values.url !== "string" || values.url === "") {
-    throw new Error("--url is required (prod, preview:<n>, local or an https:// URL).");
+    throw new Error(
+      `--url is required (prod, preview:<n>, local or an https:// URL). ${SHELL_HINT}`,
+    );
   }
 
   if (typeof values.phase !== "string") {
@@ -80,6 +134,7 @@ export const parseGateArgs = (argv) => {
     phase,
     headed: values.headed === true,
     only: typeof values.only === "string" ? values.only : undefined,
+    fresh: values.fresh === true,
   };
 };
 
@@ -151,9 +206,22 @@ export const resolveTarget = (value) => {
     return resolveTarget("prod");
   }
 
+  // "host-" keeps custom hosts apart from the built-in slugs (a host named
+  // "prod" or "local"); stripping the edges leaves nothing for a host such as
+  // ".." or ".", which would otherwise name .gate/ or the repo root.
+  const hostName = parsed.host
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+
+  if (hostName === "") {
+    throw new Error(
+      `Invalid target "${value}": the host has no usable name for a state directory.`,
+    );
+  }
+
   return {
     name: parsed.origin,
-    slug: parsed.host.replace(/[^a-z0-9.]+/g, "-"),
+    slug: assertSafeSlug(`host-${hostName}`),
     url: parsed.origin,
     local: false,
   };

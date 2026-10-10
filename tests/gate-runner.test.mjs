@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
+import {mkdtemp, rm, symlink} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {dirname, join, resolve} from "node:path";
 import {describe, it} from "node:test";
+import {fileURLToPath} from "node:url";
 import {
+  assertSafeSlug,
   buildGateEnv,
   LOCAL_ORIGIN,
   parseGateArgs,
@@ -13,7 +18,7 @@ describe("GATE-001 G2 argument parsing", () => {
   it("parses --url, --phase, --headed and --only", () => {
     assert.deepEqual(
       parseGateArgs(["--url=prod", "--phase=A", "--headed", "--only=reload"]),
-      {url: "prod", phase: "A", headed: true, only: "reload"},
+      {url: "prod", phase: "A", headed: true, only: "reload", fresh: false},
     );
   });
 
@@ -23,7 +28,17 @@ describe("GATE-001 G2 argument parsing", () => {
       phase: "B",
       headed: false,
       only: undefined,
+      fresh: false,
     });
+  });
+
+  it("parses --fresh as a flag without a value", () => {
+    assert.equal(parseGateArgs(["--url=prod", "--phase=A", "--fresh"]).fresh, true);
+    assert.equal(parseGateArgs(["--url=prod", "--phase=A"]).fresh, false);
+    assert.throws(
+      () => parseGateArgs(["--url=prod", "--phase=A", "--fresh=1"]),
+      /--fresh takes no value/,
+    );
   });
 
   it("requires --url and --phase", () => {
@@ -41,6 +56,62 @@ describe("GATE-001 G2 argument parsing", () => {
       /Unknown argument/,
     );
     assert.throws(() => parseGateArgs(["--url", "--phase=A"]), /--url/);
+  });
+});
+
+describe("GATE-001 npm.ps1 fallback (Windows PowerShell 5.1 drops the --)", () => {
+  // npm.ps1 swallows `-- --url=x --phase=A`; npm then exports the flags as
+  // npm_config_<name> environment variables and the script gets no argv.
+  it("reads url, phase, only, headed and fresh from npm_config_* when argv has no --url", () => {
+    assert.deepEqual(
+      parseGateArgs([], {
+        npm_config_url: "local",
+        npm_config_phase: "a",
+        npm_config_only: "reload",
+        npm_config_headed: "true",
+        npm_config_fresh: "true",
+      }),
+      {url: "local", phase: "A", headed: true, only: "reload", fresh: true},
+    );
+  });
+
+  it("leaves optional flags off when npm did not export them", () => {
+    assert.deepEqual(
+      parseGateArgs([], {npm_config_url: "prod", npm_config_phase: "B"}),
+      {url: "prod", phase: "B", headed: false, only: undefined, fresh: false},
+    );
+  });
+
+  it("ignores npm_config_* when argv carries --url", () => {
+    assert.deepEqual(
+      parseGateArgs(["--url=prod", "--phase=A"], {
+        npm_config_url: "local",
+        npm_config_phase: "B",
+        npm_config_headed: "true",
+      }),
+      {url: "prod", phase: "A", headed: false, only: undefined, fresh: false},
+    );
+  });
+
+  it("does not treat npm_config_headed=false as a request", () => {
+    assert.equal(
+      parseGateArgs([], {
+        npm_config_url: "local",
+        npm_config_phase: "A",
+        npm_config_headed: "false",
+      }).headed,
+      false,
+    );
+  });
+
+  it("points at npm.cmd and node when nothing resolves a --url", () => {
+    assert.throws(
+      () => parseGateArgs([], {}),
+      (error) =>
+        /--url is required/.test(error.message) &&
+        /npm\.cmd run gate -- /.test(error.message) &&
+        /node scripts\/gate\.mjs /.test(error.message),
+    );
   });
 });
 
@@ -83,10 +154,37 @@ describe("GATE-001 G2 target resolution", () => {
   it("accepts any https:// origin and slugs the host", () => {
     assert.deepEqual(resolveTarget("https://Staging.Example.com:8443/"), {
       name: "https://staging.example.com:8443",
-      slug: "staging.example.com-8443",
+      slug: "host-staging.example.com-8443",
       url: "https://staging.example.com:8443",
       local: false,
     });
+  });
+
+  it("prefixes custom-host slugs so they never collide with the built-in slugs", () => {
+    assert.equal(resolveTarget("https://prod").slug, "host-prod");
+    assert.equal(resolveTarget("https://local").slug, "host-local");
+    assert.equal(resolveTarget("https://preview-3").slug, "host-preview-3");
+    assert.notEqual(resolveTarget("https://prod").slug, resolveTarget("prod").slug);
+  });
+
+  it("rejects hosts whose slug would be empty, . or .. (they escape .gate/)", () => {
+    for (const bad of ["https://..", "https://.", "https://...", "https://-"]) {
+      assert.throws(() => resolveTarget(bad), /host/i, bad);
+    }
+  });
+
+  it("only produces slugs made of [a-z0-9.-]", () => {
+    for (const value of [
+      "https://exa_mple.com",
+      "https://[::1]:8443",
+      "https://a..b",
+      "https://xn--bcher-kva.example:9000",
+    ]) {
+      const {slug} = resolveTarget(value);
+
+      assert.match(slug, /^[a-z0-9.-]+$/, value);
+      assert.doesNotThrow(() => assertSafeSlug(slug), value);
+    }
   });
 
   it("treats the production origin as the prod alias", () => {
@@ -109,6 +207,31 @@ describe("GATE-001 G2 target resolution", () => {
     assert.throws(() => resolveTarget("staging"), /Unknown target "staging"/);
     assert.throws(() => resolveTarget("https://example.com/app"), /origin/);
     assert.throws(() => resolveTarget("https://example.com/?a=1"), /origin/);
+  });
+});
+
+describe("GATE-001 slug safety", () => {
+  it("accepts the built-in and custom slugs", () => {
+    for (const slug of ["prod", "local", "preview-28", "host-a.b-c"]) {
+      assert.doesNotThrow(() => assertSafeSlug(slug), slug);
+    }
+  });
+
+  it("rejects empty, ., .. and anything outside [a-z0-9.-]", () => {
+    for (const bad of [
+      "",
+      ".",
+      "..",
+      "a/b",
+      "a\b",
+      "../x",
+      "A",
+      "a b",
+      "a:b",
+      undefined,
+    ]) {
+      assert.throws(() => assertSafeSlug(bad), /slug/i, String(bad));
+    }
   });
 });
 
@@ -143,5 +266,29 @@ describe("GATE-001 G2 runner process", () => {
     assert.equal(result.status, 2);
     assert.match(result.stderr, /Unknown target "staging"/);
     assert.match(result.stderr, /Usage: npm run gate/);
+  });
+});
+
+describe("GATE-001 runner entry through a junction or symlink", () => {
+  it("still runs main() when started through a linked path", async () => {
+    const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const holder = await mkdtemp(join(tmpdir(), "gate-link-"));
+    const link = join(holder, "repo-link");
+
+    try {
+      await symlink(repo, link, "junction");
+
+      const result = spawnSync(
+        process.execPath,
+        [join(link, "scripts", "gate.mjs"), "--url=staging", "--phase=A"],
+        {encoding: "utf8"},
+      );
+
+      // A silent exit 0 is the bug: main() must run and reject the target.
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /Unknown target "staging"/);
+    } finally {
+      await rm(holder, {recursive: true, force: true});
+    }
   });
 });

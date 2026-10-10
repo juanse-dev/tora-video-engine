@@ -15,10 +15,11 @@
 
 import {spawn} from "node:child_process";
 import console from "node:console";
+import {realpathSync} from "node:fs";
 import {createRequire} from "node:module";
 import {dirname, resolve} from "node:path";
 import process from "node:process";
-import {fileURLToPath, pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
 import {
   mergePhase,
   readState,
@@ -86,10 +87,12 @@ const runPlaywright = (args, env) =>
 export const main = async (argv) => {
   let args;
   let target;
+  let stateDir;
 
   try {
     args = parseGateArgs(argv);
     target = resolveTarget(args.url);
+    stateDir = targetDir(target.slug, ROOT);
   } catch (error) {
     console.error(`${error instanceof Error ? error.message : error}\n\n${USAGE}`);
 
@@ -97,12 +100,17 @@ export const main = async (argv) => {
   }
 
   const {phase} = args;
-  const stateDir = targetDir(target.slug, ROOT);
   const paths = statePaths(stateDir);
 
   try {
     if (phase === "A") {
-      await startPhaseA({stateDir, target: target.slug, url: target.url});
+      await startPhaseA({
+        stateDir,
+        target: target.slug,
+        url: target.url,
+        fresh: args.fresh,
+        root: ROOT,
+      });
     } else {
       await startPhaseB({stateDir, url: target.url});
     }
@@ -166,6 +174,29 @@ export const main = async (argv) => {
   return code || (netlifyFailed ? 1 : 0);
 };
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+/**
+ * True when this file is the program being run. Both sides go through
+ * realpath: Node resolves the main module's symlinks, but argv[1] keeps the
+ * path as typed, so a run through a junction or symlink would otherwise match
+ * nothing and exit 0 silently.
+ *
+ * @param {string} moduleUrl
+ * @param {string | undefined} entryPath
+ */
+export const isEntryPoint = (moduleUrl, entryPath) => {
+  if (!entryPath) {
+    return false;
+  }
+
+  try {
+    return (
+      realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(entryPath))
+    );
+  } catch {
+    return false;
+  }
+};
+
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   process.exitCode = await main(process.argv.slice(2));
 }
