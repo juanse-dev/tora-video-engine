@@ -1,6 +1,6 @@
 # GATE-001 — Automated deployed verification suite
 
-> Status: **Planned**
+> Status: **Implemented (pending first Linux CI run and Deploy Preview run)**
 >
 > Replaces the manual browser steps of the production gates (WEB-007 manual golden, ASSET-006 Part B) with a Playwright suite that runs against any deployed origin. The human only deploys (merges to `main`) and checks what exists only in Netlify, unless Netlify's API can check it too.
 
@@ -37,48 +37,48 @@ What stays human:
 
 ### T1 — Build identity, runner, config, state and report plumbing
 
-- [ ] G1 plugin in `vite.config.mts`; a node:test unit test that builds the plugin's HTML transform with and without the Netlify env and checks the meta content. `tests/static-deploy.test.mjs` must still pass.
-- [ ] G2 `scripts/gate.mjs` + `"gate": "node scripts/gate.mjs"` in `package.json`; unit tests for argument parsing and target resolution (including a rejected `http://` non-local URL and an unknown alias).
-- [ ] G3 `playwright.gate.config.mjs`.
-- [ ] G4 `tests/gate/helpers/gateState.mjs` (target slug, dirs, phase A reset, phase B load with checks), `.gate/` and `dist/web-gate-b/` added to `.gitignore`.
-- [ ] G6 `tests/gate/helpers/networkGuard.mjs`: `attachNetworkGuard(context, {fixtureBuffers})` returning `{violations(), log(), hosts()}`; unit-testable pure classifier `classifyRequest({method, url, body})`, with node:test cases for: GET image allowed; telemetry POST ≤ 4096 allowed; telemetry POST > 4096 rejected; POST elsewhere rejected; PUT with PNG signature rejected; GET with a JPEG-signature body rejected.
-- [ ] G7 `tests/gate/helpers/report.mjs`: pure `renderReport(state, results)` → Markdown; node:test snapshot-style test for phase A only and A + B.
-- [ ] G8 `scripts/gateNetlify.mjs` with an injectable `fetch`; node:test cases with a fake fetch (ready + published; not published; commit mismatch; no token → manual).
-- [ ] `tests/gate/build-identity.spec.mjs`: opens the target, reads the meta, records it into state; fails with a clear message if the meta is missing (an old deploy predating G1).
+- [x] G1 plugin in `vite.config.mts`; a node:test unit test that builds the plugin's HTML transform with and without the Netlify env and checks the meta content. `tests/static-deploy.test.mjs` must still pass.
+- [x] G2 `scripts/gate.mjs` + `"gate": "node scripts/gate.mjs"` in `package.json`; unit tests for argument parsing and target resolution (including a rejected `http://` non-local URL and an unknown alias).
+- [x] G3 `playwright.gate.config.mjs`.
+- [x] G4 `tests/gate/helpers/gateState.mjs` (target slug, dirs, phase A reset, phase B load with checks), `.gate/` and `dist/web-gate-b/` added to `.gitignore`.
+- [x] G6 `tests/gate/helpers/networkGuard.mjs`: `attachNetworkGuard(context, {fixtureBuffers})` returning `{violations(), log(), hosts()}`; unit-testable pure classifier `classifyRequest({method, url, body})`, with node:test cases for: GET image allowed; telemetry POST ≤ 4096 allowed; telemetry POST > 4096 rejected; POST elsewhere rejected; PUT with PNG signature rejected; GET with a JPEG-signature body rejected.
+- [x] G7 `tests/gate/helpers/report.mjs`: pure `renderReport(state, results)` → Markdown; node:test snapshot-style test for phase A only and A + B.
+- [x] G8 `scripts/gateNetlify.mjs` with an injectable `fetch`; node:test cases with a fake fetch (ready + published; not published; commit mismatch; no token → manual).
+- [x] `tests/gate/build-identity.spec.mjs`: opens the target, reads the meta, records it into state; fails with a clear message if the meta is missing (an old deploy predating G1).
 
 ### T2 — Production gate spec (ASSET-006 Part B, steps 2–13)
 
 `tests/gate/local-assets-gate.spec.mjs`, one serial test per phase, gate profile (G4/G5), network guard on (G6).
 
 **Phase A**
-- [ ] Step 2: in the fresh profile, write `tests/fixtures/v0.2/project-envelope.json` to `localStorage["tora-video-engine:project"]`, reload; the Story from the envelope is active and the Player renders; make one bundled caption edit; the envelope is still `version: 1`.
-- [ ] Steps 3–4: import `pose-magenta.png` and `background-cyan.jpg` through **My assets** onto one scene; both cards show under My assets with thumbnails, separate from Bundled; the Player shows them (blob images or a Player screenshot colour check); the envelope is `version: 2`; the refs in the YAML editor equal those in `stories/ci-local-assets.yaml`.
-- [ ] Step 5: reload → Story, cards and Player recover with no import.
-- [ ] Step 6: close the persistent context, relaunch with the same profile dir (assert the same path via a marker file); same result; the new `blob:` URLs differ from before.
-- [ ] Step 7: export YAML (download) → the two `local:` refs present; no `blob:`, `data:`, base64 runs, or path-like strings; saved to `artifacts/`.
-- [ ] Step 8: Render MP4 and download; metadata is H.264, 1080×1920, 30 FPS, 360 frames, video only; the decoded frame in the middle of the local-asset scene passes the shared colour-region checks (`POSE_MAGENTA_REGION`, `BACKGROUND_TOP_REGION`, `BACKGROUND_BOTTOM_REGION` with `isMagenta`/`isCyan`/`isYellow`), and a bundled scene's frame does not.
-- [ ] Step 13: `npm run video` on the exported YAML with `TORA_LOCAL_ASSETS_ROOT` pointing to a temp `poses/` + `backgrounds/` copy of the fixtures; same metadata and same colour-region result on the same scene; the CLI output goes to `artifacts/`, not `output/`.
-- [ ] Save `state.json` (URL, build identity A, refs, browser version, profile path, timestamps) and the report.
+- [x] Step 2: in the fresh profile, write `tests/fixtures/v0.2/project-envelope.json` to `localStorage["tora-video-engine:project"]`, reload; the Story from the envelope is active and the Player renders; make one bundled caption edit; the envelope is still `version: 1`.
+- [x] Steps 3–4: import `pose-magenta.png` and `background-cyan.jpg` through **My assets** onto one scene; both cards show under My assets with thumbnails, separate from Bundled; the Player shows them (blob images or a Player screenshot colour check); the envelope is `version: 2`; the refs in the YAML editor equal those in `stories/ci-local-assets.yaml`.
+- [x] Step 5: reload → Story, cards and Player recover with no import.
+- [x] Step 6: close the persistent context, relaunch with the same profile dir (assert the same path via a marker file); same result; the new `blob:` URLs differ from before.
+- [x] Step 7: export YAML (download) → the two `local:` refs present; no `blob:`, `data:`, base64 runs, or path-like strings; saved to `artifacts/`.
+- [x] Step 8: Render MP4 and download; metadata is H.264, 1080×1920, 30 FPS, 360 frames, video only; the decoded frame in the middle of the local-asset scene passes the shared colour-region checks (`POSE_MAGENTA_REGION`, `BACKGROUND_TOP_REGION`, `BACKGROUND_BOTTOM_REGION` with `isMagenta`/`isCyan`/`isYellow`), and a bundled scene's frame does not.
+- [x] Step 13: `npm run video` on the exported YAML with `TORA_LOCAL_ASSETS_ROOT` pointing to a temp `poses/` + `backgrounds/` copy of the fixtures; same metadata and same colour-region result on the same scene; the CLI output goes to `artifacts/`, not `output/`.
+- [x] Save `state.json` (URL, build identity A, refs, browser version, profile path, timestamps) and the report.
 
 **Phase B**
-- [ ] Step 9: relaunch the same profile; the page's build identity differs from A's, otherwise fail with "Deploy B is not live yet: still <identity>"; assets present with no import; render again with the frame check.
-- [ ] Step 10: delete the in-use pose; the dialog says it is used by 1 scene; confirm; the missing card, the Player placeholder and the blocked-render message appear; the Story YAML is unchanged.
-- [ ] Step 11: **Import matching file** with the same pose → resolves; Story YAML unchanged; render again with the frame check.
-- [ ] Step 12: the network guard holds for both phases.
-- [ ] Rewrite the full report.
+- [x] Step 9: relaunch the same profile; the page's build identity differs from A's, otherwise fail with "Deploy B is not live yet: still <identity>"; assets present with no import; render again with the frame check.
+- [x] Step 10: delete the in-use pose; the dialog says it is used by 1 scene; confirm; the missing card, the Player placeholder and the blocked-render message appear; the Story YAML is unchanged.
+- [x] Step 11: **Import matching file** with the same pose → resolves; Story YAML unchanged; render again with the frame check.
+- [x] Step 12: the network guard holds for both phases.
+- [x] Rewrite the full report.
 
 ### T3 — WEB-007 golden spec, CLI parity and MP4 helpers
 
-- [ ] `tests/helpers/ffmpeg.mjs`: resolve the ffmpeg/ffprobe binaries shipped in the installed `@remotion/compositor-<platform>-<arch>[-<libc|msvc>]` package (no `npx`, works on Windows and Linux); `probeMp4(path)` → `{codec, width, height, fps, frames, hasAudio, durationSeconds}`; `decodeFrame(path, seconds, {width, height})` → raw RGB like the existing `decodeMp4Frame`. Switch `decodeMp4Frame` in `tests/browser/helpers/localAssetPage.mjs` to it without changing its signature or output, which also removes the known Windows `spawn npx ENOENT` failures. Keep any other `npx` spawns in existing specs as they are unless they only probe/decode MP4s.
-- [ ] `tests/gate/helpers/cliParity.mjs`: `renderWithCli({yamlPath, fixtures, outDir})` → output MP4 path; uses `process.execPath` + `scripts/render.ts` with `--experimental-strip-types`, honours `TORA_REMOTION_BROWSER_EXECUTABLE`.
-- [ ] `tests/gate/web-golden.spec.mjs` (phase A only; skipped in B), in its own fresh non-persistent system-Chrome context with the network guard, covering the WEB-007 manual checklist on the bundled canonical Story: app loads with bundled poses and backgrounds; caption edit; pose change; scene reorder; the Player follows the Active Story; YAML export; reload restores the edits; render capability is ready; render + download with metadata (video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 s); Cancel Render aborts and unlocks authoring; a pending draft blocks rendering; an in-flight render locks authoring until it settles. Reuse the patterns of `tests/browser/browser-rendering.spec.mjs` and `visual-editor.spec.mjs`.
+- [x] `tests/helpers/ffmpeg.mjs`: resolve the ffmpeg/ffprobe binaries shipped in the installed `@remotion/compositor-<platform>-<arch>[-<libc|msvc>]` package (no `npx`, works on Windows and Linux); `probeMp4(path)` → `{codec, width, height, fps, frames, hasAudio, durationSeconds}`; `decodeFrame(path, seconds, {width, height})` → raw RGB like the existing `decodeMp4Frame`. Switch `decodeMp4Frame` in `tests/browser/helpers/localAssetPage.mjs` to it without changing its signature or output, which also removes the known Windows `spawn npx ENOENT` failures. Keep any other `npx` spawns in existing specs as they are unless they only probe/decode MP4s.
+- [x] `tests/gate/helpers/cliParity.mjs`: `renderWithCli({yamlPath, fixtures, outDir})` → output MP4 path; uses `process.execPath` + `scripts/render.ts` with `--experimental-strip-types`, honours `TORA_REMOTION_BROWSER_EXECUTABLE`.
+- [x] `tests/gate/web-golden.spec.mjs` (phase A only; skipped in B), in its own fresh non-persistent system-Chrome context with the network guard, covering the WEB-007 manual checklist on the bundled canonical Story: app loads with bundled poses and backgrounds; caption edit; pose change; scene reorder; the Player follows the Active Story; YAML export; reload restores the edits; render capability is ready; render + download with metadata (video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 s); Cancel Render aborts and unlocks authoring; a pending draft blocks rendering; an in-flight render locks authoring until it settles. Reuse the patterns of `tests/browser/browser-rendering.spec.mjs` and `visual-editor.spec.mjs`.
 
 ### T4 — Docs and CI
 
-- [ ] `docs/release/README.md`: the operator guide. What to merge, when to run each phase, what the report contains, where to paste it, the optional token, and the only remaining manual Netlify checks.
-- [ ] Point `docs/web/production-deployment.md` "Manual release verification" and ASSET-006 Part B at the suite (keep the existing records as history).
-- [ ] CI: after the persistence step, run `npm run gate -- --url=local --phase=A` then `--phase=B`. Raise `timeout-minutes` only if the measured job time needs it, and record the measured time in the PR.
-- [ ] README: one line under the web section linking the guide.
+- [x] `docs/release/README.md`: the operator guide. What to merge, when to run each phase, what the report contains, where to paste it, the optional token, and the only remaining manual Netlify checks.
+- [x] Point `docs/web/production-deployment.md` "Manual release verification" and ASSET-006 Part B at the suite (keep the existing records as history).
+- [ ] CI: after the persistence step, run `npm run gate -- --url=local --phase=A` then `--phase=B`. Raise `timeout-minutes` only if the measured job time needs it, and record the measured time in the PR. (The step is in `.github/workflows/ci.yml`; the measured time waits for the first Linux CI run.)
+- [x] README: one line under the web section linking the guide.
 
 ## Verify
 
@@ -87,3 +87,23 @@ What stays human:
 - Once against the PR's own Deploy Preview: phase A on push N, phase B after push N+1 (`--url=preview:<n>`), both green.
 - Mutation checks, each recorded with its observed failure: (1) phase B against the same build as A fails with "not live yet"; (2) an injected `fetch(..., {method: "POST", body: <png bytes>})` in the page fails the network guard; (3) deleting the asset before step 5 fails the reload check.
 - Existing suites unchanged: `test:browser`, `test:harness`, `test:persistence`, browser-render config, `test:cli-e2e`.
+
+## Implementation notes
+
+Rulings made while building this (the full ledger is in the SDD progress file):
+
+- R1: the golden spec was first built against a temporary local config and request listener, then switched to the real `networkGuard` and gate config once T1 landed.
+- R2: T2 consumed T3's `renderWithCli`, `probeMp4` and `decodeFrame` under fixed names and paths (`tests/gate/helpers/cliParity.mjs`, `tests/helpers/ffmpeg.mjs`).
+- R3: parallel lanes used separate local ports (4190 in the main checkout, 4191 in the worktree); the committed config uses 4190 only.
+- R4: Cancel Render accepts the app's existing `cleanup-blocked` outcome and records the actual end state; not a GATE regression.
+- R5: the golden spec records its network-guard result under the non-table key `goldenNetwork`; only the gate spec owns the "No-upload check" Record row.
+- R6: the gate deletes only `Default/History*` from its dedicated profile before launch, because Chrome 154 on Windows crashes on a download when History lists an earlier session's download; site data is untouched.
+- R7: phase B snapshots the gate profile to `profile-before-b/` on its first run and restores it on reruns, so a flaky step 10 or 11 does not cost another production deploy cycle.
+- R8: phase A refuses to delete a passed phase A without `--fresh`, and the MP4 checks assert exactly one video stream.
+
+Changes from the final whole-branch review:
+
+- A target slug can no longer escape `.gate/`: custom-host slugs are `host-<host>`, a slug must match `[a-z0-9.-]+` and not be empty, `.` or `..`, and every delete asserts the target dir is a direct child of `.gate/`.
+- The runner also reads `npm_config_url`, `_phase`, `_only`, `_headed` and `_fresh` when argv has no `--url`, because Windows PowerShell 5.1's `npm.ps1` drops the `--`.
+- Phase B checks that phase A passed before it builds or launches a browser.
+- The optional Netlify API check does not cover Edge Functions; they stay a manual Netlify UI check, and the report line says so.
