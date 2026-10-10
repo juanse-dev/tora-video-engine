@@ -133,8 +133,13 @@ type OpfsRoot = {
   removeEntry: (name: string) => Promise<void>;
 };
 
+type RenderDirectory = Pick<FileSystemDirectoryHandle, "getFileHandle">;
+
 type CapabilityChecker = typeof canRenderMediaOnWeb;
 type RenderFunction = typeof renderMediaOnWeb;
+type OutputWritable = NonNullable<
+  Parameters<RenderFunction>[0]["outputWritable"]
+>;
 
 const asError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
@@ -156,6 +161,55 @@ const defaultGetLocks = (): LockManager | undefined =>
 
 const defaultGetDirectory = async (): Promise<OpfsRoot> =>
   (await navigator.storage.getDirectory()) as unknown as OpfsRoot;
+
+const defaultGetRenderDirectory = (): Promise<RenderDirectory> =>
+  navigator.storage.getDirectory();
+
+/**
+ * Wraps the OPFS writer so Tora can always release it. The renderer locks the
+ * stream it is given (`getWriter()`), and a locked stream cannot be aborted, so
+ * the renderer gets this forwarding stream while Tora keeps the unlocked
+ * writer. After `abort()` the renderer's late `close()` and `write()` calls
+ * become no-ops instead of failing on an aborted file.
+ */
+const createOwnedOpfsOutput = (
+  writable: FileSystemWritableFileStream,
+): {stream: WritableStream<FileSystemWriteChunkType>; abort: () => Promise<void>} => {
+  let aborted = false;
+
+  return {
+    stream: new WritableStream<FileSystemWriteChunkType>({
+      write: async (chunk) => {
+        if (!aborted) {
+          await writable.write(chunk);
+        }
+      },
+      close: async () => {
+        if (!aborted) {
+          await writable.close();
+        }
+      },
+      abort: async () => {
+        aborted = true;
+        await writable.abort().catch(() => undefined);
+      },
+    }),
+    abort: async () => {
+      if (aborted) {
+        return;
+      }
+
+      aborted = true;
+
+      try {
+        await writable.abort();
+      } catch {
+        // Already closed or aborted; the post-render cleanup reports any
+        // file that is still locked.
+      }
+    },
+  };
+};
 
 const listRemotionEntries = async (
   root: OpfsRoot,
@@ -395,6 +449,7 @@ export const renderStoryMediaOnWeb = async (
     render?: RenderFunction;
     localAssetSources?: LocalAssetSourceMap;
     component?: ComponentType<ToraVideoProps>;
+    getDirectory?: () => Promise<RenderDirectory>;
   },
 ): Promise<RenderMediaOnWebResult> => {
   const policy = evaluateBrowserRenderPolicy(story);
@@ -422,29 +477,57 @@ export const renderStoryMediaOnWeb = async (
   const render = options.render ?? renderMediaOnWeb;
   const component =
     options.component ?? (await import("../Video.tsx")).ToraVideo;
+  const getDirectory = options.getDirectory ?? defaultGetRenderDirectory;
 
-  return render({
-    composition: {
-      id: "ToraVideo",
-      component,
-      durationInFrames: policy.totalFrames,
-      fps: VIDEO_FPS,
-      width: VIDEO_WIDTH,
-      height: VIDEO_HEIGHT,
-      calculateMetadata: null,
-      defaultProps: {story, localAssetSources: options.localAssetSources},
-    },
-    inputProps: {story, localAssetSources: options.localAssetSources},
-    container: "mp4",
-    videoCodec: "h264",
-    muted: true,
-    outputTarget: "web-fs",
-    signal: options.signal,
-    onProgress: options.onProgress,
-    licenseKey: options.licenseKey ?? null,
-    allowHtmlInCanvas: false,
-    onFrame: withBrowserFrameDuration,
-  });
+  // Issue #29: the pinned renderer's own web-fs target never closes or aborts
+  // its OPFS writer when a render is cancelled or fails, which keeps the file
+  // locked for the life of the page. Tora therefore creates the
+  // `__remotion_render:` file and writer itself, hands the renderer an
+  // `outputWritable`, and releases the writer on every non-success exit.
+  const directory = await getDirectory();
+  const fileHandle = await directory.getFileHandle(
+    `${REMOTION_OPFS_PREFIX}tora:${crypto.randomUUID()}`,
+    {create: true},
+  );
+  const output = createOwnedOpfsOutput(await fileHandle.createWritable());
+
+  try {
+    const result = await render({
+      composition: {
+        id: "ToraVideo",
+        component,
+        durationInFrames: policy.totalFrames,
+        fps: VIDEO_FPS,
+        width: VIDEO_WIDTH,
+        height: VIDEO_HEIGHT,
+        calculateMetadata: null,
+        defaultProps: {story, localAssetSources: options.localAssetSources},
+      },
+      inputProps: {story, localAssetSources: options.localAssetSources},
+      container: "mp4",
+      videoCodec: "h264",
+      muted: true,
+      outputWritable: output.stream as OutputWritable,
+      signal: options.signal,
+      onProgress: options.onProgress,
+      licenseKey: options.licenseKey ?? null,
+      allowHtmlInCanvas: false,
+      onFrame: withBrowserFrameDuration,
+    });
+
+    return {
+      // With `outputWritable` the renderer cannot produce the Blob itself.
+      // Finalizing the output closed the writer, so read the file back.
+      getBlob: async () =>
+        new Blob([await fileHandle.getFile()], {type: "video/mp4"}),
+      internalState: result.internalState,
+    };
+  } catch (error) {
+    // Best effort, and never mask the render error: abort the writer so the
+    // OPFS file is unlocked before the transaction's post-render cleanup.
+    await output.abort();
+    throw error;
+  }
 };
 
 const cleanupSafely = async (

@@ -51,6 +51,18 @@ class FakeWritable extends WritableStream {
 
     Object.defineProperty(this, "state", {get: () => self.state});
   }
+
+  // FileSystemWritableFileStream.write(): the convenience writer that takes the
+  // lock for the duration of one write.
+  async write(chunk) {
+    const writer = this.getWriter();
+
+    try {
+      await writer.write(chunk);
+    } finally {
+      writer.releaseLock();
+    }
+  }
 }
 
 export const createFakeOpfs = (options = {}) => {
