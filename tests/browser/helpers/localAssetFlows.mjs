@@ -6,8 +6,6 @@ import {localAssetRef} from "./seedAssetLibrary.mjs";
 // importing through the My assets UI, reading and exporting the Story YAML,
 // and locating cards and Player placeholders.
 
-export const ORIGIN = "http://127.0.0.1:4173";
-
 export const section = (page, category) =>
   page.locator(`[data-my-assets="${category}"]`);
 export const cards = (page, category) =>
@@ -84,43 +82,3 @@ export const importYamlFile = async (page, name, source) => {
 /** Every local asset ref in `text`, in order of appearance. */
 export const localRefsIn = (text) =>
   text.match(/local:[a-z]+:sha256:[0-9a-f]{64}/gu) ?? [];
-
-/**
- * What IndexedDB holds for one digest, read inside the page: the `assets` rows
- * for the ref and the payload records (metadata and blob) for the digest.
- */
-export const readLibraryRecords = (page, ref, digest) =>
-  page.evaluate(
-    async ([key, hash]) => {
-      const database = await new Promise((resolve, reject) => {
-        const request = indexedDB.open("tora-video-engine-assets", 1);
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-
-      try {
-        const read = (storeName, method, ...args) =>
-          new Promise((resolve, reject) => {
-            const request = database
-              .transaction(storeName, "readonly")
-              .objectStore(storeName)
-              [method](...args);
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-          });
-
-        return {
-          assetRows: await read("assets", "count", key),
-          allAssetRows: await read("assets", "count"),
-          payloadMeta: await read("payloadMeta", "count", hash),
-          blobs: await read("blobs", "count", hash),
-          allBlobs: await read("blobs", "count"),
-        };
-      } finally {
-        database.close();
-      }
-    },
-    [ref, digest],
-  );

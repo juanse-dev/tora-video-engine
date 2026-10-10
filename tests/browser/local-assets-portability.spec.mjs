@@ -1,7 +1,6 @@
 import {readFile} from "node:fs/promises";
 import {expect, test} from "@playwright/test";
 import {
-  ORIGIN,
   blobImages,
   cardFor,
   exportActiveYaml,
@@ -37,8 +36,8 @@ const readStory = (name) => readFile(new URL(name, STORIES_DIR), "utf8");
 const titleOf = (yaml) => /^title: (.+)$/mu.exec(yaml)[1];
 const captionOfFirstScene = (yaml) => /^ {4}text: (.+)$/mu.exec(yaml)[1].replace(/^"|"$/gu, "");
 
-const newProfile = async (browser) => {
-  const context = await browser.newContext({baseURL: ORIGIN});
+const newProfile = async (browser, baseURL) => {
+  const context = await browser.newContext({baseURL});
   const page = await context.newPage();
 
   await page.goto("/", {waitUntil: "domcontentloaded"});
@@ -48,6 +47,7 @@ const newProfile = async (browser) => {
 };
 
 test("a Story with two local assets exports as plain YAML and resolves in a fresh profile only after Import matching file", async ({
+  baseURL,
   browser,
 }) => {
   const pose = await readFixture("pose-magenta.png");
@@ -57,7 +57,7 @@ test("a Story with two local assets exports as plain YAML and resolves in a fres
   const friday = await readV02("friday-deploy.yaml");
 
   // --- Context A: import both fixtures, apply them, export the YAML ----------
-  const a = await newProfile(browser);
+  const a = await newProfile(browser, baseURL);
   let exported;
 
   try {
@@ -101,7 +101,7 @@ test("a Story with two local assets exports as plain YAML and resolves in a fres
   ]);
 
   // --- Context B: a new profile has neither asset ----------------------------
-  const b = await newProfile(browser);
+  const b = await newProfile(browser, baseURL);
 
   try {
     await expect(b.page.locator("[data-my-assets] [data-local-asset-card]")).toHaveCount(0);
@@ -125,9 +125,8 @@ test("a Story with two local assets exports as plain YAML and resolves in a fres
       "data-local-asset-block",
       /local asset\(s\) are unavailable/u,
     );
-    await expect(
-      b.page.getByRole("button", {name: "Render MP4"}),
-    ).toBeDisabled();
+    // (Render MP4 is disabled in bundled Chromium whatever the assets, so the
+    // button says nothing here; the block above is the real render check.)
 
     // Import matching file with the exact fixtures resolves each ref without
     // touching the Story.
@@ -180,8 +179,14 @@ for (const name of BUNDLED_STORIES) {
     const v02 = await readV02(`${name}.yaml`);
     const firstCaption = captionOfFirstScene(v02);
 
+    // Start from a different bundled Story, so the import really replaces it.
+    const other = name === "ci-smoke" ? "demo-reel" : "ci-smoke";
+
     await page.goto("/", {waitUntil: "domcontentloaded"});
     await waitForOwner(page);
+    await importYamlFile(page, `${other}.yaml`, await readStory(`${other}.yaml`));
+    expect(await yamlSource(page)).toBe(await readV02(`${other}.yaml`));
+    expect(await yamlSource(page)).not.toBe(v02);
     await importYamlFile(page, `${name}.yaml`, source);
 
     // Import: the Story is active and the editor holds the v0.2 text.

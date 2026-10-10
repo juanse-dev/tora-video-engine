@@ -7,7 +7,6 @@ import {
   importInput,
   missingCard,
   previewPlaceholders,
-  readLibraryRecords,
   renderBanner,
   section,
   statusLine,
@@ -18,6 +17,7 @@ import {
   buildStoryYaml,
   localAssetRef,
   readFixture,
+  readLibraryRecords,
 } from "./helpers/seedAssetLibrary.mjs";
 
 // ASSET-006 task A3: two tabs of one browser profile converge on the same
@@ -50,6 +50,17 @@ const openTwoTabs = async (context, page) => {
   return secondary;
 };
 
+// B hears A over a BroadcastChannel and re-reads IndexedDB, which takes well
+// under a second here. The generous bound is only CI headroom for slow runners;
+// it is not a measured delay in the app (tab B's render block clears as soon as
+// its asset resolves).
+const CONVERGE = {timeout: 15_000};
+
+// Playwright's click waits for the target to be "stable" (two animation
+// frames), and a tab behind another one is not painted, so a click on it can
+// wait 1-2 s per action. Bring the tab being driven to the front.
+const drive = (tab) => tab.bringToFront();
+
 const label = (page, category, digest) =>
   cardFor(page, category, digest).locator(".asset-card-copy strong");
 
@@ -69,7 +80,7 @@ test("an import in tab A appears in tab B's My assets without a reload", async (
   await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
   await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
 
-  await expect(cards(b, "pose")).toHaveCount(1);
+  await expect(cards(b, "pose")).toHaveCount(1, CONVERGE);
   await expect(label(b, "pose", pose.digest)).toHaveText("pose-magenta");
   await expect(
     section(b, "pose").getByRole("heading", {name: "My assets · 1"}),
@@ -81,7 +92,7 @@ test("an import in tab A appears in tab B's My assets without a reload", async (
   await expect(statusLine(page, "background")).toHaveText(
     'Imported "background-cyan".',
   );
-  await expect(cards(b, "background")).toHaveCount(1);
+  await expect(cards(b, "background")).toHaveCount(1, CONVERGE);
   await expect(label(b, "background", background.digest)).toHaveText(
     "background-cyan",
   );
@@ -103,7 +114,10 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
 
   await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
   await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
-  await expect(label(b, "pose", pose.digest)).toHaveText("pose-magenta");
+  await expect(label(b, "pose", pose.digest)).toHaveText(
+    "pose-magenta",
+    CONVERGE,
+  );
 
   // B uses the asset in its own Story.
   await applyYaml(
@@ -118,6 +132,8 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
   expect(before).toContain(`pose: ${poseRef}`);
 
   // A renames the asset.
+  await drive(page);
+
   const cardA = cardFor(page, "pose", pose.digest);
 
   await cardA
@@ -127,8 +143,13 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
   await cardA.getByRole("textbox").press("Enter");
   await expect(label(page, "pose", pose.digest)).toHaveText("Renamed in A");
 
+  await drive(b);
+
   // B's card shows the new label; the ref, its Story and its Player do not change.
-  await expect(label(b, "pose", pose.digest)).toHaveText("Renamed in A");
+  await expect(label(b, "pose", pose.digest)).toHaveText(
+    "Renamed in A",
+    CONVERGE,
+  );
   await expect(cards(b, "pose")).toHaveCount(1);
   await expect(cardFor(b, "pose", pose.digest)).toContainText("Current");
   expect(await yamlSource(b)).toBe(before);
@@ -147,7 +168,7 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
 
   await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
   await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
-  await expect(cardFor(b, "pose", pose.digest)).toBeVisible();
+  await expect(cardFor(b, "pose", pose.digest)).toBeVisible(CONVERGE);
 
   await applyYaml(
     b,
@@ -160,11 +181,14 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
     /.+/u,
   );
 
+  await drive(b);
+
   const before = await yamlSource(b);
 
   // A deletes it; the asset is in use in A's Story too, so A asks first.
   const dialog = page.getByRole("dialog");
 
+  await drive(page);
   await cardFor(page, "pose", pose.digest)
     .getByRole("button", {name: "Delete pose-magenta", exact: true})
     .click();
@@ -172,23 +196,30 @@ test("deleting an in-use asset in tab A leaves tab B with the missing card and a
   await expect(dialog).toHaveCount(0);
   await expect(cards(page, "pose")).toHaveCount(0);
 
+  await drive(b);
+
   // B converges: no card, a missing recovery card, a placeholder, render blocked.
-  await expect(cards(b, "pose")).toHaveCount(0);
+  await expect(cards(b, "pose")).toHaveCount(0, CONVERGE);
   await expect(
     section(b, "pose").getByRole("heading", {name: "My assets · 0"}),
   ).toBeVisible();
-  await expect(missingCard(b, poseRef)).toContainText("Missing local pose");
-  await expect(previewPlaceholders(b)).toHaveCount(1);
+  await expect(missingCard(b, poseRef)).toContainText(
+    "Missing local pose",
+    CONVERGE,
+  );
+  await expect(previewPlaceholders(b)).toHaveCount(1, CONVERGE);
   await expect(previewPlaceholders(b)).toHaveAttribute(
     "data-missing-local-asset",
     poseRef,
   );
   await expect(blobImages(b)).toHaveCount(0);
+  // The local-asset block is the real render check. (Render MP4 is disabled in
+  // bundled Chromium whatever the assets, so the button says nothing here.)
   await expect(renderBanner(b)).toHaveAttribute(
     "data-local-asset-block",
     /local asset\(s\) are unavailable/u,
+    CONVERGE,
   );
-  await expect(b.getByRole("button", {name: "Render MP4"})).toBeDisabled();
   // Deleting never edits a Story.
   expect(await yamlSource(b)).toBe(before);
 });
