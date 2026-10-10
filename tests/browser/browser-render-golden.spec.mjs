@@ -2,6 +2,18 @@ import {execFile} from "node:child_process";
 import {readFile} from "node:fs/promises";
 import {promisify} from "node:util";
 import {expect, test} from "@playwright/test";
+import {
+  applyYaml,
+  DECODED_FRAME_WIDTH,
+  decodeMp4Frame,
+  meanLuminance,
+  openSeeded,
+} from "./helpers/localAssetPage.mjs";
+import {
+  fixtureRecord,
+  localAssetRef,
+  readFixture,
+} from "./helpers/seedAssetLibrary.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,6 +294,65 @@ const analyzeCanonicalEncodedFrames = async (page, path) => {
       frameHeight: FRAME_HEIGHT,
     },
   );
+};
+
+// Regions in the decoded 540x960 frame for the local-asset golden. The intro
+// preset centers the pose box (680x802 at bottom 235 in the 1080x1920 frame);
+// the 600x900 pose is contained in it, so its magenta rectangle (x 150-449,
+// y 225-674) lands near x 203-336, y 541-741 here. The regions below stay
+// inside that rectangle or in background areas clear of the top caption and of
+// the pose rectangle, and away from the cyan/yellow boundary at y = 480.
+const POSE_MAGENTA_REGION = {x: 230, y: 580, width: 80, height: 120};
+const BACKGROUND_TOP_REGION = {x: 20, y: 160, width: 500, height: 280};
+const BACKGROUND_BOTTOM_REGION = {x: 20, y: 770, width: 500, height: 170};
+const FULL_REGION = {x: 0, y: 0, width: FRAME_WIDTH, height: FRAME_HEIGHT};
+
+// Decoded with ffmpeg (decodeMp4Frame, RGB24 at 540x960) rather than a <video>
+// element: it does not depend on the browser's video pipeline, so a black
+// frame here means the render is wrong, not the decode.
+const isMagenta = (r, g, b) => r > 180 && g < 90 && b > 180;
+const isCyan = (r, g, b) => r < 90 && g > 150 && b > 150;
+const isYellow = (r, g, b) => r > 150 && g > 150 && b < 90;
+
+/** Share of sampled pixels in `region` of an RGB24 frame matching `predicate`. */
+const regionRatio = (frame, {x, y, width, height}, predicate) => {
+  let count = 0;
+  let matching = 0;
+
+  for (let py = y; py < y + height; py += 2) {
+    for (let px = x; px < x + width; px += 2) {
+      const index = (py * DECODED_FRAME_WIDTH + px) * RGB_CHANNELS;
+
+      count += 1;
+
+      if (predicate(frame[index], frame[index + 1], frame[index + 2])) {
+        matching += 1;
+      }
+    }
+  }
+
+  return matching / count;
+};
+
+const luminanceStandardDeviation = (frame) => {
+  let count = 0;
+  let sum = 0;
+  let sumSquares = 0;
+
+  for (let index = 0; index < frame.length; index += RGB_CHANNELS * 4) {
+    const luminance =
+      frame[index] * 0.2126 +
+      frame[index + 1] * 0.7152 +
+      frame[index + 2] * 0.0722;
+
+    count += 1;
+    sum += luminance;
+    sumSquares += luminance * luminance;
+  }
+
+  const mean = sum / count;
+
+  return Math.sqrt(Math.max(0, sumSquares / count - mean * mean));
 };
 
 const waitForOwner = async (page) => {
@@ -884,4 +955,84 @@ test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
       placement: fixture.placement,
     });
   }
+});
+
+test("required Chrome runtime renders seeded local assets into the MP4 golden", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+
+  const pose = await readFixture("pose-magenta.png");
+  const background = await readFixture("background-cyan.jpg");
+  const story = [
+    'title: "Local assets golden"',
+    "scenes:",
+    // Scene 1 (0-1 s): seeded local pose + background.
+    "  - type: intro",
+    `    pose: ${localAssetRef("pose", pose.digest)}`,
+    `    background: ${localAssetRef("background", background.digest)}`,
+    '    text: "Local assets"',
+    "    duration: 1",
+    // Scene 2 (1-2 s): bundled only, the positive control for the decode.
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    '    text: "Bundled control"',
+    "    duration: 1",
+    "",
+  ].join("\n");
+
+  await openSeeded(page, [
+    fixtureRecord("pose", pose),
+    fixtureRecord("background", background),
+  ]);
+  await requireBrowserRender(page);
+  await applyYaml(page, story);
+  await expect(page.locator("#preview-heading")).toHaveText(
+    "Local assets golden",
+  );
+  await expect(
+    page.locator(".preview-frame img[src^='blob:']"),
+  ).toHaveCount(2);
+
+  const path = await downloadRenderedMp4(page);
+
+  await assertMp4Metadata(path, {
+    expectedFrames: 60,
+    expectedDuration: 2,
+  });
+
+  const localFrame = await decodeMp4Frame(path, 0.5);
+  const bundledFrame = await decodeMp4Frame(path, 1.5);
+
+  // Positive control: both frames decoded to real, non-black pictures, and the
+  // bundled-only scene shows no local magenta.
+  for (const frame of [localFrame, bundledFrame]) {
+    expect(meanLuminance(frame)).toBeGreaterThan(20);
+    expect(luminanceStandardDeviation(frame)).toBeGreaterThan(15);
+  }
+
+  expect(
+    regionRatio(bundledFrame, FULL_REGION, isMagenta),
+  ).toBeLessThan(0.001);
+
+  // Local pose: the magenta rectangle is drawn in the pose area.
+  expect(
+    regionRatio(localFrame, POSE_MAGENTA_REGION, isMagenta),
+  ).toBeGreaterThan(0.9);
+
+  // Local background: cyan in the top half, yellow in the bottom half, and not
+  // the other way round.
+  expect(
+    regionRatio(localFrame, BACKGROUND_TOP_REGION, isCyan),
+  ).toBeGreaterThan(0.9);
+  expect(
+    regionRatio(localFrame, BACKGROUND_BOTTOM_REGION, isYellow),
+  ).toBeGreaterThan(0.9);
+  expect(
+    regionRatio(localFrame, BACKGROUND_TOP_REGION, isYellow),
+  ).toBeLessThan(0.02);
+  expect(
+    regionRatio(localFrame, BACKGROUND_BOTTOM_REGION, isCyan),
+  ).toBeLessThan(0.02);
 });
