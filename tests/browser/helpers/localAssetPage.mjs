@@ -1,13 +1,6 @@
-import {execFile} from "node:child_process";
-import {mkdtemp, readFile, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {promisify} from "node:util";
-import {inflateSync} from "node:zlib";
 import {expect} from "@playwright/test";
+import {decodeFrame} from "../../helpers/ffmpeg.mjs";
 import {seedAssetLibrary} from "./seedAssetLibrary.mjs";
-
-const execFileAsync = promisify(execFile);
 
 export const DECODED_FRAME_WIDTH = 540;
 export const DECODED_FRAME_HEIGHT = 960;
@@ -64,100 +57,15 @@ export const isBrowserRenderSupported = async (page) => {
   );
 };
 
-/** Decodes an 8-bit, non-interlaced RGB PNG (what ffmpeg writes for rgb24). */
-const decodeRgbPng = (png) => {
-  const width = png.readUInt32BE(16);
-  const height = png.readUInt32BE(20);
-
-  expect([png[24], png[25], png[28]]).toEqual([8, 2, 0]); // depth, RGB, no interlace
-
-  const idat = [];
-
-  for (let offset = 8; offset < png.length; ) {
-    const length = png.readUInt32BE(offset);
-    const type = png.toString("latin1", offset + 4, offset + 8);
-
-    if (type === "IDAT") {
-      idat.push(png.subarray(offset + 8, offset + 8 + length));
-    }
-
-    offset += 12 + length;
-  }
-
-  const raw = inflateSync(Buffer.concat(idat));
-  const stride = width * 3;
-  const out = Buffer.alloc(stride * height);
-
-  for (let row = 0; row < height; row += 1) {
-    const filter = raw[row * (stride + 1)];
-    const source = row * (stride + 1) + 1;
-
-    for (let column = 0; column < stride; column += 1) {
-      const left = column >= 3 ? out[row * stride + column - 3] : 0;
-      const up = row > 0 ? out[(row - 1) * stride + column] : 0;
-      const upLeft =
-        row > 0 && column >= 3 ? out[(row - 1) * stride + column - 3] : 0;
-      const estimate = left + up - upLeft;
-      const paeth = [left, up, upLeft].reduce((best, candidate) =>
-        Math.abs(estimate - candidate) < Math.abs(estimate - best)
-          ? candidate
-          : best,
-      );
-      const predictor = [0, left, up, (left + up) >> 1, paeth][filter];
-
-      out[row * stride + column] = (raw[source + column] + predictor) & 0xff;
-    }
-  }
-
-  return {width, height, pixels: out};
-};
-
 /**
- * RGB24 pixels of one frame, scaled to 540x960, via `remotion ffmpeg`. Uses a
- * PNG file as the carrier: the Remotion ffmpeg build has no rawvideo muxer on
- * every platform.
+ * RGB24 pixels of one frame, scaled to 540x960, via the ffmpeg binary that
+ * ships with Remotion (see tests/helpers/ffmpeg.mjs).
  */
-export const decodeMp4Frame = async (path, seconds) => {
-  const windows = process.platform === "win32";
-  const directory = await mkdtemp(join(tmpdir(), "tora-frame-"));
-  const output = join(directory, "frame.png");
-
-  try {
-    await execFileAsync(
-      windows ? "npx.cmd" : "npx",
-      [
-        "remotion",
-        "ffmpeg",
-        "-v",
-        "error",
-        "-i",
-        path,
-        "-ss",
-        String(seconds),
-        "-frames:v",
-        "1",
-        "-vf",
-        `scale=${DECODED_FRAME_WIDTH}:${DECODED_FRAME_HEIGHT}:flags=bilinear`,
-        "-pix_fmt",
-        "rgb24",
-        "-y",
-        output,
-      ].map((argument) => (windows ? `"${argument}"` : argument)),
-      {shell: windows, timeout: 60_000},
-    );
-
-    const {width, height, pixels} = decodeRgbPng(await readFile(output));
-
-    expect([width, height]).toEqual([
-      DECODED_FRAME_WIDTH,
-      DECODED_FRAME_HEIGHT,
-    ]);
-
-    return pixels;
-  } finally {
-    await rm(directory, {recursive: true, force: true});
-  }
-};
+export const decodeMp4Frame = (path, seconds) =>
+  decodeFrame(path, seconds, {
+    width: DECODED_FRAME_WIDTH,
+    height: DECODED_FRAME_HEIGHT,
+  });
 
 /** Counts clearly magenta pixels (the pose fixture's rectangle). */
 export const countMagentaPixels = (frame) => {

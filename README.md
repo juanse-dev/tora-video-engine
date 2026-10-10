@@ -114,6 +114,8 @@ Browser MP4 export is enabled only when runtime capability detection confirms th
 
 Client-side Remotion rendering emits mandatory licensing telemetry and must not be described as fully offline. Production licensing/privacy details and the release checklist are documented in [docs/web/production-deployment.md](docs/web/production-deployment.md).
 
+To verify a deployed origin (Deploy Preview or production) end to end in a real Chrome, run `npm run gate -- --url=<target> --phase=<A|B>`; the operator guide is [docs/release/README.md](docs/release/README.md).
+
 ## Remotion Studio
 
 ```bash

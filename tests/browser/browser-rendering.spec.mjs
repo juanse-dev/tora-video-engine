@@ -1,58 +1,9 @@
-import {execFile} from "node:child_process";
-import {promisify} from "node:util";
 import {expect, test} from "@playwright/test";
-
-const execFileAsync = promisify(execFile);
+import {decodeMp4Frame} from "./helpers/localAssetPage.mjs";
 
 const DECODED_FRAME_WIDTH = 540;
 const DECODED_FRAME_HEIGHT = 960;
 const RGB_CHANNELS = 3;
-
-const decodeMp4Frame = async (path, seconds) => {
-  const {stdout} = await execFileAsync(
-    "npx",
-    [
-      "remotion",
-      "ffmpeg",
-      "-v",
-      "error",
-      "-i",
-      path,
-      "-ss",
-      String(seconds),
-      "-frames:v",
-      "1",
-      "-vf",
-      `scale=${DECODED_FRAME_WIDTH}:${DECODED_FRAME_HEIGHT}:flags=bilinear`,
-      "-pix_fmt",
-      "rgb24",
-      "-f",
-      "rawvideo",
-      "pipe:1",
-    ],
-    {
-      encoding: null,
-      maxBuffer:
-        DECODED_FRAME_WIDTH *
-          DECODED_FRAME_HEIGHT *
-          RGB_CHANNELS +
-        1024 * 1024,
-      timeout: 60_000,
-    },
-  );
-
-  const frame = Buffer.isBuffer(stdout)
-    ? stdout
-    : Buffer.from(stdout);
-
-  expect(frame.byteLength).toBe(
-    DECODED_FRAME_WIDTH *
-      DECODED_FRAME_HEIGHT *
-      RGB_CHANNELS,
-  );
-
-  return frame;
-};
 
 const waitForOwner = async (page) => {
   await expect(page.locator(".app-shell")).toHaveAttribute(
