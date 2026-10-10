@@ -74,7 +74,7 @@ export const LOCAL_ASSETS_CHANGED_MESSAGE =
 const LOCAL_ASSETS_NOT_READY_MESSAGE =
   "Local assets are not ready. Try again.";
 
-const unavailableState = (
+export const unavailableState = (
   usages: readonly LocalAssetUsage[],
   detail: string,
   failureMessage: string | null,
