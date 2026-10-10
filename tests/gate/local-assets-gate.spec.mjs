@@ -44,6 +44,7 @@ import {
   assertPhaseAPassed,
   mergePhase,
   prepareProfileForPhaseB,
+  previewDrawerContext,
   readGateEnv,
   readState,
   recordFailureOf,
@@ -124,6 +125,8 @@ const sessionSetup = async () => {
     pose: localAssetRef("pose", pose.digest),
     background: localAssetRef("background", background.digest),
   };
+  // R10: set only when the build context is known and is not production.
+  const drawerContext = await previewDrawerContext(gate.stateDir, gate.phase);
   const guards = [];
   const all = combineGuards(guards);
   let session = null;
@@ -136,6 +139,7 @@ const sessionSetup = async () => {
     });
     guards.push(
       attachNetworkGuard(session.context, {
+        allowPreviewDrawer: drawerContext !== null,
         fixtureBuffers: [
           Buffer.from(pose.bytes),
           Buffer.from(background.bytes),
@@ -156,6 +160,7 @@ const sessionSetup = async () => {
     pose,
     background,
     refs,
+    drawerContext,
     guards,
     all,
     open,
@@ -437,7 +442,7 @@ const phaseA = async () => {
           ...(browserInfo ? {browser: browserInfo} : {}),
           refs,
           profileMarker: token,
-          networkSummary: summarizeNetwork(setup.all),
+          networkSummary: summarizeNetwork(setup.all, {drawerContext: setup.drawerContext}),
         }),
     ]);
   }
@@ -453,7 +458,7 @@ const phaseA = async () => {
   });
   await recordResult(gate.stateDir, "noUpload", {
     status: "pending",
-    detail: `Phase A: ${summarizeNetwork(setup.all)}. Phase B pending.`,
+    detail: `Phase A: ${summarizeNetwork(setup.all, {drawerContext: setup.drawerContext})}. Phase B pending.`,
     phase: "A",
   });
 };
@@ -609,7 +614,7 @@ const phaseB = async () => {
   });
   await recordResult(gate.stateDir, "noUpload", {
     status: "pass",
-    detail: `No request carried image bytes. Phase A: ${state.a.networkSummary}. Phase B: ${summarizeNetwork(setup.all)}.`,
+    detail: `No request carried image bytes. Phase A: ${state.a.networkSummary}. Phase B: ${summarizeNetwork(setup.all, {drawerContext: setup.drawerContext})}.`,
     phase: "B",
   });
 };

@@ -21,7 +21,7 @@ import {
 import {basename, dirname, isAbsolute, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {assertSafeSlug} from "../../../scripts/gateTarget.mjs";
-import {formatIdentity} from "./buildIdentity.mjs";
+import {allowsPreviewDrawer, formatIdentity} from "./buildIdentity.mjs";
 
 export const REPO_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -139,6 +139,26 @@ export const readGateEnv = (env = process.env) => {
  */
 export const readState = async (stateDir) =>
   JSON.parse(await readFile(statePaths(stateDir).statePath, "utf8"));
+
+/**
+ * R10: the build context to pass to the network guard, read once from the
+ * identity the build-identity spec recorded for this phase. Null (drawer POSTs
+ * stay forbidden) when the context is production, unknown or not recorded.
+ *
+ * @param {string} stateDir
+ * @param {"A" | "B"} phase
+ * @returns {Promise<string | null>}
+ */
+export const previewDrawerContext = async (stateDir, phase) => {
+  try {
+    const state = await readState(stateDir);
+    const identity = state[phase === "A" ? "a" : "b"]?.identity;
+
+    return allowsPreviewDrawer(identity) ? identity.context : null;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * @param {string} stateDir

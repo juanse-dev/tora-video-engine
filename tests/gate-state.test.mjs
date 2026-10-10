@@ -11,6 +11,7 @@ import {
   mergePhase,
   phaseAIncompleteReason,
   prepareProfileForPhaseB,
+  previewDrawerContext,
   readGateEnv,
   readState,
   recordFailureOf,
@@ -181,6 +182,24 @@ describe("GATE-001 state API for the specs", () => {
     assert.equal(state.a.browser.version, "154");
     assert.equal(state.a.identity.deployId, "d1");
     assert.ok(state.a.startedAt);
+  });
+
+  it("previewDrawerContext (R10) is the recorded context unless production or unknown", async () => {
+    assert.equal(await previewDrawerContext(stateDir, "A"), null);
+
+    await mergePhase(stateDir, "A", {
+      identity: {commit: "abc1234", deployId: "d1", context: "deploy-preview"},
+    });
+    assert.equal(await previewDrawerContext(stateDir, "A"), "deploy-preview");
+    assert.equal(await previewDrawerContext(stateDir, "B"), null);
+
+    await mergePhase(stateDir, "A", {identity: identity("d1")});
+    assert.equal(await previewDrawerContext(stateDir, "A"), null);
+  });
+
+  it("previewDrawerContext is null when there is no state yet", async () => {
+    await rm(statePaths(stateDir).statePath);
+    assert.equal(await previewDrawerContext(stateDir, "A"), null);
   });
 
   it("records results keyed by name and overwrites the same key", async () => {

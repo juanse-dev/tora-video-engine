@@ -1,5 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {
+  allowsPreviewDrawer,
   formatIdentity,
   readPageBuildIdentity,
 } from "./helpers/buildIdentity.mjs";
@@ -26,7 +27,12 @@ test(`phase ${gate.phase}: records the deployed build identity`, async ({
   context,
   page,
 }) => {
-  const guard = attachNetworkGuard(context);
+  // R10: the context is only known once the page has loaded, so the guard
+  // reads this flag when its verdicts are asked for, not per request.
+  let drawerAllowed = false;
+  const guard = attachNetworkGuard(context, {
+    allowPreviewDrawer: () => drawerAllowed,
+  });
 
   // Any failure here (missing meta, a guard violation, a timeout) is recorded
   // under "buildIdentity" so the report lists it, then rethrown.
@@ -34,6 +40,8 @@ test(`phase ${gate.phase}: records the deployed build identity`, async ({
     await page.goto("/", {waitUntil: "load"});
 
     const identity = await readPageBuildIdentity(page);
+
+    drawerAllowed = allowsPreviewDrawer(identity);
 
     await mergePhase(gate.stateDir, gate.phase, {
       identity,

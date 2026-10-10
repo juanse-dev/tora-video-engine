@@ -9,6 +9,7 @@ import {
 } from "../browser/helpers/localAssetPage.mjs";
 import {probeMp4} from "../helpers/ffmpeg.mjs";
 import {
+  previewDrawerContext,
   readGateEnv,
   recordResult as recordGateResult,
   statePaths,
@@ -60,6 +61,8 @@ const stripAnsi = (text) => text.replace(/\[[0-9;]*m/g, "");
 
 let browser = null;
 let context = null;
+// R10: the build context when the Deploy Preview drawer POSTs are allowed.
+let drawerContext = null;
 let page = null;
 let guard = null;
 let exportedYaml = null;
@@ -178,7 +181,10 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       headless: headless !== false,
     });
     context = await browser.newContext({baseURL, acceptDownloads: true});
-    guard = attachNetworkGuard(context);
+    drawerContext = await previewDrawerContext(gate.stateDir, "A");
+    guard = attachNetworkGuard(context, {
+      allowPreviewDrawer: drawerContext !== null,
+    });
     page = await context.newPage();
     await openApp();
   });
@@ -215,7 +221,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
           violations.length > 0 ? "fail" : "pass",
           violations.length > 0
             ? `WEB-007 golden context: ${violations.join("; ")}`
-            : `WEB-007 golden context: ${summarizeNetwork(guard)}`,
+            : `WEB-007 golden context: ${summarizeNetwork(guard, {drawerContext})}`,
         );
 
         if (violations.length > 0) {
@@ -572,7 +578,7 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
   test("network-guard: no forbidden request in the golden context", () => {
     test.info().annotations.push({
       type: "network",
-      description: summarizeNetwork(guard),
+      description: summarizeNetwork(guard, {drawerContext}),
     });
     expect(guard.violations()).toEqual([]);
   });
