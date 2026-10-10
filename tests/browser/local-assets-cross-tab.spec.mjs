@@ -61,9 +61,11 @@ const CONVERGE = {timeout: 15_000};
 // wait 1-2 s per action. Bring the tab being driven to the front.
 const drive = (tab) => tab.bringToFront();
 
-// App also refreshes asset readiness when a window gets focus. Counting focus
-// events on B proves that B's convergence below came from A's BroadcastChannel
-// message, not from B being brought to the front.
+// App also refreshes asset readiness when a window gets focus. This counter is
+// a tripwire, not proof: it only bites in headed runs, because headless
+// bringToFront dispatches no focus event. The proof that B converges through
+// A's BroadcastChannel message is the mutation check (removing the post makes
+// the rename and delete tests fail).
 const countFocusEvents = async (tab) => {
   await tab.evaluate(() => {
     window.__focusEvents = 0;

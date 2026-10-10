@@ -246,7 +246,7 @@ test("a v1 envelope written by v0.2 restores and stays v1 after bundled edits", 
   await expect(page.locator(".recovery-banner")).toHaveCount(0);
   await expect(page.getByLabel("Caption")).toHaveValue("Written by v0.2");
   expect(await yamlSource(page)).toContain("text: Written by v0.2");
-  // Restoring writes nothing: the stored bytes are still v0.2's.
+  // The stored bytes are still v0.2's (restoring did not rewrite them).
   expect(await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY)).toBe(
     envelope,
   );
