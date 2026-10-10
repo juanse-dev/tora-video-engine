@@ -8,6 +8,7 @@ import {
   evaluateMatchingFile,
   localOnlyDisclosure,
   mismatchDialogText,
+  runAssetDialogCallback,
   sceneNumbersUsingRef,
   usedByScenesText,
 } from "../src/web/localAssetUi.ts";
@@ -136,5 +137,55 @@ describe("ASSET-003 copy", () => {
       mismatchDialogText(otherPoseRef),
       "This file is a different image (1234…5678), so it can't restore the missing one.",
     );
+  });
+});
+
+describe("ASSET-003 dialog callback runner", () => {
+  it("reports ok and runs finalize after the action settles", async () => {
+    const events = [];
+    const result = await runAssetDialogCallback(
+      async () => {
+        await Promise.resolve();
+        events.push("action");
+      },
+      () => events.push("finalize"),
+    );
+
+    assert.deepEqual(result, {ok: true});
+    assert.deepEqual(events, ["action", "finalize"]);
+  });
+
+  it("catches a rejection, reports its message and still finalizes", async () => {
+    let finalized = 0;
+    const result = await runAssetDialogCallback(
+      () => Promise.reject(new Error("disk full")),
+      () => {
+        finalized += 1;
+      },
+    );
+
+    assert.deepEqual(result, {ok: false, message: "disk full", error: result.error});
+    assert.ok(result.error instanceof Error);
+    assert.equal(finalized, 1);
+  });
+
+  it("catches a synchronous throw and a non-Error rejection", async () => {
+    let finalized = 0;
+    const finalize = () => {
+      finalized += 1;
+    };
+    const thrown = await runAssetDialogCallback(() => {
+      throw new Error("sync boom");
+    }, finalize);
+    const rejected = await runAssetDialogCallback(
+      () => Promise.reject("plain text"),
+      finalize,
+    );
+
+    assert.equal(thrown.ok, false);
+    assert.equal(thrown.message, "sync boom");
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.message, "plain text");
+    assert.equal(finalized, 2);
   });
 });

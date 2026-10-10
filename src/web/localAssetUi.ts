@@ -98,3 +98,31 @@ export const describeMissingLocalAsset = ({
 
 export const mismatchDialogText = (candidateRef: LocalAssetRef): string =>
   `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.`;
+
+export type AssetDialogCallbackResult =
+  | {ok: true}
+  | {ok: false; message: string; error: unknown};
+
+/**
+ * Runs an asset dialog callback so that nothing escapes: a synchronous throw
+ * or a rejection becomes `{ok: false}`, and `finalize` always runs after the
+ * callback settles (used to clear the import lock even when the callback fails).
+ */
+export const runAssetDialogCallback = async (
+  action: () => void | Promise<void>,
+  finalize: () => void,
+): Promise<AssetDialogCallbackResult> => {
+  try {
+    await action();
+
+    return {ok: true};
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      error,
+    };
+  } finally {
+    finalize();
+  }
+};

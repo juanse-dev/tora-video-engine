@@ -25,6 +25,7 @@ import {
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
+import {AssetDialogHost} from "./components/AssetDialogHost.tsx";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
 import {YamlEditor} from "./components/YamlEditor.tsx";
@@ -51,11 +52,6 @@ import {
   type LocalAssetRenderPreparation,
 } from "./localAssetState.ts";
 import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
-import {
-  deleteConfirmationText,
-  deleteConfirmButtonLabel,
-  mismatchDialogText,
-} from "./localAssetUi.ts";
 import {hasLossRisk} from "./lossRisk.ts";
 import {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
@@ -290,7 +286,6 @@ export const App = () => {
   // mismatch dialog) ends; locks authoring so the selected scene cannot move.
   const [assetImportInFlight, setAssetImportInFlight] = useState(false);
   const [assetDialog, setAssetDialog] = useState<AssetDialog | null>(null);
-  const [assetDialogBusy, setAssetDialogBusy] = useState(false);
   const [integrityCache] = useState(() => new IntegrityCache());
   const [objectUrlPool] = useState(() => new ObjectUrlPool());
 
@@ -464,18 +459,31 @@ export const App = () => {
     };
   }, [integrityCache, bumpAssetRefresh]);
 
+  // Mirrors `assetDialog !== null`; also set eagerly on open so two opens in one tick cannot both succeed.
+  const assetDialogOpenRef = useRef(false);
+
+  assetDialogOpenRef.current = assetDialog !== null;
+
   const openAssetDialog = useCallback((dialog: AssetDialog) => {
     // One dialog of any kind at a time: never open under an App transition panel
     // or over another asset dialog.
-    if (transitionOpenRef.current) {
-      return;
+    if (transitionOpenRef.current || assetDialogOpenRef.current) {
+      return false;
     }
 
-    setAssetDialog((current) => current ?? dialog);
+    assetDialogOpenRef.current = true;
+    setAssetDialog(dialog);
+
+    return true;
   }, []);
   const closeAssetDialog = useCallback(() => setAssetDialog(null), []);
+  // Closes only the dialog it was asked about, so a newer dialog is never closed by a stale callback.
+  const closeAssetDialogIfCurrent = useCallback((dialog: AssetDialog) => {
+    setAssetDialog((current) => (current === dialog ? null : current));
+  }, []);
   const assetLibraryLocks =
     typeof navigator === "undefined" ? undefined : navigator.locks;
+  const transitionPending = transition !== null;
   const assetLibraryContext = useMemo<AssetLibraryContextValue>(
     () => ({
       status: assetLibrary ?? OPENING_ASSET_LIBRARY,
@@ -486,7 +494,7 @@ export const App = () => {
       activeStory,
       localAssetState: localAssets.state,
       setAssetImportInFlight,
-      transitionPending: transition !== null,
+      transitionPending,
       openAssetDialog,
       closeAssetDialog,
     }),
@@ -498,7 +506,7 @@ export const App = () => {
       bumpAssetRefresh,
       activeStory,
       localAssets.state,
-      transition,
+      transitionPending,
       openAssetDialog,
       closeAssetDialog,
     ],
@@ -1733,82 +1741,6 @@ export const App = () => {
     return null;
   };
 
-  const runAssetDialogAction = async (action: () => Promise<void>) => {
-    setAssetDialogBusy(true);
-
-    try {
-      await action();
-    } finally {
-      setAssetDialogBusy(false);
-      closeAssetDialog();
-    }
-  };
-
-  // Rendered outside the authoring fieldset so its buttons stay enabled while
-  // the Story is frozen. The callbacks own their errors; App only closes.
-  const renderAssetDialog = () => {
-    if (assetDialog === null) {
-      return null;
-    }
-
-    if (assetDialog.kind === "delete") {
-      return (
-        <div className="transition-panel" role="dialog">
-          <strong>
-            {deleteConfirmationText(
-              assetDialog.label,
-              assetDialog.category,
-              assetDialog.sceneCount,
-            )}
-          </strong>
-          <div>
-            <button
-              type="button"
-              onClick={closeAssetDialog}
-              disabled={assetDialogBusy}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void runAssetDialogAction(assetDialog.onConfirm)}
-              disabled={
-                renderAuthoringLocked || assetImportInFlight || assetDialogBusy
-              }
-            >
-              {deleteConfirmButtonLabel(assetDialog.sceneCount)}
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="transition-panel" role="dialog">
-        <strong>{mismatchDialogText(assetDialog.candidateRef)}</strong>
-        <div>
-          <button
-            type="button"
-            onClick={() => void runAssetDialogAction(assetDialog.onReplace)}
-            disabled={assetDialogBusy}
-          >
-            Use it as replacement for this scene
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              assetDialog.onCancel();
-              closeAssetDialog();
-            }}
-            disabled={assetDialogBusy}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div
       className="app-shell"
@@ -2053,7 +1985,13 @@ export const App = () => {
       </div>
 
       {renderTransitionPanel()}
-      {renderAssetDialog()}
+      <AssetDialogHost
+        dialog={assetDialog}
+        renderAuthoringLocked={renderAuthoringLocked}
+        assetImportInFlight={assetImportInFlight}
+        setAssetImportInFlight={setAssetImportInFlight}
+        onClose={closeAssetDialogIfCurrent}
+      />
 
       <main className="app-main editor-workspace">
         <fieldset
@@ -2062,24 +2000,24 @@ export const App = () => {
           aria-label="Story authoring"
         >
         <AssetLibraryContext.Provider value={assetLibraryContext}>
-        {mode === "visual" ? (
-          <VisualEditor
-            key={visualRevision}
-            activeStory={activeStory}
-            onEvaluationChange={onVisualEvaluationChange}
-          />
-        ) : yamlState !== null ? (
-          <YamlEditor
-            activeStory={activeStory}
-            state={yamlState}
-            onStateChange={setYamlState}
-            onApply={applyCurrentYaml}
-            onRequestVisual={requestVisualMode}
-            onExportActive={exportActiveStory}
-            onExportCandidate={exportCurrentYamlCandidate}
-            onImportFile={importFile}
-          />
-        ) : null}
+          {mode === "visual" ? (
+            <VisualEditor
+              key={visualRevision}
+              activeStory={activeStory}
+              onEvaluationChange={onVisualEvaluationChange}
+            />
+          ) : yamlState !== null ? (
+            <YamlEditor
+              activeStory={activeStory}
+              state={yamlState}
+              onStateChange={setYamlState}
+              onApply={applyCurrentYaml}
+              onRequestVisual={requestVisualMode}
+              onExportActive={exportActiveStory}
+              onExportCandidate={exportCurrentYamlCandidate}
+              onImportFile={importFile}
+            />
+          ) : null}
         </AssetLibraryContext.Provider>
         </fieldset>
 
