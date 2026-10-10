@@ -101,6 +101,7 @@ Rulings made while building this (the full ledger is in the SDD progress file):
 - R7: phase B snapshots the gate profile to `profile-before-b/` on its first run and restores it on reruns, so a flaky step 10 or 11 does not cost another production deploy cycle.
 - R8: phase A refuses to delete a passed phase A whose phase B has not completed unless `--fresh` is given, and the MP4 checks assert exactly one video stream.
 - R10: the network guard allows Netlify's Deploy Preview drawer POSTs (`sessions.bugsnag.com/` and `app.netlify.com/access-control/bb-api/api/v1/cdp/deploys/<hex id>/views`, 4096 bytes or less, signature checks still applying) only when the page's build context is known and is not `production`; the report's No-upload row says so.
+- R11: "phase X passed" has one definition, `phaseOutcome(state, phase)` (`tests/gate/helpers/phaseOutcome.mjs`), shared by the report verdict, the phase B precondition and the phase A `--fresh` guard. A phase passes only when every mandatory result for it is recorded and not failing (so a `--only` run never passes), it finished with Playwright exit code 0, and its Netlify check did not fail.
 
 Changes from the final whole-branch review:
 

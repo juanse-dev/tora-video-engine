@@ -41,6 +41,8 @@ Phase A deletes and recreates `.gate/<target>/`, so never re-run phase A between
 
 Phase B stops immediately, before it builds or opens a browser, if phase A's state is missing, was recorded for another URL, or phase A did not pass.
 
+A run with `--only` never counts as a passed phase: the report reads INCOMPLETE, phase B refuses a partial phase A, and a partial phase B does not close the A to B window. The same rule decides the report verdict and these guards, and a failed Netlify API check also keeps a phase from counting as passed.
+
 ## Commands
 
 ```bash
