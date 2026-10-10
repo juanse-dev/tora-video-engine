@@ -28,7 +28,7 @@ const getJson = async (fetchImpl, token, path) => {
   const response = await fetchImpl(`${NETLIFY_API}${path}`, {
     method: "GET",
     headers: {Authorization: `Bearer ${token}`, Accept: "application/json"},
-    signal: AbortSignal.timeout(20_000),
+    signal: globalThis.AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {

@@ -9,3 +9,7 @@ output
 # Local custom assets (images stay on this machine)
 local-assets/*
 !local-assets/README.md
+
+# GATE-001 deployed verification: per-target state and the local phase B build
+.gate/
+dist/web-gate-b/
