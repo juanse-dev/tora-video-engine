@@ -107,3 +107,8 @@ jobs:
             exit 1
           fi
           test ! -e output/friday-deploy.mp4
+
+      - name: Verify CLI local assets render
+        env:
+          TORA_REMOTION_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+        run: npm run test:cli-e2e
