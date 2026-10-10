@@ -5,6 +5,9 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
+import {collectStoryLocalAssetUsages} from "../localAssets/readiness.ts";
+import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
+import type {ToraVideoProps} from "../Video.tsx";
 import type {Story} from "../story/types.ts";
 import {
   VIDEO_FPS,
@@ -15,7 +18,10 @@ import {
   evaluateBrowserStoryPolicy,
   type BrowserStoryPolicyDependencies,
 } from "./browserPolicy.ts";
+import type {LocalAssetRenderPreparation} from "./localAssetState.ts";
 import {storiesSemanticallyEqual} from "./persistence.ts";
+
+export type {LocalAssetRenderPreparation};
 
 export const WEB_RENDER_LOCK_NAME =
   "tora-video-engine:web-fs-render";
@@ -105,6 +111,10 @@ export type BrowserRenderTransactionOutcome =
   | BrowserRenderCleanupBlocked
   | {
       kind: "busy";
+    }
+  | {
+      kind: "assets-changed";
+      message: string;
     }
   | {
       kind: "unsupported";
@@ -383,7 +393,8 @@ export const renderStoryMediaOnWeb = async (
     onProgress?: (progress: RenderMediaOnWebProgress) => void;
     licenseKey?: string | null;
     render?: RenderFunction;
-    component?: ComponentType<{story: Story}>;
+    localAssetSources?: LocalAssetSourceMap;
+    component?: ComponentType<ToraVideoProps>;
   },
 ): Promise<RenderMediaOnWebResult> => {
   const policy = evaluateBrowserRenderPolicy(story);
@@ -391,6 +402,20 @@ export const renderStoryMediaOnWeb = async (
   if (!policy.eligible) {
     throw new Error(
       `Active Story failed the browser render policy recheck: ${policy.message}`,
+    );
+  }
+
+  // INV-5: a local ref must never reach the renderer without a resolved
+  // source, or the composition would draw a placeholder into the MP4.
+  const unresolved = collectStoryLocalAssetUsages(story).filter((usage) => {
+    const kind = options.localAssetSources?.[usage.ref]?.kind;
+
+    return kind !== "url" && kind !== "static";
+  });
+
+  if (unresolved.length > 0) {
+    throw new Error(
+      `Cannot render: ${unresolved.length} local asset(s) have no resolved source.`,
     );
   }
 
@@ -407,9 +432,9 @@ export const renderStoryMediaOnWeb = async (
       width: VIDEO_WIDTH,
       height: VIDEO_HEIGHT,
       calculateMetadata: null,
-      defaultProps: {story},
+      defaultProps: {story, localAssetSources: options.localAssetSources},
     },
-    inputProps: {story},
+    inputProps: {story, localAssetSources: options.localAssetSources},
     container: "mp4",
     videoCodec: "h264",
     muted: true,
@@ -449,6 +474,15 @@ export const startBrowserRenderTransaction = async (
     renderStory?: typeof renderStoryMediaOnWeb;
     materializeBlob?: (blob: Blob) => Promise<Blob>;
     consumeBlob?: (blob: Blob) => void | Promise<void>;
+    /**
+     * Runs right after the render lock lease is acquired and before the OPFS
+     * pre-cleanup. Its `release()` is called exactly once after everything that
+     * follows (including every early return); a rejection or `{ok: false}`
+     * releases the lease and never touches OPFS.
+     */
+    prepareLocalAssets?: (
+      signal: AbortSignal,
+    ) => Promise<LocalAssetRenderPreparation>;
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
   const checkCapability =
@@ -477,90 +511,123 @@ export const startBrowserRenderTransaction = async (
     };
   }
 
-  const cleanup =
-    options.cleanup ?? (() => cleanupRemotionOpfsUntilEmpty());
-  const preCleanup = await cleanupSafely(cleanup);
+  let preparation: Extract<LocalAssetRenderPreparation, {ok: true}> | null =
+    null;
 
-  if (!preCleanup.ok) {
-    return {
-      kind: "cleanup-blocked",
-      stage: "pre",
-      lease,
-      pending: null,
-      cleanup: preCleanup,
-    };
+  if (options.prepareLocalAssets !== undefined) {
+    let prepared: LocalAssetRenderPreparation;
+
+    try {
+      prepared = await options.prepareLocalAssets(options.signal);
+    } catch (error) {
+      lease.release();
+
+      return options.signal.aborted
+        ? {kind: "cancelled"}
+        : {kind: "failure", error: asError(error)};
+    }
+
+    if (!prepared.ok) {
+      lease.release();
+
+      return {kind: "assets-changed", message: prepared.message};
+    }
+
+    preparation = prepared;
   }
 
-  if (options.signal.aborted) {
-    lease.release();
-    return {kind: "cancelled"};
-  }
-
-  let pending: BrowserRenderPendingOutcome;
+  const localAssetSources = preparation?.localAssetSources;
 
   try {
-    const renderStory = options.renderStory ?? renderStoryMediaOnWeb;
-    const result = await renderStory(story, {
-      signal: options.signal,
-      onProgress: options.onProgress,
-      licenseKey: options.licenseKey,
-    });
-    const webFsBlob = await result.getBlob();
+    const cleanup =
+      options.cleanup ?? (() => cleanupRemotionOpfsUntilEmpty());
+    const preCleanup = await cleanupSafely(cleanup);
+
+    if (!preCleanup.ok) {
+      return {
+        kind: "cleanup-blocked",
+        stage: "pre",
+        lease,
+        pending: null,
+        cleanup: preCleanup,
+      };
+    }
 
     if (options.signal.aborted) {
-      pending = {kind: "cancelled"};
-    } else {
-      const materializeBlob =
-        options.materializeBlob ?? materializeBrowserDownloadBlob;
-      const blob = await materializeBlob(webFsBlob);
+      lease.release();
+      return {kind: "cancelled"};
+    }
+
+    let pending: BrowserRenderPendingOutcome;
+
+    try {
+      const renderStory = options.renderStory ?? renderStoryMediaOnWeb;
+      const result = await renderStory(story, {
+        signal: options.signal,
+        onProgress: options.onProgress,
+        licenseKey: options.licenseKey,
+        localAssetSources,
+      });
+      const webFsBlob = await result.getBlob();
 
       if (options.signal.aborted) {
         pending = {kind: "cancelled"};
       } else {
-        const consumed = options.consumeBlob !== undefined;
+        const materializeBlob =
+          options.materializeBlob ?? materializeBrowserDownloadBlob;
+        const blob = await materializeBlob(webFsBlob);
 
-        if (options.consumeBlob !== undefined) {
-          await options.consumeBlob(blob);
+        if (options.signal.aborted) {
+          pending = {kind: "cancelled"};
+        } else {
+          const consumed = options.consumeBlob !== undefined;
+
+          if (options.consumeBlob !== undefined) {
+            await options.consumeBlob(blob);
+          }
+
+          pending = {
+            kind: "success",
+            blob,
+            consumed,
+          };
         }
-
-        pending = {
-          kind: "success",
-          blob,
-          consumed,
-        };
       }
+    } catch (error) {
+      pending = options.signal.aborted
+        ? {kind: "cancelled"}
+        : {
+            kind: "failure",
+            error: asError(error),
+          };
     }
-  } catch (error) {
-    pending = options.signal.aborted
-      ? {kind: "cancelled"}
-      : {
-          kind: "failure",
-          error: asError(error),
-        };
+
+    const postCleanup = await cleanupSafely(cleanup);
+
+    if (
+      options.signal.aborted &&
+      pending.kind === "success" &&
+      !pending.consumed
+    ) {
+      pending = {kind: "cancelled"};
+    }
+
+    if (!postCleanup.ok) {
+      return {
+        kind: "cleanup-blocked",
+        stage: "post",
+        lease,
+        pending,
+        cleanup: postCleanup,
+      };
+    }
+
+    lease.release();
+    return pending;
+  } finally {
+    // After the post-render cleanup, whatever the outcome.
+    preparation?.release();
   }
-
-  const postCleanup = await cleanupSafely(cleanup);
-
-  if (
-    options.signal.aborted &&
-    pending.kind === "success" &&
-    !pending.consumed
-  ) {
-    pending = {kind: "cancelled"};
-  }
-
-  if (!postCleanup.ok) {
-    return {
-      kind: "cleanup-blocked",
-      stage: "post",
-      lease,
-      pending,
-      cleanup: postCleanup,
-    };
-  }
-
-  lease.release();
-  return pending;
 };
 
 export const retryBrowserRenderCleanup = async (

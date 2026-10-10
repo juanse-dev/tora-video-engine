@@ -2,7 +2,12 @@ import {defineConfig} from "@playwright/test";
 
 export default defineConfig({
   testDir: "tests/browser",
-  testMatch: "browser-render-golden.spec.mjs",
+  // The golden plus the specs whose render paths bundled Chromium cannot run.
+  testMatch: [
+    "browser-render-golden.spec.mjs",
+    "local-asset-preview.spec.mjs",
+    "local-asset-render-race.spec.mjs",
+  ],
   timeout: 240_000,
   workers: 1,
   use: {

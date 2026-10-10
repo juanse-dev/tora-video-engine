@@ -11,6 +11,12 @@ import {
   applyVisualDraftEvaluation,
   createAuthoringState,
 } from "./authoringState.ts";
+import {
+  createAssetLibraryChannel,
+  openAssetLibrary,
+  type AssetLibraryStatus,
+} from "./assetLibrary/coordination.ts";
+import {IntegrityCache} from "./assetLibrary/integrity.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
@@ -31,7 +37,15 @@ import {
   type BrowserRenderCleanupBlocked,
   type BrowserRenderPendingOutcome,
 } from "./browserRender.ts";
+import {
+  createLocalAssetRenderPreparation,
+  describeLocalAssetRenderBlock,
+  resolveStoryLocalAssets,
+  type LocalAssetRenderPreparation,
+} from "./localAssetState.ts";
+import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
 import {hasLossRisk} from "./lossRisk.ts";
+import {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
   acquirePersistenceOwnership,
   PERSISTENCE_STORAGE_KEY,
@@ -44,6 +58,7 @@ import {
   type ProtectedRecovery,
 } from "./persistence.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
+import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
 import {
   MAX_BROWSER_YAML_SOURCE_BYTES,
@@ -105,6 +120,12 @@ type RenderUiState = {
   phase: RenderPhase;
   message: string;
   progress: number | null;
+};
+
+// Stand-in while openAssetLibrary has not settled yet.
+const OPENING_ASSET_LIBRARY: AssetLibraryStatus = {
+  kind: "unavailable",
+  message: "Checking local assets…",
 };
 
 const getFallbackStory = (): Story => {
@@ -248,8 +269,22 @@ export const App = () => {
     progress: null,
   });
   const [cleanupRetrying, setCleanupRetrying] = useState(false);
+  // null until openAssetLibrary settles; then referentially stable (see useStoryLocalAssets).
+  const [assetLibrary, setAssetLibrary] = useState<AssetLibraryStatus | null>(
+    null,
+  );
+  const [assetRefreshToken, setAssetRefreshToken] = useState(0);
+  const [integrityCache] = useState(() => new IntegrityCache());
+  const [objectUrlPool] = useState(() => new ObjectUrlPool());
 
   const {activeStory, visual} = authoringState;
+  const localAssets = useStoryLocalAssets(
+    activeStory,
+    assetLibrary,
+    integrityCache,
+    objectUrlPool,
+    assetRefreshToken,
+  );
   const previewConfig = getWebPlayerConfig(activeStory);
 
   const activeStoryChangedFromInitial =
@@ -292,6 +327,10 @@ export const App = () => {
     renderUi.phase === "rendering" ||
     renderUi.phase === "cancelling" ||
     renderUi.phase === "finalizing";
+  const localAssetRenderBlock = describeLocalAssetRenderBlock(
+    localAssets.state,
+    assetLibrary ?? OPENING_ASSET_LIBRARY,
+  );
   const renderNeedsUnloadWarning =
     authoringLocked || renderUi.phase === "cleanup-blocked";
 
@@ -330,6 +369,53 @@ export const App = () => {
     activeStory,
     renderInputBlocked,
   };
+
+  // Opens My assets once. The status is stored when the open settles and again
+  // only if a blocked upgrade later finishes (or fails).
+  useEffect(() => {
+    let cancelled = false;
+    let latest: AssetLibraryStatus | null = null;
+    const accept = (status: AssetLibraryStatus) => {
+      if (cancelled) {
+        if (status.kind === "ready") {
+          status.store.close();
+        }
+
+        return;
+      }
+
+      latest = status;
+      setAssetLibrary(status);
+    };
+
+    void openAssetLibrary({onStatusChange: accept}).then(accept);
+
+    return () => {
+      cancelled = true;
+
+      if (latest?.kind === "ready") {
+        latest.store.close();
+      }
+    };
+  }, []);
+
+  // Other tabs' library changes and window focus refresh local asset readiness.
+  useEffect(() => {
+    const refresh = () => setAssetRefreshToken((token) => token + 1);
+    const channel = createAssetLibraryChannel((message) => {
+      integrityCache.invalidate(message.digests);
+      refresh();
+    });
+
+    window.addEventListener("focus", refresh);
+
+    return () => {
+      window.removeEventListener("focus", refresh);
+      channel.close();
+    };
+  }, [integrityCache]);
+
+  useEffect(() => () => objectUrlPool.dispose(), [objectUrlPool]);
 
   useEffect(() => {
     let cancelled = false;
@@ -740,6 +826,7 @@ export const App = () => {
       renderCapability?.kind !== "ready" ||
       renderLockStatus !== "available" ||
       renderInputBlocked ||
+      localAssetRenderBlock !== null ||
       renderUi.phase === "cleanup-blocked"
     ) {
       return;
@@ -763,14 +850,107 @@ export const App = () => {
     const controller = new AbortController();
     renderAbortRef.current = controller;
     renderSnapshotRef.current = snapshot;
+
+    const hasLocalRefs = storyHasLocalAssetRefs(snapshot);
+
     setRenderUi({
       phase: "rendering",
-      message: "Preparing browser render and cleaning temporary storage…",
-      progress: 0,
+      message: hasLocalRefs
+        ? "Checking local assets…"
+        : "Preparing browser render and cleaning temporary storage…",
+      // The asset check has no measurable progress; the bar appears with the
+      // transaction's own preparing phase.
+      progress: hasLocalRefs ? null : 0,
     });
+
+    let prepareLocalAssets:
+      | ((signal: AbortSignal) => Promise<LocalAssetRenderPreparation>)
+      | undefined;
+
+    if (hasLocalRefs) {
+      // Heavy verification with no locks held. Every exit that does not start
+      // the transaction leaves the rendering phase and clears the in-flight refs.
+      let failureMessage: string | null = null;
+
+      try {
+        if (assetLibrary?.kind !== "ready") {
+          throw new Error(
+            describeLocalAssetRenderBlock(
+              localAssets.state,
+              assetLibrary ?? OPENING_ASSET_LIBRARY,
+            ) ?? "My assets is not available in this browser.",
+          );
+        }
+
+        const resolved = await resolveStoryLocalAssets(
+          snapshot,
+          assetLibrary,
+          integrityCache,
+          {signal: controller.signal},
+        );
+
+        controller.signal.throwIfAborted();
+
+        if (resolved.kind !== "resolved" || !resolved.allReady) {
+          failureMessage =
+            describeLocalAssetRenderBlock(resolved, assetLibrary) ??
+            "Local assets are not ready for rendering.";
+        } else {
+          prepareLocalAssets = createLocalAssetRenderPreparation({
+            resolved,
+            store: assetLibrary.store,
+            locks: navigator.locks,
+            pool: objectUrlPool,
+          });
+        }
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          (error as {name?: unknown} | null)?.name === "AbortError"
+        ) {
+          renderAbortRef.current = null;
+          renderInFlightRef.current = false;
+          renderSnapshotRef.current = null;
+          setAssetRefreshToken((token) => token + 1);
+          setRenderUi({
+            phase: "idle",
+            message: "Browser render cancelled.",
+            progress: null,
+          });
+          return;
+        }
+
+        failureMessage = error instanceof Error ? error.message : String(error);
+        failureMessage = `Browser render failed: ${failureMessage}`;
+      }
+
+      if (failureMessage !== null) {
+        renderAbortRef.current = null;
+        renderInFlightRef.current = false;
+        renderSnapshotRef.current = null;
+        setAssetRefreshToken((token) => token + 1);
+        setRenderUi({
+          phase: "failure",
+          message: failureMessage,
+          progress: null,
+        });
+        return;
+      }
+
+      setRenderUi((current) =>
+        current.phase === "rendering"
+          ? {
+              ...current,
+              message: "Preparing browser render and cleaning temporary storage…",
+              progress: 0,
+            }
+          : current,
+      );
+    }
 
     const outcome = await startBrowserRenderTransaction(snapshot, {
       signal: controller.signal,
+      prepareLocalAssets,
       licenseKey: import.meta.env.VITE_REMOTION_LICENSE_KEY || null,
       onProgress: ({progress}) => {
         setRenderUi((current) => {
@@ -822,6 +1002,9 @@ export const App = () => {
 
     renderAbortRef.current = null;
     renderInFlightRef.current = false;
+    // The render's URL lease was released by the transaction; refresh readiness
+    // so deletions made during the render show up in the preview.
+    setAssetRefreshToken((token) => token + 1);
 
     if (outcome.kind === "cleanup-blocked") {
       renderCleanupBlockedRef.current = outcome;
@@ -847,6 +1030,16 @@ export const App = () => {
         phase: "idle",
         message:
           "Another Tora tab is rendering. Retry when that render finishes.",
+        progress: null,
+      });
+      return;
+    }
+
+    if (outcome.kind === "assets-changed") {
+      renderSnapshotRef.current = null;
+      setRenderUi({
+        phase: "failure",
+        message: outcome.message,
         progress: null,
       });
       return;
@@ -1494,6 +1687,7 @@ export const App = () => {
               renderCapability?.kind !== "ready" ||
               renderLockStatus !== "available" ||
               renderInputBlocked ||
+              localAssetRenderBlock !== null ||
               renderUi.phase === "cleanup-blocked"
             }
           >
@@ -1603,6 +1797,7 @@ export const App = () => {
         className="app-banner render-banner"
         role="status"
         data-render-state={renderUi.phase}
+        data-local-asset-block={localAssetRenderBlock ?? undefined}
       >
         <strong>Browser MP4</strong>
         <span>
@@ -1612,7 +1807,11 @@ export const App = () => {
               ? renderCapability.message
               : renderInputBlocked
                 ? "Resolve or discard pending editor/import work before rendering the active Story."
-                : renderLockStatus === "busy"
+                : localAssetRenderBlock !== null &&
+                    (renderUi.phase === "idle" ||
+                      renderUi.phase === "success")
+                  ? localAssetRenderBlock
+                  : renderLockStatus === "busy"
                   ? "Another Tora tab owns the browser render lock."
                   : renderLockStatus === "unavailable"
                     ? "Browser render lock status is unavailable. Preview, YAML export, and the local CLI remain available."
@@ -1704,7 +1903,11 @@ export const App = () => {
             </span>
           </div>
 
-          <Preview story={activeStory} />
+          <Preview
+            story={activeStory}
+            localAssetSources={localAssets.sources}
+            localAssetState={localAssets.state}
+          />
         </section>
       </main>
     </div>

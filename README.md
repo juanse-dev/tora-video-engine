@@ -255,4 +255,4 @@ The v0.2 Web Authoring sequence is:
 
 See [docs/web/README.md](docs/web/README.md) for the source-of-truth architecture and acceptance criteria.
 
-v0.3 Local Custom Assets is in progress (see [docs/assets/README.md](docs/assets/README.md)). ASSET-001 — local asset references, persistence v2 and the composition contract — ASSET-002 — image inspection, hashing and the browser asset library — and ASSET-005 — CLI rendering with local assets — are complete.
+v0.3 Local Custom Assets is in progress (see [docs/assets/README.md](docs/assets/README.md)). Complete: ASSET-001 (local asset references, persistence v2 and the composition contract), ASSET-002 (image inspection, hashing and the browser asset library), ASSET-004 (preview and browser MP4 rendering with local assets) and ASSET-005 (CLI rendering with local assets). Importing local assets in the browser arrives with ASSET-003 (the My assets UI).
