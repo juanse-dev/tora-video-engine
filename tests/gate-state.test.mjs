@@ -22,6 +22,7 @@ import {
   statePaths,
   targetDir,
 } from "./gate/helpers/gateState.mjs";
+import {GOLDEN_ITEMS} from "./gate/helpers/report.mjs";
 
 const URL_A = "https://tora-video-engine.netlify.app";
 const identity = (deployId) => ({
@@ -29,13 +30,42 @@ const identity = (deployId) => ({
   deployId,
   context: "production",
 });
-// What a passed phase A leaves in state.json (see phaseAIncompleteReason).
+// What a passed phase A leaves in state.json (see phaseOutcome.mjs).
 const finishedA = (deployId = "d1") => ({
   identity: identity(deployId),
+  browser: {name: "Chrome", version: "154.0.8037.98"},
+  refs: {pose: "local:pose:sha256:aa", background: "local:background:sha256:bb"},
   reloadDetail: "Phase A pass.",
   profileMarker: "token",
   networkSummary: "0 non-GET request(s)",
   finishedAt: "2026-10-10T10:05:00.000Z",
+  exitCode: 0,
+});
+
+// The results a complete phase A / phase B records.
+const passedResultsA = () => ({
+  reload: {status: "pending", detail: "A half", phase: "A"},
+  noUpload: {status: "pending", detail: "A half", phase: "A"},
+  cliParity: {status: "pass", detail: "ok", phase: "A"},
+  goldenNetwork: {status: "pass", detail: "ok", phase: "A"},
+  ...Object.fromEntries(
+    GOLDEN_ITEMS.map(({key}) => [key, {status: "pass", detail: "ok", phase: "A"}]),
+  ),
+});
+const passedResultsB = () => ({
+  reload: {status: "pass", detail: "ok", phase: "B"},
+  noUpload: {status: "pass", detail: "ok", phase: "B"},
+  deleteReimport: {status: "pass", detail: "ok", phase: "B"},
+});
+const recordAll = async (dir, results) => {
+  for (const [key, result] of Object.entries(results)) {
+    await recordResult(dir, key, result);
+  }
+};
+const finishedB = () => ({
+  identity: identity("d2"),
+  browser: {name: "Chrome", version: "154.0.8037.98"},
+  finishedAt: "2026-10-10T12:03:00.000Z",
   exitCode: 0,
 });
 
@@ -139,6 +169,7 @@ describe("GATE-001 G4 phase B load", () => {
   it("startPhaseB refuses a phase A that exited non-zero even with every field recorded", async () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", {...finishedA("d1"), exitCode: 1});
+    await recordAll(stateDir, passedResultsA());
 
     await assert.rejects(
       startPhaseB({stateDir, url: URL_A}),
@@ -161,11 +192,7 @@ describe("GATE-001 G4 phase B load", () => {
   it("starts B, keeps A and drops results and Netlify data of an earlier B run", async () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", finishedA("d1"));
-    await recordResult(stateDir, "reload", {
-      status: "pass",
-      detail: "ok",
-      phase: "A",
-    });
+    await recordAll(stateDir, passedResultsA());
     await recordResult(stateDir, "deleteReimport", {
       status: "pass",
       detail: "old",
@@ -184,7 +211,7 @@ describe("GATE-001 G4 phase B load", () => {
 
     assert.deepEqual(state.a.identity, identity("d1"));
     assert.deepEqual(state.b, {startedAt: "t2"});
-    assert.deepEqual(Object.keys(state.results), ["reload"]);
+    assert.deepEqual(Object.keys(state.results), Object.keys(passedResultsA()));
     assert.deepEqual(Object.keys(state.netlify), ["A"]);
   });
 });
@@ -460,14 +487,9 @@ describe("GATE-001 phase B profile snapshot", () => {
 
 describe("GATE-001 phase B precondition", () => {
   const passed = () => ({
-    a: {
-      reloadDetail: "Phase A pass.",
-      profileMarker: "token",
-      networkSummary: "0 non-GET request(s)",
-      finishedAt: "2026-10-10T10:05:00.000Z",
-      exitCode: 0,
-    },
-    results: {reload: {status: "pending", detail: "x", phase: "A"}},
+    a: finishedA("d1"),
+    results: passedResultsA(),
+    netlify: {},
   });
 
   it("is satisfied by a passed phase A", () => {
@@ -738,6 +760,7 @@ describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
   const seed = async (patchA = finishedA()) => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", patchA);
+    await recordAll(stateDir, passedResultsA());
     await writeFile(join(stateDir, "profile", "marker.txt"), "keep");
   };
   const markerSurvives = async () =>
@@ -792,7 +815,8 @@ describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
   it("proceeds without --fresh after a completed, passing phase B", async () => {
     await seed();
     await startPhaseB({stateDir, url: URL_A});
-    await mergePhase(stateDir, "B", {finishedAt: "t", exitCode: 0});
+    await mergePhase(stateDir, "B", finishedB());
+    await recordAll(stateDir, passedResultsB());
 
     const state = await startPhaseA({stateDir, target: "prod", url: URL_A});
 

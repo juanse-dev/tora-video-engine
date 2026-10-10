@@ -7,8 +7,10 @@
 //   await recordResult(stateDir, "reload", {status: "pass", detail: "..."});
 //   await writeReport(stateDir);
 //
-// The ASSET-006 Part B Record rows and the WEB-007 golden items below are
-// the complete list of result keys; each row says which phase owns it.
+// The ASSET-006 Part B Record rows and the WEB-007 golden items (phaseOutcome.mjs,
+// re-exported here) are the complete list of result keys; each row says which
+// phase owns it. The verdict comes from phaseOutcome, the same function the
+// phase B precondition and the phase A --fresh guard use (R11).
 
 /**
  * @typedef {{commit: string, deployId: string, context: string}} BuildIdentity
@@ -60,44 +62,9 @@
 
 import {readFile, writeFile} from "node:fs/promises";
 import {statePaths} from "./gateState.mjs";
+import {GOLDEN_ITEMS, RECORD_ROWS, phaseOutcome} from "./phaseOutcome.mjs";
 
-// owner = the phases that write the row: "A", "B" or "AB" (A records a
-// "pending" half, B overwrites it). Rows without an owner are derived from
-// state, not recorded.
-export const RECORD_ROWS = [
-  {key: "productionUrl", label: "Production URL"},
-  {key: "deployA", label: "Deploy A (commit / Netlify ID)"},
-  {key: "deployB", label: "Deploy B (commit / Netlify ID)"},
-  {key: "browser", label: "Browser + version, profile"},
-  {key: "fixtureRefs", label: "Fixture refs"},
-  {key: "reload", label: "Reload / restart / A → B results", owner: "AB"},
-  {key: "deleteReimport", label: "Delete → re-import recovery", owner: "B"},
-  {key: "noUpload", label: "No-upload check", owner: "AB"},
-  {key: "cliParity", label: "CLI parity", owner: "A"},
-];
-
-// The WEB-007 manual golden checklist, phase A only (T3).
-export const GOLDEN_ITEMS = [
-  {key: "golden.appLoads", label: "App loads with bundled poses and backgrounds"},
-  {key: "golden.captionEdit", label: "Caption edit"},
-  {key: "golden.poseChange", label: "Pose change"},
-  {key: "golden.sceneReorder", label: "Scene reorder"},
-  {key: "golden.playerFollowsStory", label: "The Player follows the Active Story"},
-  {key: "golden.yamlExport", label: "YAML export"},
-  {key: "golden.reloadRestores", label: "Reload restores the edits"},
-  {key: "golden.renderCapability", label: "Render capability is ready"},
-  {
-    key: "golden.renderDownload",
-    label:
-      "Render + download with metadata (video-only H.264, 1080×1920, 30 FPS, 360 frames / 12 s)",
-  },
-  {key: "golden.cancelRender", label: "Cancel Render aborts and unlocks authoring"},
-  {key: "golden.pendingDraftBlocks", label: "A pending draft blocks rendering"},
-  {
-    key: "golden.inFlightLocks",
-    label: "An in-flight render locks authoring until it settles",
-  },
-];
+export {GOLDEN_ITEMS, RECORD_ROWS, phaseOutcome};
 
 /** @param {string} text */
 const cell = (text) => text.replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ").trim();
@@ -131,7 +98,6 @@ export const renderReport = (state, results) => {
   const hasB = Boolean(b);
   /** @type {string[]} */
   const failures = [];
-  let incomplete = false;
 
   /**
    * A result-driven row or golden item that has no result: pending while its
@@ -144,8 +110,6 @@ export const renderReport = (state, results) => {
       return "pending phase B";
     }
 
-    incomplete = true;
-
     return "not recorded";
   };
 
@@ -157,16 +121,13 @@ export const renderReport = (state, results) => {
           ? code(state.url)
           : `${code(state.url)} (target ${code(state.target)}, not production)`;
       case "deployA":
-        if (a.identity) return deployCell(a.identity);
-        incomplete = true;
-        return "not recorded";
+        return a.identity ? deployCell(a.identity) : "not recorded";
       case "deployB":
         return b?.identity ? deployCell(b.identity) : missing("B");
       case "browser": {
         const browser = a.browser ?? b?.browser;
 
         if (!browser) {
-          incomplete = true;
           return "not recorded";
         }
 
@@ -179,9 +140,9 @@ export const renderReport = (state, results) => {
         return `${name(browser)}${changed}; gate profile ${code(`.gate/${state.target}/profile`)} (dedicated, created fresh by phase A)`;
       }
       case "fixtureRefs":
-        if (a.refs) return `${code(a.refs.pose)}, ${code(a.refs.background)}`;
-        incomplete = true;
-        return "not recorded";
+        return a.refs
+          ? `${code(a.refs.pose)}, ${code(a.refs.background)}`
+          : "not recorded";
       default:
         return "";
     }
@@ -202,8 +163,6 @@ export const renderReport = (state, results) => {
       failures.push(
         `- **${row.label}**${result.phase ? ` (phase ${result.phase})` : ""}: ${oneLine(result.detail)}`,
       );
-    } else if (result.status === "pending" && hasB) {
-      incomplete = true;
     }
 
     return `| ${row.label} | ${cell(rowText(result))} |`;
@@ -228,10 +187,6 @@ export const renderReport = (state, results) => {
 
     if (result.status === "pass") {
       return `- [x] ${label}${detail}`;
-    }
-
-    if (result.status === "pending" && hasB) {
-      incomplete = true;
     }
 
     return `- [ ] ${label} (${result.status})${detail}`;
@@ -290,10 +245,24 @@ export const renderReport = (state, results) => {
     }
   }
 
+  // The verdict is a function of the two phase outcomes alone (R11). The
+  // lists above only explain it.
+  const outcomeState = {...state, results};
+  const outcomeA = phaseOutcome(outcomeState, "A");
+  const outcomeB = phaseOutcome(outcomeState, "B");
+
+  if ((outcomeA.failed || outcomeB.failed) && failures.length === 0) {
+    failures.push(
+      ...[outcomeA, outcomeB].flatMap(({failed, reasons}) =>
+        failed ? reasons.map((reason) => `- ${oneLine(reason)}`) : [],
+      ),
+    );
+  }
+
   const verdict =
-    failures.length > 0
+    outcomeA.failed || outcomeB.failed
       ? "FAIL"
-      : incomplete
+      : !outcomeA.passed || (hasB && !outcomeB.passed)
         ? "INCOMPLETE"
         : hasB
           ? "PASS"

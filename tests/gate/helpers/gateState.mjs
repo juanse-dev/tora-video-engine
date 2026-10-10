@@ -22,6 +22,7 @@ import {basename, dirname, isAbsolute, join, relative, resolve} from "node:path"
 import {fileURLToPath} from "node:url";
 import {assertSafeSlug} from "../../../scripts/gateTarget.mjs";
 import {allowsPreviewDrawer, formatIdentity} from "./buildIdentity.mjs";
+import {phaseOutcome} from "./phaseOutcome.mjs";
 
 export const REPO_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -185,8 +186,8 @@ const updateState = async (stateDir, change) => {
 };
 
 /**
- * Whether the state in `stateDir` is a phase A that passed (so phase B can,
- * or could, build on it). A missing or unreadable state.json is not.
+ * Whether the state in `stateDir` is a phase A that passed (phaseOutcome, so
+ * phase B can, or could, build on it). A missing or unreadable state.json is not.
  *
  * @param {string} stateDir
  * @returns {Promise<GateState | null>}
@@ -201,23 +202,18 @@ const readPassedPhaseA = async (stateDir) => {
     return null;
   }
 
-  return state.a?.identity && phaseAIncompleteReason(state) === null
-    ? state
-    : null;
+  return phaseAIncompleteReason(state) === null ? state : null;
 };
 
 /**
- * Whether phase B ran to the end and passed: finished, Playwright exit 0, and
- * no failed phase B result. Anything else leaves the A to B window open.
+ * Whether phase B passed (R11): the same phaseOutcome the report verdict uses.
+ * Finished, Playwright exit 0, every phase B row recorded and passing, and no
+ * failed Netlify check. A run with `--only` or a failed check leaves the
+ * A to B window open.
  *
- * @param {Pick<GateState, "b" | "results">} state
+ * @param {Pick<GateState, "a" | "b" | "results" | "netlify">} state
  */
-const phaseBCompleted = (state) =>
-  Boolean(state.b?.finishedAt) &&
-  state.b?.exitCode === 0 &&
-  !Object.values(state.results ?? {}).some(
-    (result) => result.phase === "B" && result.status === "fail",
-  );
+const phaseBCompleted = (state) => phaseOutcome(state, "B").passed;
 
 /**
  * Phase A: delete and recreate the target dir, write a fresh state.json.
@@ -246,7 +242,7 @@ export const startPhaseA = async ({
 
   if (earlier && !phaseBCompleted(earlier)) {
     throw new Error(
-      `Phase A already passed for ${earlier.url} (state at ${paths.statePath}) and ${earlier.b ? "phase B has not completed (it failed or was interrupted)" : "phase B has not run yet"}. Running phase A again deletes that profile, and redoing A after Deploy B is live costs another deploy. Run phase B instead, or to start over, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
+      `Phase A already passed for ${earlier.url} (state at ${paths.statePath}) and ${earlier.b ? `phase B has not completed (it failed, was interrupted or ran only part of the checks: ${phaseOutcome(earlier, "B").reasons.join("; ")})` : "phase B has not run yet"}. Running phase A again deletes that profile, and redoing A after Deploy B is live costs another deploy. Run phase B instead, or to start over, pass --fresh: ${RUN_HINT.replace("<A|B>", "A")} --fresh`,
     );
   }
 
@@ -542,45 +538,18 @@ export const prepareProfileForPhaseB = async (
 /**
  * Why phase A cannot be trusted as the base for phase B, or null when it can.
  * The one predicate behind both the phase B precondition and the `--fresh`
- * check in `startPhaseA`.
+ * check in `startPhaseA`, and the same phaseOutcome the report verdict uses.
  *
- * @param {Pick<GateState, "a" | "results">} state
+ * @param {Pick<GateState, "a" | "b" | "results" | "netlify">} state
  * @returns {string | null}
  */
 export const phaseAIncompleteReason = (state) => {
-  const reasons = [];
+  const {passed, reasons} = phaseOutcome(state, "A");
 
-  for (const field of ["reloadDetail", "profileMarker", "networkSummary"]) {
-    if (!state.a?.[field]) {
-      reasons.push(`state.a.${field} is missing`);
-    }
-  }
-
-  // A Playwright run that died before recording an item-level failure (for
-  // example a beforeAll that could not launch Chrome) leaves these unset or
-  // non-zero even when the three fields above were filled earlier.
-  if (!state.a?.finishedAt) {
-    reasons.push("state.a.finishedAt is missing (phase A did not finish)");
-  }
-
-  const exitCode = state.a?.exitCode;
-
-  if (typeof exitCode !== "number") {
-    reasons.push("state.a.exitCode is missing (Playwright exit code unknown)");
-  } else if (exitCode !== 0) {
-    reasons.push(`Playwright exit code ${exitCode}`);
-  }
-
-  for (const [key, result] of Object.entries(state.results ?? {})) {
-    if (result.phase === "A" && result.status === "fail") {
-      reasons.push(`${key} failed: ${result.detail}`);
-    }
-  }
-
-  return reasons.length > 0 ? reasons.join("; ") : null;
+  return passed ? null : reasons.join("; ");
 };
 
-/** @param {Pick<GateState, "a" | "results">} state */
+/** @param {Pick<GateState, "a" | "b" | "results" | "netlify">} state */
 export const assertPhaseAPassed = (state) => {
   const reason = phaseAIncompleteReason(state);
 

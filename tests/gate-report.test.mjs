@@ -29,6 +29,10 @@ const phaseAState = () => ({
   a: {
     startedAt: "2026-10-10T10:00:00.000Z",
     finishedAt: "2026-10-10T10:05:00.000Z",
+    exitCode: 0,
+    reloadDetail: "Phase A steps 2-6 pass.",
+    profileMarker: "token",
+    networkSummary: "0 non-GET request(s)",
     identity: {commit: "d4aa69a", deployId: "6ac9d19a", context: "production"},
     browser: {name: "Chrome", version: "154.0.8037.98"},
     refs: {pose: POSE, background: BACKGROUND},
@@ -37,6 +41,7 @@ const phaseAState = () => ({
     reload: {status: "pending", detail: "Phase A steps 2-6 pass.", phase: "A"},
     noUpload: {status: "pending", detail: "Phase A clean.", phase: "A"},
     cliParity: {status: "pass", detail: "360 frames, same colours.", phase: "A"},
+    goldenNetwork: {status: "pass", detail: "clean", phase: "A"},
     ...Object.fromEntries(
       GOLDEN_ITEMS.map(({key}) => [key, {status: "pass", detail: "", phase: "A"}]),
     ),
@@ -50,6 +55,7 @@ const fullState = () => {
   state.b = {
     startedAt: "2026-10-10T12:00:00.000Z",
     finishedAt: "2026-10-10T12:03:00.000Z",
+    exitCode: 0,
     identity: {commit: "da946d8", deployId: "6aca4836", context: "production"},
     browser: {name: "Chrome", version: "154.0.8037.98"},
   };
