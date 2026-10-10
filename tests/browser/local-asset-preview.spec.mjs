@@ -8,37 +8,15 @@ import {
   readFixture,
   seedAssetLibrary,
 } from "./helpers/seedAssetLibrary.mjs";
+import {
+  applyYaml,
+  isBrowserRenderSupported,
+  listRemotionOpfsEntries,
+  openSeeded,
+  waitForOwner,
+} from "./helpers/localAssetPage.mjs";
 
 const STORAGE_KEY = "tora-video-engine:project";
-
-const waitForOwner = async (page) => {
-  await expect(page.locator(".app-shell")).toHaveAttribute(
-    "data-persistence-mode",
-    "owner",
-    {timeout: 10_000},
-  );
-};
-
-/** Opens the app once so the origin exists, seeds IndexedDB, then reloads. */
-const openSeeded = async (page, records) => {
-  await page.goto("/", {waitUntil: "domcontentloaded"});
-  await waitForOwner(page);
-  await seedAssetLibrary(page, records);
-  await page.reload({waitUntil: "domcontentloaded"});
-  await waitForOwner(page);
-};
-
-const applyYaml = async (page, yaml) => {
-  const source = page.getByLabel("YAML source");
-
-  if (!(await source.isVisible())) {
-    await page.getByRole("button", {name: "Open YAML"}).click();
-  }
-
-  await source.fill(yaml);
-  await page.getByRole("button", {name: "Apply YAML"}).click();
-  await expect(page.locator("[data-yaml-dirty=false]")).toBeVisible();
-};
 
 const waitForStoryPersisted = async (page, needle) => {
   await expect
@@ -387,4 +365,139 @@ test("without Web Locks My assets is disabled and bundled Stories still preview"
     "data-local-asset-block",
     /Web Locks/u,
   );
+});
+
+// --- Render preparation ("Checking local assets…") ---------------------------
+
+/**
+ * Seeds a one-pose Story and makes the next blob reads wait for
+ * `window.__releaseBlobReads()`, so the render's verification step can be observed.
+ */
+const openForPreparation = async (page) => {
+  await page.addInitScript(() => {
+    const nativeArrayBuffer = Blob.prototype.arrayBuffer;
+    const waiting = [];
+
+    window.__holdBlobReads = false;
+    Blob.prototype.arrayBuffer = function () {
+      if (!window.__holdBlobReads) {
+        return nativeArrayBuffer.call(this);
+      }
+
+      return new Promise((resolve, reject) => {
+        waiting.push(() => nativeArrayBuffer.call(this).then(resolve, reject));
+      });
+    };
+    window.__releaseBlobReads = () => {
+      window.__holdBlobReads = false;
+
+      for (const run of waiting.splice(0)) {
+        run();
+      }
+    };
+  });
+
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose)]);
+
+  if (!(await isBrowserRenderSupported(page))) {
+    test.skip(true, "Browser web rendering is unavailable in this runtime");
+  }
+
+  await applyYaml(
+    page,
+    buildStoryYaml([
+      {pose: localAssetRef("pose", pose.digest), background: "office"},
+    ]),
+  );
+  await expect(blobImages(page)).toHaveCount(1);
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeEnabled();
+
+  // Forget the verified payload (as another tab's change message would) and
+  // hold every blob read from now on.
+  await page.evaluate((digest) => {
+    window.__holdBlobReads = true;
+
+    const channel = new BroadcastChannel("tora-video-engine:asset-library");
+
+    channel.postMessage({
+      type: "asset-library-changed",
+      refs: [],
+      digests: [digest],
+    });
+    channel.close();
+  }, pose.digest);
+
+  return pose;
+};
+
+test("Cancel Render during local asset preparation unlocks authoring without OPFS entries", async ({
+  page,
+}) => {
+  await openForPreparation(page);
+  await page.getByRole("button", {name: "Render MP4"}).click();
+
+  await expect(page.locator(".render-banner")).toContainText(
+    "Checking local assets…",
+  );
+  await expect(page.getByLabel("YAML source")).toBeDisabled();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "true",
+  );
+
+  await page.getByRole("button", {name: "Cancel Render"}).click();
+  await page.evaluate(() => window.__releaseBlobReads());
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "idle",
+  );
+  await expect(page.locator(".render-banner")).toContainText(
+    "Browser render cancelled.",
+  );
+  await expect(page.getByLabel("YAML source")).toBeEnabled();
+  expect(await listRemotionOpfsEntries(page)).toEqual([]);
+});
+
+test("a read failure during local asset preparation ends in the failure state with authoring unlocked", async ({
+  context,
+  page,
+}) => {
+  await openForPreparation(page);
+  await page.getByRole("button", {name: "Render MP4"}).click();
+  await expect(page.locator(".render-banner")).toContainText(
+    "Checking local assets…",
+  );
+
+  // Another tab deletes the database; this tab's connection is closed by versionchange.
+  const other = await context.newPage();
+
+  await other.goto("/", {waitUntil: "domcontentloaded"});
+  await other.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase("tora-video-engine-assets");
+
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      }),
+  );
+  await page.evaluate(() => window.__releaseBlobReads());
+
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "failure",
+    {timeout: 15_000},
+  );
+  await expect(page.locator(".render-banner")).toContainText(
+    "Browser render failed:",
+  );
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(page.getByRole("button", {name: "Cancel Render"})).toHaveCount(0);
+  await expect(page.getByLabel("YAML source")).toBeEnabled();
 });

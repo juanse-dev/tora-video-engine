@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
+import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
+import {ASSET_LIBRARY_LOCK} from "../src/web/assetLibrary/constants.ts";
+import {createLocalAssetRenderPreparation} from "../src/web/localAssetState.ts";
 import {
   acquireBrowserRenderLock,
   BROWSER_FRAME_DURATION_MICROSECONDS,
@@ -14,6 +17,11 @@ import {
   startBrowserRenderTransaction,
   WEB_RENDER_LOCK_NAME,
 } from "../src/web/browserRender.ts";
+
+import {
+  createMemoryAssetStore,
+  createMemoryLockManager,
+} from "./helpers/memoryAssetStore.mjs";
 
 const readyCapability = async () => ({kind: "ready"});
 
@@ -511,5 +519,454 @@ describe("WEB-006 browser rendering", () => {
     assert.deepEqual(outcome, {kind: "cancelled"});
     assert.equal(rendered, false);
     assert.equal(released, true);
+  });
+});
+
+// --- ASSET-004: local asset preparation inside the transaction ---------------
+
+const LOCAL_DIGEST = "ab".repeat(32);
+const LOCAL_POSE = buildLocalAssetRef("pose", LOCAL_DIGEST);
+const LOCAL_META = {
+  mimeType: "image/png",
+  byteSize: 10,
+  width: 4,
+  height: 3,
+};
+
+const lockedSources = Object.freeze({
+  [LOCAL_POSE]: {kind: "url", url: "blob:test/pose"},
+});
+
+/** A transaction option set whose render succeeds; callers override pieces. */
+const baseOptions = (events, overrides = {}) => ({
+  signal: new AbortController().signal,
+  checkCapability: readyCapability,
+  acquireLock: async () => {
+    events.push("acquire-lock");
+
+    return {mode: "owner", release: () => events.push("lease-release")};
+  },
+  cleanup: async () => {
+    events.push("cleanup");
+
+    return {ok: true, attempts: 1};
+  },
+  renderStory: async (_story, options) => {
+    events.push("render");
+    events.sources = options.localAssetSources;
+
+    return {getBlob: async () => new Blob(["v"]), internalState: {}};
+  },
+  ...overrides,
+});
+
+const okPreparation = (events, sources = lockedSources) => async () => {
+  events.push("prepare");
+
+  return {
+    ok: true,
+    localAssetSources: sources,
+    release: () => events.push("prepare-release"),
+  };
+};
+
+const countOf = (events, name) =>
+  events.filter((event) => event === name).length;
+
+const preparedFixture = () => {
+  const store = createMemoryAssetStore();
+
+  store.setRaw("assets", LOCAL_POSE, {
+    label: "Pose",
+    originalFilename: "pose.png",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  store.setRaw("payloadMeta", LOCAL_DIGEST, {...LOCAL_META});
+
+  const usage = {
+    ref: LOCAL_POSE,
+    category: "pose",
+    digest: LOCAL_DIGEST,
+    sceneIndexes: [0],
+  };
+  const resolved = {
+    kind: "resolved",
+    refs: [{usage, status: "ready", detail: null}],
+    verified: new Map([[LOCAL_DIGEST, {digest: LOCAL_DIGEST, ...LOCAL_META}]]),
+    blobs: new Map([[LOCAL_DIGEST, new Blob(["pose"])]]),
+    allReady: true,
+    failureMessage: null,
+  };
+
+  return {store, resolved};
+};
+
+describe("ASSET-004 render transaction with local assets", () => {
+  it("passes localAssetSources as both defaultProps and inputProps", async () => {
+    let seen = null;
+
+    await renderStoryMediaOnWeb(exampleStory, {
+      signal: new AbortController().signal,
+      component: () => null,
+      localAssetSources: lockedSources,
+      render: async (options) => {
+        seen = options;
+
+        return {getBlob: async () => new Blob(["v"]), internalState: {}};
+      },
+    });
+
+    assert.deepEqual(seen.composition.defaultProps, {
+      story: exampleStory,
+      localAssetSources: lockedSources,
+    });
+    assert.deepEqual(seen.inputProps, {
+      story: exampleStory,
+      localAssetSources: lockedSources,
+    });
+    assert.equal(seen.inputProps.localAssetSources, lockedSources);
+  });
+
+  it("runs prepareLocalAssets after the lock and before the first cleanup, then renders with its sources", async () => {
+    const events = [];
+    const received = [];
+
+    const outcome = await startBrowserRenderTransaction(
+      exampleStory,
+      baseOptions(events, {
+        prepareLocalAssets: async (signal) => {
+          received.push(signal);
+
+          return okPreparation(events)();
+        },
+      }),
+    );
+
+    assert.equal(outcome.kind, "success");
+    assert.deepEqual(events.slice(0, 4), [
+      "acquire-lock",
+      "prepare",
+      "cleanup",
+      "render",
+    ]);
+    assert.equal(events.sources, lockedSources);
+    assert.equal(received.length, 1);
+    assert.ok(received[0] instanceof AbortSignal);
+  });
+
+  it("renders bundled-only Stories without local sources", async () => {
+    const events = [];
+
+    await startBrowserRenderTransaction(exampleStory, baseOptions(events));
+
+    assert.equal(events.sources, undefined);
+  });
+
+  it("returns assets-changed without touching OPFS when preparation says ok:false", async () => {
+    const events = [];
+
+    const outcome = await startBrowserRenderTransaction(
+      exampleStory,
+      baseOptions(events, {
+        prepareLocalAssets: async () => ({
+          ok: false,
+          message: "Local assets changed while preparing the render. Try again.",
+        }),
+      }),
+    );
+
+    assert.deepEqual(outcome, {
+      kind: "assets-changed",
+      message: "Local assets changed while preparing the render. Try again.",
+    });
+    assert.deepEqual(events, ["acquire-lock", "lease-release"]);
+  });
+
+  it("cancels, releasing the render lease, when aborted while the shared asset lock is still waiting", async () => {
+    const events = [];
+    const {store, resolved} = preparedFixture();
+    const locks = createMemoryLockManager();
+    const controller = new AbortController();
+    let releaseExclusive;
+    const holder = locks.request(
+      ASSET_LIBRARY_LOCK,
+      {mode: "exclusive"},
+      () => new Promise((resolve) => (releaseExclusive = resolve)),
+    );
+    const prepare = createLocalAssetRenderPreparation({
+      resolved,
+      store,
+      locks,
+      pool: {acquire: () => "blob:never", release() {}},
+    });
+    const pending = startBrowserRenderTransaction(
+      exampleStory,
+      baseOptions(events, {
+        signal: controller.signal,
+        prepareLocalAssets: prepare,
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(
+      locks.requests.map((request) => [request.mode, request.granted]),
+      [
+        ["exclusive", true],
+        ["shared", false],
+      ],
+    );
+    controller.abort();
+
+    assert.deepEqual(await pending, {kind: "cancelled"});
+    assert.deepEqual(events, ["acquire-lock", "lease-release"]);
+
+    releaseExclusive();
+    await holder;
+  });
+
+  it("reports failure and releases the lease when preparation rejects, and the next attempt is not busy", async () => {
+    const events = [];
+    let held = false;
+    const fakeLocks = {
+      request(name, options, callback) {
+        if (held && options.ifAvailable) {
+          return Promise.resolve(callback(null));
+        }
+
+        held = true;
+
+        return Promise.resolve(callback({name})).finally(() => {
+          held = false;
+        });
+      },
+    };
+    const acquire = () => acquireBrowserRenderLock(() => fakeLocks);
+
+    const failed = await startBrowserRenderTransaction(exampleStory, {
+      ...baseOptions(events),
+      acquireLock: acquire,
+      prepareLocalAssets: async () => {
+        throw new Error("indexeddb read failed");
+      },
+    });
+
+    assert.equal(failed.kind, "failure");
+    assert.equal(failed.error.message, "indexeddb read failed");
+    assert.equal(countOf(events, "cleanup"), 0);
+    assert.equal(countOf(events, "render"), 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = await startBrowserRenderTransaction(exampleStory, {
+      ...baseOptions(events),
+      acquireLock: acquire,
+    });
+
+    assert.equal(second.kind, "success");
+  });
+
+  it("reports cancelled when preparation rejects after abort", async () => {
+    const events = [];
+    const controller = new AbortController();
+
+    const outcome = await startBrowserRenderTransaction(
+      exampleStory,
+      baseOptions(events, {
+        signal: controller.signal,
+        prepareLocalAssets: async () => {
+          controller.abort();
+          throw new DOMException("Aborted", "AbortError");
+        },
+      }),
+    );
+
+    assert.deepEqual(outcome, {kind: "cancelled"});
+    assert.deepEqual(events, ["acquire-lock", "lease-release"]);
+  });
+
+  describe("release() is called exactly once on every path after a successful preparation", () => {
+    it("post-cleanup success (after the post cleanup)", async () => {
+      const events = [];
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {prepareLocalAssets: okPreparation(events)}),
+      );
+
+      assert.equal(outcome.kind, "success");
+      assert.equal(countOf(events, "prepare-release"), 1);
+      assert.ok(
+        events.lastIndexOf("cleanup") < events.indexOf("prepare-release"),
+      );
+    });
+
+    it("render failure", async () => {
+      const events = [];
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {
+          prepareLocalAssets: okPreparation(events),
+          renderStory: async () => {
+            throw new Error("encode failed");
+          },
+        }),
+      );
+
+      assert.equal(outcome.kind, "failure");
+      assert.equal(countOf(events, "prepare-release"), 1);
+    });
+
+    it("cancel during rendering", async () => {
+      const events = [];
+      const controller = new AbortController();
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {
+          signal: controller.signal,
+          prepareLocalAssets: okPreparation(events),
+          renderStory: async () => {
+            controller.abort();
+            throw new Error("aborted");
+          },
+        }),
+      );
+
+      assert.deepEqual(outcome, {kind: "cancelled"});
+      assert.equal(countOf(events, "prepare-release"), 1);
+    });
+
+    it("post-cleanup cleanup-blocked", async () => {
+      const events = [];
+      let calls = 0;
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {
+          prepareLocalAssets: okPreparation(events),
+          cleanup: async () => {
+            calls += 1;
+
+            return calls === 1
+              ? {ok: true, attempts: 1}
+              : {
+                  ok: false,
+                  attempts: 9,
+                  error: null,
+                  remaining: ["__remotion_render:x"],
+                };
+          },
+        }),
+      );
+
+      assert.equal(outcome.kind, "cleanup-blocked");
+      assert.equal(outcome.stage, "post");
+      assert.equal(countOf(events, "prepare-release"), 1);
+    });
+
+    it("pre-cleanup cleanup-blocked (no render)", async () => {
+      const events = [];
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {
+          prepareLocalAssets: okPreparation(events),
+          cleanup: async () => ({
+            ok: false,
+            attempts: 9,
+            error: null,
+            remaining: ["__remotion_render:x"],
+          }),
+        }),
+      );
+
+      assert.equal(outcome.kind, "cleanup-blocked");
+      assert.equal(outcome.stage, "pre");
+      assert.equal(countOf(events, "render"), 0);
+      assert.equal(countOf(events, "prepare-release"), 1);
+    });
+
+    it("abort between preparation and pre-cleanup", async () => {
+      const events = [];
+      const controller = new AbortController();
+      const outcome = await startBrowserRenderTransaction(
+        exampleStory,
+        baseOptions(events, {
+          signal: controller.signal,
+          prepareLocalAssets: async () => {
+            controller.abort();
+
+            return okPreparation(events)();
+          },
+        }),
+      );
+
+      assert.deepEqual(outcome, {kind: "cancelled"});
+      assert.equal(countOf(events, "render"), 0);
+      assert.equal(countOf(events, "prepare-release"), 1);
+    });
+  });
+
+  it("orders render lock, shared asset lock, row re-reads, frozen map, lock release, then render", async () => {
+    const events = [];
+    const {store, resolved} = preparedFixture();
+    const memoryLocks = createMemoryLockManager();
+    const locks = {
+      request(name, options, callback) {
+        events.push(`asset-lock-request:${options.mode}`);
+
+        return memoryLocks
+          .request(name, options, callback)
+          .finally(() => events.push("asset-lock-released"));
+      },
+    };
+    const recordingStore = new Proxy(store, {
+      get(target, property) {
+        if (property === "getAssetRow") {
+          return async (ref) => {
+            events.push("row-read");
+
+            return target.getAssetRow(ref);
+          };
+        }
+
+        const value = target[property];
+
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const prepare = createLocalAssetRenderPreparation({
+      resolved,
+      store: recordingStore,
+      locks,
+      pool: {acquire: () => "blob:test/pose", release() {}},
+    });
+
+    const outcome = await startBrowserRenderTransaction(
+      exampleStory,
+      baseOptions(events, {
+        acquireLock: async () => {
+          events.push("render-lock-granted");
+
+          return {mode: "owner", release: () => events.push("lease-release")};
+        },
+        prepareLocalAssets: async (signal) => {
+          const result = await prepare(signal);
+
+          events.push(
+            `frozen:${result.ok && Object.isFrozen(result.localAssetSources)}`,
+          );
+
+          return result;
+        },
+      }),
+    );
+
+    assert.equal(outcome.kind, "success");
+    assert.deepEqual(events.slice(0, 7), [
+      "render-lock-granted",
+      "asset-lock-request:shared",
+      "row-read",
+      "asset-lock-released",
+      "frozen:true",
+      "cleanup",
+      "render",
+    ]);
   });
 });
