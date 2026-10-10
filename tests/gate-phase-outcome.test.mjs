@@ -52,7 +52,7 @@ const passedA = () => ({
       GOLDEN_ITEMS.map(({key}) => [key, {status: "pass", detail: "", phase: "A"}]),
     ),
   },
-  netlify: {},
+  netlify: {A: {status: "manual", detail: "manual (no token)"}},
 });
 
 /** A state.json after a complete, passing phase A and phase B. */
@@ -69,6 +69,7 @@ const passedAB = () => {
   state.results.reload = {status: "pass", detail: "A to B pass.", phase: "B"};
   state.results.noUpload = {status: "pass", detail: "clean", phase: "B"};
   state.results.deleteReimport = {status: "pass", detail: "recovered", phase: "B"};
+  state.netlify.B = {status: "skip", detail: "not applicable to a local target"};
 
   return state;
 };
@@ -118,6 +119,32 @@ const CASES = [
     false,
     false,
     "FAIL",
+  ],
+  [
+    "phase A whose Netlify check was never recorded (interrupted after finishedAt)",
+    (() => {
+      const state = passedA();
+
+      state.netlify = {};
+
+      return state;
+    })(),
+    false,
+    false,
+    "INCOMPLETE",
+  ],
+  [
+    "phase B whose Netlify check was never recorded",
+    (() => {
+      const state = passedAB();
+
+      delete state.netlify.B;
+
+      return state;
+    })(),
+    true,
+    false,
+    "INCOMPLETE",
   ],
   [
     "phase A with a skipped Netlify check",
@@ -484,8 +511,21 @@ describe("GATE-001 R11 the guards read phaseOutcome", () => {
     assert.throws(() => assertPhaseAPassed(state), /Phase A did not pass \(.*Netlify/);
   });
 
-  it("phaseAIncompleteReason accepts a skipped or manual Netlify check", () => {
-    for (const status of ["skip", "manual"]) {
+  it("phaseAIncompleteReason refuses a phase A with no recorded Netlify check", () => {
+    const state = passedA();
+
+    delete state.netlify.A;
+
+    assert.match(phaseAIncompleteReason(state), /Netlify check not recorded/);
+    assert.throws(() => assertPhaseAPassed(state), /Phase A did not pass \(.*Netlify check not recorded/);
+
+    delete state.netlify;
+
+    assert.match(phaseAIncompleteReason(state), /Netlify check not recorded/);
+  });
+
+  it("phaseAIncompleteReason accepts a passed, skipped or manual Netlify check", () => {
+    for (const status of ["pass", "skip", "manual"]) {
       const state = passedA();
 
       state.netlify = {A: {status, detail: "x"}};
@@ -586,6 +626,28 @@ describe("GATE-001 R11 the guards read phaseOutcome", () => {
       /--fresh/,
     );
     assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), true);
+  });
+
+  it("phase A still needs --fresh after a phase B whose Netlify check was never recorded", async () => {
+    const state = passedAB();
+
+    delete state.netlify.B;
+    await seed(state);
+
+    await assert.rejects(
+      startPhaseA({stateDir, target: "prod", url: URL_A}),
+      /--fresh/,
+    );
+    assert.equal(existsSync(join(stateDir, "profile", "marker.txt")), true);
+  });
+
+  it("startPhaseB refuses a phase A whose Netlify check was never recorded", async () => {
+    const state = passedA();
+
+    state.netlify = {};
+    await seed(state);
+
+    await assert.rejects(startPhaseB({stateDir, url: URL_A}), /Netlify check not recorded/);
   });
 
   it("phase A starts without --fresh after a complete passing A + B", async () => {

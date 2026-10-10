@@ -9,7 +9,8 @@
 // set, a failing check makes the exit code 1 even if every test passed. The
 // check only runs for this project's Netlify site (tora-video-engine.netlify.app
 // or an <alias>--tora-video-engine.netlify.app Deploy Preview); other hosts
-// record "skip".
+// record "skip". A result is always recorded (an error becomes "fail"): a phase
+// with no Netlify result does not count as passed.
 //
 // A non-zero Playwright exit is stored in state (exitCode plus the first lines
 // of the failure) so the report lists it and its verdict is FAIL, even when no
@@ -32,7 +33,7 @@ import {
   targetDir,
 } from "../tests/gate/helpers/gateState.mjs";
 import {writeReport} from "../tests/gate/helpers/report.mjs";
-import {checkNetlifyDeploy, netlifyApplicability} from "./gateNetlify.mjs";
+import {resolveNetlifyResult} from "./gateNetlify.mjs";
 import {summarizePlaywrightOutput} from "./gateSummary.mjs";
 import {
   buildGateEnv,
@@ -147,14 +148,12 @@ export const main = async (argv) => {
         : {}),
     });
 
-    const state = await readState(stateDir);
-    const result =
-      netlifyApplicability(target) ??
-      (await checkNetlifyDeploy({
-          token,
-          identity: state[phase === "A" ? "a" : "b"]?.identity,
-          isProduction: target.name === "prod",
-        }));
+    const result = await resolveNetlifyResult({
+      target,
+      token,
+      getIdentity: async () =>
+        (await readState(stateDir))[phase === "A" ? "a" : "b"]?.identity,
+    });
 
     await recordNetlify(stateDir, phase, result);
     netlifyFailed = result.status === "fail";

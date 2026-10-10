@@ -170,6 +170,7 @@ describe("GATE-001 G4 phase B load", () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", {...finishedA("d1"), exitCode: 1});
     await recordAll(stateDir, passedResultsA());
+    await recordNetlify(stateDir, "A", {status: "skip", detail: "local"});
 
     await assert.rejects(
       startPhaseB({stateDir, url: URL_A}),
@@ -489,7 +490,7 @@ describe("GATE-001 phase B precondition", () => {
   const passed = () => ({
     a: finishedA("d1"),
     results: passedResultsA(),
-    netlify: {},
+    netlify: {A: {status: "skip", detail: "local"}},
   });
 
   it("is satisfied by a passed phase A", () => {
@@ -761,6 +762,7 @@ describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
     await startPhaseA({stateDir, target: "prod", url: URL_A});
     await mergePhase(stateDir, "A", patchA);
     await recordAll(stateDir, passedResultsA());
+    await recordNetlify(stateDir, "A", {status: "skip", detail: "local"});
     await writeFile(join(stateDir, "profile", "marker.txt"), "keep");
   };
   const markerSurvives = async () =>
@@ -817,6 +819,7 @@ describe("GATE-001 phase A refuses to wipe an open A to B window", () => {
     await startPhaseB({stateDir, url: URL_A});
     await mergePhase(stateDir, "B", finishedB());
     await recordAll(stateDir, passedResultsB());
+    await recordNetlify(stateDir, "B", {status: "skip", detail: "local"});
 
     const state = await startPhaseA({stateDir, target: "prod", url: URL_A});
 

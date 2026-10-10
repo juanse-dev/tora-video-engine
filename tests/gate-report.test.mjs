@@ -46,7 +46,7 @@ const phaseAState = () => ({
       GOLDEN_ITEMS.map(({key}) => [key, {status: "pass", detail: "", phase: "A"}]),
     ),
   },
-  netlify: {},
+  netlify: {A: {status: "manual", detail: "manual (no token)"}},
 });
 
 const fullState = () => {

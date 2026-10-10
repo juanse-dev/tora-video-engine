@@ -193,3 +193,44 @@ export const netlifyApplicability = ({url, local}) => {
     ? null
     : {status: "skip", detail: "not this project's Netlify site"};
 };
+
+/**
+ * The Netlify result to record for a phase, whatever happens: skip (a local
+ * target or a host that is not this project's site), manual (no token), or the
+ * API check's own pass/fail. Anything that throws on the way (reading the
+ * identity, an unexpected error in the check) becomes a recorded "fail" with
+ * the message, because a phase with no recorded Netlify result does not count
+ * as passed (phaseOutcome).
+ *
+ * @param {{
+ *   target: {name: string, url: string, local: boolean},
+ *   token?: string,
+ *   getIdentity: () => Promise<BuildIdentity | undefined>,
+ *   check?: typeof checkNetlifyDeploy,
+ * }} options
+ * @returns {Promise<NetlifyResult>}
+ */
+export const resolveNetlifyResult = async ({
+  target,
+  token,
+  getIdentity,
+  check = checkNetlifyDeploy,
+}) => {
+  try {
+    return (
+      netlifyApplicability(target) ??
+      (await check({
+        token,
+        identity: await getIdentity(),
+        isProduction: target.name === "prod",
+      }))
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    return {
+      status: "fail",
+      detail: `Netlify check could not run: ${token ? message.split(token).join("[token]") : message}`,
+    };
+  }
+};

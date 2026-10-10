@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {
   checkNetlifyDeploy,
   netlifyApplicability,
+  resolveNetlifyResult,
   NETLIFY_API,
   NETLIFY_SITE,
 } from "../scripts/gateNetlify.mjs";
@@ -369,5 +370,90 @@ describe("GATE-001 G8 when the Netlify check applies", () => {
         detail: "not this project's Netlify site",
       });
     }
+  });
+});
+
+describe("GATE-001 resolveNetlifyResult always yields a result to record", () => {
+  const prod = {name: "prod", url: `https://${NETLIFY_SITE}`, local: false};
+  const never = async () => {
+    throw new Error("the check must not run");
+  };
+
+  it("records skip for a local target without running the check", async () => {
+    const result = await resolveNetlifyResult({
+      target: {name: "local", url: "http://127.0.0.1:4190", local: true},
+      token: TOKEN,
+      getIdentity: async () => identity,
+      check: never,
+    });
+
+    assert.equal(result.status, "skip");
+  });
+
+  it("records skip for a host that is not this project's site", async () => {
+    const result = await resolveNetlifyResult({
+      target: {name: "host-x", url: "https://other.example.com", local: false},
+      token: TOKEN,
+      getIdentity: async () => identity,
+      check: never,
+    });
+
+    assert.equal(result.status, "skip");
+  });
+
+  it("records manual without a token", async () => {
+    const result = await resolveNetlifyResult({
+      target: prod,
+      token: undefined,
+      getIdentity: async () => identity,
+    });
+
+    assert.equal(result.status, "manual");
+  });
+
+  it("passes the identity and production flag to the check", async () => {
+    let seen;
+    const result = await resolveNetlifyResult({
+      target: prod,
+      token: TOKEN,
+      getIdentity: async () => identity,
+      check: async (options) => {
+        seen = options;
+
+        return {status: "pass", detail: "ok"};
+      },
+    });
+
+    assert.equal(result.status, "pass");
+    assert.deepEqual(seen, {token: TOKEN, identity, isProduction: true});
+  });
+
+  it("records fail with the message when the check throws", async () => {
+    const result = await resolveNetlifyResult({
+      target: prod,
+      token: TOKEN,
+      getIdentity: async () => identity,
+      check: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+
+    assert.equal(result.status, "fail");
+    assert.match(result.detail, /socket hang up/);
+    assert.doesNotMatch(result.detail, new RegExp(TOKEN));
+  });
+
+  it("records fail when the identity cannot be read", async () => {
+    const result = await resolveNetlifyResult({
+      target: prod,
+      token: TOKEN,
+      getIdentity: async () => {
+        throw new Error("state.json unreadable");
+      },
+      check: never,
+    });
+
+    assert.equal(result.status, "fail");
+    assert.match(result.detail, /state\.json unreadable/);
   });
 });

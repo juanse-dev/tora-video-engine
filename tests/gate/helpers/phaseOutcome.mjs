@@ -83,7 +83,7 @@ const PHASE_A_FIELDS = ["reloadDetail", "profileMarker", "networkSummary"];
 /**
  * Whether phase `phase` of `state` passed, and if not, why. Every mandatory
  * result must be present and not failing, the phase must have finished with
- * Playwright exit code 0, and its Netlify check must not have failed ("skip"
+ * Playwright exit code 0, and its Netlify check must be recorded and not failed ("pass", "skip"
  * and "manual" are fine). A run with `--only` leaves mandatory results out and
  * so never passes.
  *
@@ -181,10 +181,15 @@ export const phaseOutcome = (state, phase) => {
     }
   }
 
+  // The runner records finishedAt and the exit code before it runs the
+  // Netlify step, so an interrupted run has everything else but this. pass,
+  // skip and manual are fine; fail and absent are not.
   const netlify = state.netlify?.[phase];
 
   if (netlify?.status === "fail") {
     fail(`Netlify check failed: ${netlify.detail}`);
+  } else if (!netlify && data) {
+    reasons.push("Netlify check not recorded");
   }
 
   return {passed: reasons.length === 0, failed, reasons};
