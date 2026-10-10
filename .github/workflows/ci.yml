@@ -61,6 +61,9 @@ jobs:
       - name: Verify required browser render golden
         run: npx playwright test --config=playwright.browser-render.config.mjs
 
+      - name: Verify local assets persist across reload, restart and a new build
+        run: npm run test:persistence
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

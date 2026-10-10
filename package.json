@@ -16,6 +16,7 @@
     "web:preview": "vite preview",
     "test:browser": "playwright test",
     "test:harness": "playwright test --config=playwright.harness.config.mjs",
+    "test:persistence": "playwright test --config=playwright.persistence.config.mjs",
     "test:cli-e2e": "node --experimental-strip-types --test tests/cli-local-assets.e2e.mjs"
   },
   "dependencies": {
