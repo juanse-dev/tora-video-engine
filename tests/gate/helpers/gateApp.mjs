@@ -45,7 +45,11 @@ export const BUNDLED_SCENE_SECONDS = 7.5;
 const clearDownloadHistory = (profileDir) =>
   Promise.all(
     ["History", "History-journal"].map((name) =>
-      rm(join(profileDir, "Default", name), {force: true}),
+      rm(join(profileDir, "Default", name), {
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      }),
     ),
   );
 

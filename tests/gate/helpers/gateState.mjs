@@ -9,7 +9,7 @@
 // Specs write into state.json through mergePhase / recordResult /
 // recordNetlify, never by editing the file themselves.
 
-import {mkdir, readFile, rm, writeFile} from "node:fs/promises";
+import {cp, mkdir, readFile, rm, stat, writeFile} from "node:fs/promises";
 import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {formatIdentity} from "./buildIdentity.mjs";
@@ -41,8 +41,7 @@ const RUN_HINT = "npm run gate -- --url=<target> --phase=<A|B>";
  * @param {string} slug
  * @param {string} [root]
  */
-export const targetDir = (slug, root = REPO_ROOT) =>
-  join(root, ".gate", slug);
+export const targetDir = (slug, root = REPO_ROOT) => join(root, ".gate", slug);
 
 /** @param {string} stateDir */
 export const statePaths = (stateDir) => ({
@@ -52,6 +51,7 @@ export const statePaths = (stateDir) => ({
   statePath: join(stateDir, "state.json"),
   reportPath: join(stateDir, "report.md"),
   networkPath: join(stateDir, "artifacts", "network.json"),
+  snapshotDir: join(stateDir, "profile-before-b"),
 });
 
 /**
@@ -233,7 +233,10 @@ export const recordResult = (stateDir, key, result) => {
 
   return updateState(stateDir, (state) => {
     /** @type {GateResult} */
-    const entry = {status: /** @type {any} */ (result.status), detail: result.detail};
+    const entry = {
+      status: /** @type {any} */ (result.status),
+      detail: result.detail,
+    };
 
     if (phase === "A" || phase === "B") {
       entry.phase = phase;
@@ -283,9 +286,10 @@ export const assertNewBuild = (stateA, identityB) => {
  * @param {string} stateDir
  * @param {string} key
  * @param {() => Promise<T>} run
+ * @param {{label?: string}} [options]  label prefixes the recorded detail (a step name)
  * @returns {Promise<T>}
  */
-export const recordFailureOf = async (stateDir, key, run) => {
+export const recordFailureOf = async (stateDir, key, run, {label} = {}) => {
   try {
     return await run();
   } catch (error) {
@@ -301,9 +305,108 @@ export const recordFailureOf = async (stateDir, key, run) => {
         .slice(0, 3)
         .join(" ");
 
-      await recordResult(stateDir, key, {status: "fail", detail: message});
+      await recordResult(stateDir, key, {
+        status: "fail",
+        detail: label ? `${label}: ${message}` : message,
+      });
     }
 
     throw error;
+  }
+};
+
+/**
+ * Runs `run`, retrying on the transient EBUSY/EPERM/ENOTEMPTY that Windows
+ * raises while Chrome (or an indexer) still holds a just-closed profile.
+ *
+ * @template T
+ * @param {() => Promise<T>} run
+ */
+const withRetries = async (run) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+
+      if (
+        attempt >= 5 ||
+        !["EBUSY", "EPERM", "ENOTEMPTY"].includes(code ?? "")
+      ) {
+        throw error;
+      }
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+    }
+  }
+};
+
+/**
+ * Phase B mutates the profile (it deletes the in-use pose in step 10), and
+ * phase A cannot be redone once Deploy B is live. So the first phase B run
+ * snapshots the profile (Chrome must be closed) and a rerun restores it first.
+ * Phase A deletes the snapshot with the rest of the dir.
+ *
+ * @param {string} stateDir
+ * @returns {Promise<{restored: boolean}>}
+ */
+export const prepareProfileForPhaseB = async (stateDir) => {
+  const {profileDir, snapshotDir} = statePaths(stateDir);
+  const exists = async (/** @type {string} */ path) =>
+    stat(path).then(
+      () => true,
+      () => false,
+    );
+
+  if (await exists(snapshotDir)) {
+    await withRetries(() => rm(profileDir, {recursive: true, force: true}));
+    await withRetries(() => cp(snapshotDir, profileDir, {recursive: true}));
+
+    return {restored: true};
+  }
+
+  if (!(await exists(profileDir))) {
+    throw new Error(
+      `There is no profile at ${profileDir} to snapshot for phase B. Run phase A first.`,
+    );
+  }
+
+  await withRetries(() => cp(profileDir, snapshotDir, {recursive: true}));
+
+  return {restored: false};
+};
+
+/**
+ * Why phase A cannot be trusted as the base for phase B, or null when it can.
+ *
+ * @param {Pick<GateState, "a" | "results">} state
+ * @returns {string | null}
+ */
+export const phaseAIncompleteReason = (state) => {
+  const reasons = [];
+
+  for (const field of ["reloadDetail", "profileMarker", "networkSummary"]) {
+    if (!state.a?.[field]) {
+      reasons.push(`state.a.${field} is missing`);
+    }
+  }
+
+  for (const [key, result] of Object.entries(state.results ?? {})) {
+    if (result.phase === "A" && result.status === "fail") {
+      reasons.push(`${key} failed: ${result.detail}`);
+    }
+  }
+
+  return reasons.length > 0 ? reasons.join("; ") : null;
+};
+
+/** @param {Pick<GateState, "a" | "results">} state */
+export const assertPhaseAPassed = (state) => {
+  const reason = phaseAIncompleteReason(state);
+
+  if (reason) {
+    throw new Error(
+      `Phase A did not pass (${reason}); rerun phase A before phase B`,
+    );
   }
 };

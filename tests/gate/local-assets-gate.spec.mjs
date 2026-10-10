@@ -37,12 +37,16 @@ import {
   STORAGE_KEY,
 } from "./helpers/gateApp.mjs";
 import {readPageBuildIdentity} from "./helpers/buildIdentity.mjs";
+import {forbiddenInExportedYaml} from "./helpers/exportedYaml.mjs";
 import {renderWithCli} from "./helpers/cliParity.mjs";
 import {
   assertNewBuild,
+  assertPhaseAPassed,
   mergePhase,
+  prepareProfileForPhaseB,
   readGateEnv,
   readState,
+  recordFailureOf,
   recordResult,
   statePaths,
 } from "./helpers/gateState.mjs";
@@ -82,19 +86,36 @@ const firstLines = (error) =>
     .slice(0, 3)
     .join(" ");
 
-/** A test.step whose failure is recorded under the report row `key`. */
+/**
+ * A test.step whose failure is recorded under the report row `key` (a more
+ * specific failure already recorded there is kept).
+ */
 const gateStep = (key, name, run) =>
-  test.step(name, async () => {
+  test.step(name, () =>
+    recordFailureOf(gate.stateDir, key, run, {label: name}),
+  );
+
+/**
+ * Cleanup that runs after the steps, pass or fail. It must never replace the
+ * error that failed the phase: failures are logged, and only thrown when the
+ * phase itself had passed.
+ */
+const cleanup = async (failed, steps) => {
+  let first = null;
+
+  for (const step of steps) {
     try {
-      return await run();
+      await step();
     } catch (error) {
-      await recordResult(gate.stateDir, key, {
-        status: "fail",
-        detail: `${name}: ${firstLines(error)}`,
-      });
-      throw error;
+      console.error(`gate cleanup failed: ${firstLines(error)}`);
+      first ??= error;
     }
-  });
+  }
+
+  if (first !== null && !failed) {
+    throw first;
+  }
+};
 
 const sessionSetup = async () => {
   const pose = await readFixture("pose-magenta.png");
@@ -185,13 +206,18 @@ const phaseA = async () => {
         const {page} = await setup.open();
 
         expect(envelope.version).toBe(1);
-        await openApp(page);
-        // A fresh profile has no project yet; store the v0.2 envelope, reload.
+        // Store the v0.2 envelope before the app's first load: a static file of
+        // the same origin (a bundled image, served by every target) gives the
+        // origin's localStorage without running the app, which would otherwise
+        // write its default Story first.
+        await page.goto("/characters/tora/formal.png", {
+          waitUntil: "domcontentloaded",
+        });
         await page.evaluate(
           ([key, value]) => localStorage.setItem(key, value),
           [STORAGE_KEY, envelopeRaw],
         );
-        await page.reload({waitUntil: "domcontentloaded"});
+        await openApp(page);
         await mutePlayer(page);
 
         // The Story from the envelope is active: title, scene count, caption.
@@ -342,10 +368,9 @@ const phaseA = async () => {
         const {text} = await exportActiveYaml(page);
 
         expect(localRefsIn(text)).toEqual([refs.pose, refs.background]);
-        expect(text).not.toMatch(/blob:|data:|file:|\\|[A-Za-z]:[\\/]/iu);
-        expect(text).not.toMatch(/[A-Za-z0-9+/=]{100,}/u);
-        expect(text).not.toContain("pose-magenta");
-        expect(text).not.toContain("background-cyan");
+        expect(
+          forbiddenInExportedYaml(text, ["pose-magenta", "background-cyan"]),
+        ).toEqual([]);
         exportedYamlPath = artifact("exported-story.yaml");
         await writeFile(exportedYamlPath, text);
       },
@@ -399,19 +424,22 @@ const phaseA = async () => {
     throw error;
   } finally {
     await setup.close().catch(() => {});
+    await cleanup(failed, [
+      async () => {
+        const violations = await finishNetwork(setup, "A:gate", "A");
 
-    const violations = await finishNetwork(setup, "A:gate", "A");
-
-    await mergePhase(gate.stateDir, "A", {
-      ...(browserInfo ? {browser: browserInfo} : {}),
-      refs,
-      profileMarker: token,
-      networkSummary: summarizeNetwork(setup.all),
-    });
-
-    if (!failed) {
-      expect(violations).toEqual([]);
-    }
+        if (!failed) {
+          expect(violations).toEqual([]);
+        }
+      },
+      () =>
+        mergePhase(gate.stateDir, "A", {
+          ...(browserInfo ? {browser: browserInfo} : {}),
+          refs,
+          profileMarker: token,
+          networkSummary: summarizeNetwork(setup.all),
+        }),
+    ]);
   }
 
   const reloadDetailA = `Phase A pass. The v0.2 envelope (version 1) restored and kept version 1 after a bundled caption edit; importing both fixtures through My assets made it version 2; reload and a full browser relaunch of the same profile kept Story, My assets and Player without re-import (blob: URLs rebuilt); the exported YAML has only the two refs; the browser MP4 (H.264, 1080x1920, 30 FPS, 360 frames, video only) shows the magenta pose and cyan/yellow background in scene 1. Deploy B pending.`;
@@ -437,7 +465,19 @@ const phaseB = async () => {
   const {pose, background, refs} = setup;
   const state = await readState(gate.stateDir);
   const artifact = (name) => join(paths.artifactsDir, name);
+  let yamlBefore;
   let failed = false;
+
+  // Before any browser: phase A must have passed, and the profile must be the
+  // one phase A left (a rerun restores it from the pre-B snapshot; phase B
+  // deletes the pose in step 10 and phase A cannot be redone).
+  assertPhaseAPassed(state);
+
+  const {restored} = await prepareProfileForPhaseB(gate.stateDir);
+
+  if (restored) {
+    await mergePhase(gate.stateDir, "B", {profileRestored: true});
+  }
 
   try {
     await gateStep(
@@ -474,8 +514,6 @@ const phaseB = async () => {
       },
     );
 
-    const yamlBefore = await readYaml(setup.current().page);
-
     await gateStep(
       "deleteReimport",
       "step 10: deleting the in-use pose warns, then shows the missing state",
@@ -483,6 +521,7 @@ const phaseB = async () => {
         const {page} = setup.current();
         const dialog = page.getByRole("dialog");
 
+        yamlBefore = await readYaml(page);
         await cardFor(page, "pose", pose.digest)
           .getByRole("button", {name: /^Delete /u})
           .click();
@@ -546,12 +585,15 @@ const phaseB = async () => {
     throw error;
   } finally {
     await setup.close().catch(() => {});
+    await cleanup(failed, [
+      async () => {
+        const violations = await finishNetwork(setup, "B:gate", "B");
 
-    const violations = await finishNetwork(setup, "B:gate", "B");
-
-    if (!failed) {
-      expect(violations).toEqual([]);
-    }
+        if (!failed) {
+          expect(violations).toEqual([]);
+        }
+      },
+    ]);
   }
 
   await recordResult(gate.stateDir, "deleteReimport", {
@@ -562,7 +604,7 @@ const phaseB = async () => {
 
   await recordResult(gate.stateDir, "reload", {
     status: "pass",
-    detail: `${state.a.reloadDetail.replace(/ Deploy B pending\.$/u, "")} Deploy B (a different build on the same origin, same profile): Story, My assets and Player came back without re-import and the render after Deploy B succeeded.`,
+    detail: `${state.a.reloadDetail.replace(/ Deploy B pending\.$/u, "")} Deploy B (a different build on the same origin, same profile): Story, My assets and Player came back without re-import and the render after Deploy B succeeded.${restored ? " Phase B rerun: profile restored from the pre-B snapshot." : ""}`,
     phase: "B",
   });
   await recordResult(gate.stateDir, "noUpload", {
@@ -577,14 +619,24 @@ test(`phase ${gate.phase}: ASSET-006 Part B on the deployed origin`, async () =>
     await (gate.phase === "A" ? phaseA() : phaseB());
   } catch (error) {
     // A step already recorded its own failure; this covers anything outside
-    // the steps (launching Chrome, for example) so the report still lists it.
-    const {results} = await readState(gate.stateDir);
+    // the steps (launching Chrome, a failed precondition) so the report still
+    // lists it. Only this phase's results count, and a failure here must not
+    // replace the original error.
+    try {
+      const {results} = await readState(gate.stateDir);
 
-    if (!Object.values(results).some((result) => result.status === "fail")) {
-      await recordResult(gate.stateDir, "gate", {
-        status: "fail",
-        detail: firstLines(error),
-      });
+      if (
+        !Object.values(results).some(
+          (result) => result.phase === gate.phase && result.status === "fail",
+        )
+      ) {
+        await recordResult(gate.stateDir, "gate", {
+          status: "fail",
+          detail: firstLines(error),
+        });
+      }
+    } catch (recordError) {
+      console.error(`could not record the failure: ${firstLines(recordError)}`);
     }
 
     throw error;

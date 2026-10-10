@@ -6,7 +6,10 @@ import {join} from "node:path";
 import {afterEach, beforeEach, describe, it} from "node:test";
 import {
   assertNewBuild,
+  assertPhaseAPassed,
   mergePhase,
+  phaseAIncompleteReason,
+  prepareProfileForPhaseB,
   readGateEnv,
   readState,
   recordFailureOf,
@@ -47,6 +50,7 @@ describe("GATE-001 G4 state directory", () => {
       statePath: join(stateDir, "state.json"),
       reportPath: join(stateDir, "report.md"),
       networkPath: join(stateDir, "artifacts", "network.json"),
+      snapshotDir: join(stateDir, "profile-before-b"),
     });
   });
 
@@ -270,5 +274,138 @@ describe("GATE-001 recordFailureOf", () => {
     );
 
     assert.equal((await readState(stateDir)).results.buildIdentity.detail, "listed violations");
+  });
+});
+
+describe("GATE-001 phase B profile snapshot", () => {
+  const writeProfile = async (files) => {
+    for (const [name, text] of Object.entries(files)) {
+      await mkdir(join(stateDir, "profile", ...name.split("/").slice(0, -1)), {
+        recursive: true,
+      });
+      await writeFile(join(stateDir, "profile", ...name.split("/")), text);
+    }
+  };
+  const read = (...parts) => readFile(join(stateDir, ...parts), "utf8");
+
+  beforeEach(async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+  });
+
+  it("snapshots the profile on the first phase B run", async () => {
+    await writeProfile({"marker": "m1", "Default/db": "one"});
+
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: false});
+    assert.equal(await read("profile-before-b", "marker"), "m1");
+    assert.equal(await read("profile-before-b", "Default", "db"), "one");
+    assert.equal(statePaths(stateDir).snapshotDir, join(stateDir, "profile-before-b"));
+  });
+
+  it("restores the profile from the snapshot on a rerun", async () => {
+    await writeProfile({"marker": "m1", "Default/db": "one"});
+    await prepareProfileForPhaseB(stateDir);
+
+    // What a failed phase B run leaves behind: a changed and a new file, a removed one.
+    await writeProfile({"Default/db": "changed", "Default/extra": "new"});
+    await rm(join(stateDir, "profile", "marker"));
+
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: true});
+    assert.equal(await read("profile", "marker"), "m1");
+    assert.equal(await read("profile", "Default", "db"), "one");
+    assert.equal(existsSync(join(stateDir, "profile", "Default", "extra")), false);
+
+    // The snapshot is kept for further reruns.
+    await writeProfile({"Default/db": "again"});
+    assert.deepEqual(await prepareProfileForPhaseB(stateDir), {restored: true});
+    assert.equal(await read("profile", "Default", "db"), "one");
+  });
+
+  it("fails clearly when there is no profile to snapshot", async () => {
+    await rm(join(stateDir, "profile"), {recursive: true});
+
+    await assert.rejects(prepareProfileForPhaseB(stateDir), /no profile/i);
+  });
+
+  it("phase A deletes the snapshot with the rest of the dir", async () => {
+    await writeProfile({marker: "m1"});
+    await prepareProfileForPhaseB(stateDir);
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+
+    assert.equal(existsSync(statePaths(stateDir).snapshotDir), false);
+  });
+});
+
+describe("GATE-001 phase B precondition", () => {
+  const passed = () => ({
+    a: {
+      reloadDetail: "Phase A pass.",
+      profileMarker: "token",
+      networkSummary: "0 non-GET request(s)",
+    },
+    results: {reload: {status: "pending", detail: "x", phase: "A"}},
+  });
+
+  it("is satisfied by a passed phase A", () => {
+    assert.equal(phaseAIncompleteReason(passed()), null);
+    assert.doesNotThrow(() => assertPhaseAPassed(passed()));
+  });
+
+  it("names every missing piece", () => {
+    const state = passed();
+
+    delete state.a.reloadDetail;
+    delete state.a.profileMarker;
+    delete state.a.networkSummary;
+
+    const reason = phaseAIncompleteReason(state);
+
+    assert.match(reason, /reloadDetail/);
+    assert.match(reason, /profileMarker/);
+    assert.match(reason, /networkSummary/);
+  });
+
+  it("names a failed phase A result", () => {
+    const state = passed();
+
+    state.results.cliParity = {status: "fail", detail: "boom", phase: "A"};
+
+    assert.match(phaseAIncompleteReason(state), /cliParity/);
+  });
+
+  it("ignores failures stamped for phase B", () => {
+    const state = passed();
+
+    state.results.deleteReimport = {status: "fail", detail: "x", phase: "B"};
+
+    assert.equal(phaseAIncompleteReason(state), null);
+  });
+
+  it("throws the fail-fast message", () => {
+    const state = passed();
+
+    delete state.a.profileMarker;
+
+    assert.throws(
+      () => assertPhaseAPassed(state),
+      /^Error: Phase A did not pass \(.*profileMarker.*\); rerun phase A before phase B$/,
+    );
+  });
+});
+
+describe("GATE-001 recordFailureOf label", () => {
+  it("prefixes the recorded detail with the label", async () => {
+    await startPhaseA({stateDir, target: "prod", url: URL_A});
+    await assert.rejects(
+      recordFailureOf(
+        stateDir,
+        "reload",
+        async () => {
+          throw new Error("boom");
+        },
+        {label: "step 5"},
+      ),
+    );
+
+    assert.equal((await readState(stateDir)).results.reload.detail, "step 5: boom");
   });
 });
