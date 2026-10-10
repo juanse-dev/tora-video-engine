@@ -32,10 +32,14 @@ Extend the visual editor's asset catalog so a user can import, apply, rename and
 | create | `src/web/components/MyAssetsSection.tsx` | One category's My assets block. |
 | create | `src/web/components/LocalAssetCard.tsx` | Card: thumbnail, label, origin badge, select, rename, delete. |
 | create | `src/web/components/MissingLocalAssetCard.tsx` | Missing/corrupt/unavailable current-selection card with repair actions. |
+| create | `src/web/localAssetPageController.ts` | Framework-free paging core behind `useLocalAssetPage` (R10). |
+| create | `src/web/localAssetImportFlow.ts`, `src/web/useLocalAssetImport.ts` | Import / Import matching file pipeline and its hook (one pipeline, phases, in-flight lock). |
+| create | `src/web/localAssetManageFlow.ts`, `src/web/useLocalAssetManage.ts` | Rename and delete flows and their hook. |
+| create | `src/web/components/AssetDialogHost.tsx` | Renders the open asset dialog outside the fieldset (R8). |
 | modify | `src/web/components/AssetCatalog.tsx` | Split each image category into **Bundled** and **My assets**. |
 | modify | `src/web/App.tsx` | Provide `AssetLibraryContext`. |
 | modify | `src/web/styles.css` | Styles for the new elements (reuse `.asset-card`, `.asset-grid`, `.transition-panel`). |
-| create | `tests/local-asset-ui.test.mjs`, `tests/browser/my-assets.spec.mjs`, `tests/browser/my-assets-render.spec.mjs` | Tests. |
+| create | `tests/local-asset-ui.test.mjs`, `tests/local-asset-page.test.mjs`, `tests/local-asset-flows.test.mjs`, `tests/browser/my-assets.spec.mjs`, `tests/browser/my-assets-render.spec.mjs` | Tests. |
 
 ## Interfaces
 
@@ -52,8 +56,8 @@ export type AssetLibraryContextValue = {
   localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
   setAssetImportInFlight: (inFlight: boolean) => void; // locks authoring during imports
   transitionPending: boolean;                          // App transition panel open → imports disabled
-  openAssetDialog: (dialog: AssetDialog) => void;      // rendered by App outside the fieldset
-  closeAssetDialog: () => void;
+  openAssetDialog: (dialog: AssetDialog) => boolean;   // rendered by App outside the fieldset; false = not opened (a transition panel or another asset dialog is open)
+  closeAssetDialog: () => void;                        // closes without running callbacks; for a mismatch dialog it also releases the import lock
 };
 
 export type AssetDialog =
@@ -98,6 +102,7 @@ Copy (exact strings, so tests can assert them):
 ~~~ts
 export const useLocalAssetPage = (
   category: LocalAssetCategory,
+  pinnedRef: LocalAssetRef | null = null, // the scene's current ref, loaded even when off the page (R9, R10)
 ): {
   entries: Array<LocalAssetEntry & {thumbnailUrl: string | null}>;
   total: number;
@@ -106,6 +111,10 @@ export const useLocalAssetPage = (
   next(): void;
   previous(): void;
   loading: boolean;
+  loaded: boolean;                 // a load has settled (no "empty" text before that)
+  error: string | null;
+  pinnedFor: LocalAssetRef | null; // the ref `pinned` describes
+  pinned: PinnedLocalAsset;        // none | loading | missing | error | present (R12)
 };
 ~~~
 
@@ -228,4 +237,6 @@ Rulings made while implementing (R1–R11):
 - **R9:** the Current card's ref is not repeated in the page grid (the page shows up to 50 others plus Current), because a duplicate selected card is confusing.
 - **R10:** `useLocalAssetPage(category, pinnedRef = null)` takes the pinned ref and delegates to the pure `localAssetPageController.ts`, which R9 needs and which can be unit-tested in Node.
 - **R11:** with a ready library, the Current card for any non-ready ref state (missing, corrupt or unavailable, for example a read failure) offers **Import matching file**; only a disabled or unavailable library hides actions, as the spec says.
+- **R12:** one fix wave after the final review: the Current card shows a neutral placeholder for the selected ref while its pin loads (no flicker on scene switch), a failed pin load becomes an `error` state shown as unavailable (never stuck loading) and a pinned entry is only used for the ref it was loaded for; while the library is opening the Current card says "Checking local assets…" instead of "unavailable"; `closeAssetDialog` also releases the import lock of a mismatch dialog; import labels get a visible keyboard focus outline; paging glyphs are `aria-hidden`; no "No imported …s yet." text before the first load settles.
+- **R13:** deferred to follow-ups: scene counts in the delete/missing copy use the Active Story, not the visual draft (the spec chose `activeStory`); no cancel for a stuck commit; a same-tab rename re-hashes (an ASSET-002 change); cancelling a browser render mid-encode ends in `cleanup-blocked` (pre-existing).
 - Deferred: the cross-category re-entrancy of imports and the Safari/Firefox focus restore after a dialog closes have no browser coverage.
