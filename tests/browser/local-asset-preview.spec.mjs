@@ -162,14 +162,41 @@ test("the Player does not advance while a local image is still loading", async (
     })
     .toBeGreaterThan(0);
 
-  await page.getByRole("button", {name: "Play video"}).click();
+  const playButton = page.getByRole("button", {name: "Play video"});
+  await expect(playButton).toBeVisible();
+  await playButton.click();
+  // Playback was requested; the Player only waits for the held images.
+  await expect(page.getByRole("button", {name: "Pause video"})).toBeVisible();
   await expect.poll(() => frameOf(page)).toBe(0);
   await page.waitForTimeout(500);
   expect(await frameOf(page)).toBe(0);
 
   await page.evaluate(() => window.__releaseBlobImages());
 
-  await expect.poll(() => frameOf(page), {timeout: 10_000}).toBeGreaterThan(0);
+  const playbackState = () =>
+    page.evaluate(() => ({
+      frame: document.querySelector("[data-tora-frame]")?.getAttribute("data-tora-frame"),
+      held: window.__heldBlobImages(),
+      images: [...document.querySelectorAll("img")]
+        .filter((image) => image.src.startsWith("blob:"))
+        .map((image) => ({
+          complete: image.complete,
+          naturalWidth: image.naturalWidth,
+        })),
+      playing: document.querySelector("button[aria-label='Pause video']") !== null,
+    }));
+
+  await expect
+    .poll(() => frameOf(page), {
+      message: "Player did not advance after the local images loaded",
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0)
+    .catch(async (error) => {
+      throw new Error(
+        `${error.message}\nPlayback state: ${JSON.stringify(await playbackState())}`,
+      );
+    });
 });
 
 test("a deleted background record shows a placeholder for that ref only and blocks render", async ({
