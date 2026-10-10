@@ -1,6 +1,6 @@
 # ASSET-002 — Image inspection, hashing and browser asset library
 
-> Status: **Proposed**
+> Status: **Implemented**. Shared header inspector and sha256Hex (reused by the CLI), INV-11 decoders, AssetLibraryStore with in-memory fake and IndexedDB adapter, import pipeline, integrity verifier and openAssetLibrary status; the adapter and the real import pipeline are verified in real Chrome by `npm run test:harness`.
 >
 > Depends on: ASSET-001. Read [README](./README.md) first (`INV-n`, constants, `D-n`).
 
@@ -359,17 +359,26 @@ Because verification requires `payloadMeta` to equal the real bytes, metadata-ba
 
 ## Tasks
 
-- [ ] **1. Fixtures and test helpers.** Create `tests/helpers/imageBytes.mjs` (crafted headers: valid minimal PNG/JPEG/WebP-VP8/VP8L/VP8X headers with chosen dimensions, APNG with `acTL`, VP8X with animation flag, VP8X static with an `ANIM` chunk, GIF/SVG/AVIF signatures, truncated variants, 8193-wide and 7072×7072 headers) and real decodable fixtures in `tests/fixtures/local-assets/`:
+- [x] **1. Fixtures and test helpers.** Create `tests/helpers/imageBytes.mjs` (crafted headers: valid minimal PNG/JPEG/WebP-VP8/VP8L/VP8X headers with chosen dimensions, APNG with `acTL`, VP8X with animation flag, VP8X static with an `ANIM` chunk, GIF/SVG/AVIF signatures, truncated variants, 8193-wide and 7072×7072 headers) and real decodable fixtures in `tests/fixtures/local-assets/`:
   - `pose-magenta.png` — 600×900 RGBA PNG, transparent background with an opaque magenta rectangle (generate in Node with `zlib.deflateSync` + `zlib.crc32`, via a committed script `tests/fixtures/local-assets/generate.mjs`);
   - `background-cyan.jpg` — 1080×1920 JPEG, top half cyan / bottom half yellow (generate in the same script by launching Playwright Chrome and using `OffscreenCanvas.convertToBlob({type: "image/jpeg"})`);
   - `background-noext` — a static WebP (same pattern as the JPEG, generated the same way) saved **without** extension;
   - `README.md` stating these are test-only and how to regenerate them.
   Commit the generated files; tests read them from disk.
-- [ ] **2. Image inspection + hashing.** `imageInspection.ts`, `hash.ts`, `tests/image-inspection.test.mjs`.
-- [ ] **3. Records, store interface, in-memory fake, library operations.** `records.ts`, `store.ts`, `library.ts`, `tests/helpers/memoryAssetStore.mjs`, `tests/asset-library.test.mjs`. The fake implements the exact semantics of §4 and counts reads per store (`reads.assets`, `reads.payloadMeta`, `reads.blobs`, `reads.thumbnails`), can inject raw values (to simulate corrupt rows) and can fail `apply` with a quota error.
-- [ ] **4. Import pipeline.** `importAsset.ts`, `thumbnails.ts`, more cases in `tests/asset-library.test.mjs` (inject `decode`/`makeThumbnail` fakes in Node).
-- [ ] **5. Integrity verification.** `integrity.ts`, `tests/asset-integrity.test.mjs`.
-- [ ] **6. IndexedDB adapter + coordination + harness.** `indexedDbStore.ts`, `coordination.ts`, harness page, `playwright.harness.config.mjs`, `tests/harness/asset-library-indexeddb.spec.mjs`, `package.json` script, CI step.
+- [x] **2. Image inspection + hashing.** `imageInspection.ts`, `hash.ts`, `tests/image-inspection.test.mjs`.
+- [x] **3. Records, store interface, in-memory fake, library operations.** `records.ts`, `store.ts`, `library.ts`, `tests/helpers/memoryAssetStore.mjs`, `tests/asset-library.test.mjs`. The fake implements the exact semantics of §4 and counts reads per store (`reads.assets`, `reads.payloadMeta`, `reads.blobs`, `reads.thumbnails`), can inject raw values (to simulate corrupt rows) and can fail `apply` with a quota error.
+- [x] **4. Import pipeline.** `importAsset.ts`, `thumbnails.ts`, more cases in `tests/asset-library.test.mjs` (inject `decode`/`makeThumbnail` fakes in Node).
+- [x] **5. Integrity verification.** `integrity.ts`, `tests/asset-integrity.test.mjs`.
+- [x] **6. IndexedDB adapter + coordination + harness.** `indexedDbStore.ts`, `coordination.ts`, harness page, `playwright.harness.config.mjs`, `tests/harness/asset-library-indexeddb.spec.mjs`, `package.json` script, CI step.
+
+### Implementation notes
+
+- `requestPersistentStorageOnce` lives in `coordination.ts` and is called by the import commit (fire-and-forget; it never delays or fails an import).
+- `LocalAssetLibraryError` (code `storage-full` or `storage-error`) lives in `store.ts`; its name is `"LocalAssetLibraryError"`, never `"QuotaExceededError"`. The import pipeline classifies storage-full by that code or by a `QuotaExceededError` name.
+- `renameLocalAsset` rejects an invalid label with an `Error` before taking the lock.
+- A blocked open resolves `openAssetLibrary` with the close-other-tabs `unavailable` status and later reports `ready` or `unavailable` through `onStatusChange`.
+- A VP8X chunk size must be exactly 10; any other size is `malformed`.
+- Thumbnails are PNG or WebP only (`THUMBNAIL_MIME_TYPES`); payloads may also be JPEG. Blobs returned by `loadThumbnailForDisplay` and `verifyPayload` are re-typed from the inspected bytes, not from the stored `Blob.type`.
 
 ## Tests
 

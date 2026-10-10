@@ -67,6 +67,9 @@ jobs:
       - name: Verify Player resource buffering
         run: npm run test:browser
 
+      - name: Verify asset library IndexedDB harness
+        run: npm run test:harness
+
       - name: Render PR smoke story
         if: github.event_name == 'pull_request'
         env:
