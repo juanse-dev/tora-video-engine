@@ -206,14 +206,19 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
           guard,
         );
 
+        // The golden context's own outcome, under a non-table key: the
+        // "noUpload" Record row belongs to the gate spec (T2).
         const violations = guard.violations();
 
+        await recordResult(
+          "goldenNetwork",
+          violations.length > 0 ? "fail" : "pass",
+          violations.length > 0
+            ? `WEB-007 golden context: ${violations.join("; ")}`
+            : `WEB-007 golden context: ${summarizeNetwork(guard)}`,
+        );
+
         if (violations.length > 0) {
-          await recordResult(
-            "noUpload",
-            "fail",
-            `WEB-007 golden context: ${violations.join("; ")}`,
-          );
           throw new Error(
             `Network guard violations in the WEB-007 golden context: ${violations.join("; ")}`,
           );
