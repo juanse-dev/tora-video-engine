@@ -45,6 +45,7 @@ Per-feature tests already live in their specs (inspection, library, integrity, r
   - delete of an in-use asset in A → B shows the missing card and placeholder;
   - the same file imported in A and B at nearly the same time → one card, one payload (check with the harness store or by counting cards).
 - [x] **A4. Release readiness.** Run every suite listed under Verify; tick all spec task lists; set every spec `Status` to **Implemented**; fill Part B's record table with "pending human gate". Then **stop and hand over to the user** for Part B.
+  - Note: ASSET-006's own Status stays "Part A implemented; Part B pending human gate" by design, and "Part A tasks A1–A4 pass" is confirmed by this PR's Linux CI.
 
 ### Verify
 
