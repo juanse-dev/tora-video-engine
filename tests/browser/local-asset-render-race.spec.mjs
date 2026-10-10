@@ -24,11 +24,26 @@ const requireRenderSupport = async (page) => {
   }
 };
 
-/** Opens page A with the seeded pose Story applied and ready to render. */
-const openPoseStory = async (context, duration = 1) => {
+/**
+ * Opens page A with the seeded pose Story applied and ready to render.
+ * `blindLockPoll` makes the page's render-lock availability poll report "free"
+ * (it only reads `navigator.locks.query`), so the Render button stays enabled
+ * while another tab holds the lock and a click reaches the transaction itself.
+ */
+const openPoseStory = async (
+  context,
+  duration = 1,
+  {blindLockPoll = false} = {},
+) => {
   const pose = await readFixture("pose-magenta.png");
   const poseRef = localAssetRef("pose", pose.digest);
   const pageA = await context.newPage();
+
+  if (blindLockPoll) {
+    await pageA.addInitScript(() => {
+      navigator.locks.query = async () => ({held: [], pending: []});
+    });
+  }
 
   await openSeeded(pageA, [fixtureRecord("pose", pose)]);
   await requireRenderSupport(pageA);
@@ -50,7 +65,9 @@ test("a busy render lock, then a pose deleted in another tab, blocks the retry w
 }) => {
   test.setTimeout(90_000);
 
-  const {pageA, poseRef} = await openPoseStory(context);
+  const {pageA, poseRef} = await openPoseStory(context, 1, {
+    blindLockPoll: true,
+  });
   const pageB = await context.newPage();
 
   await pageB.goto("/", {waitUntil: "domcontentloaded"});
@@ -69,24 +86,26 @@ test("a busy render lock, then a pose deleted in another tab, blocks the retry w
     RENDER_LOCK,
   );
 
-  // The page polls the lock once a second, so the button may already be
-  // disabled; either way the busy message must show and nothing may render.
-  await pageA
-    .getByRole("button", {name: "Render MP4"})
-    .click({timeout: 1_500})
-    .catch(() => {});
+  // The poll is blind, so the button is enabled and the click reaches
+  // startBrowserRenderTransaction, whose non-blocking lock request is refused.
+  const renderButton = pageA.getByRole("button", {name: "Render MP4"});
+
+  await expect(renderButton).toBeEnabled();
+  await renderButton.click();
   await expect(pageA.locator(".render-banner")).toContainText(
-    "Another Tora tab owns the browser render lock.",
+    /Another Tora tab (is rendering|owns the browser render lock)\./u,
     {timeout: 10_000},
   );
+  await expect(pageA.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "idle",
+  );
+  expect(await listRemotionOpfsEntries(pageA)).toEqual([]);
 
   await deleteAssetRows(pageB, [poseRef]);
   await pageB.evaluate(() => window.__releaseRenderLock());
 
-  const renderButton = pageA.getByRole("button", {name: "Render MP4"});
-
-  // The lock poll re-enables the button once tab B released the render lock.
-  await expect(renderButton).toBeEnabled({timeout: 10_000});
+  await expect(renderButton).toBeEnabled();
   await renderButton.click();
 
   await expect(pageA.locator(".render-banner")).toContainText(
@@ -104,7 +123,7 @@ test("a pose deleted after the render started does not affect it, and shows as m
 }) => {
   test.setTimeout(180_000);
 
-  const {pageA, poseRef} = await openPoseStory(context, 10);
+  const {pageA, poseRef} = await openPoseStory(context, 3);
   const pageB = await context.newPage();
 
   await pageB.goto("/", {waitUntil: "domcontentloaded"});
@@ -117,6 +136,12 @@ test("a pose deleted after the render started does not affect it, and shows as m
   ).toBeVisible({timeout: 30_000});
 
   await deleteAssetRows(pageB, [poseRef]);
+
+  // The deletion must land inside the render window, or the test proves nothing.
+  await expect(pageA.locator(".app-shell")).toHaveAttribute(
+    "data-render-state",
+    "rendering",
+  );
 
   const download = await downloadPromise;
   const path = await download.path();
