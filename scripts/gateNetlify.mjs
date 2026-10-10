@@ -6,7 +6,8 @@
 //
 // It asserts the deploy is "ready", that its commit_ref matches the page's
 // commit and, for production, that it is the site's published deploy. It also
-// records whether the deploy has Functions. It only ever issues GET, and the
+// records whether the deploy has Functions (not Edge Functions: those stay a
+// manual Netlify UI check). It only ever issues GET, and the
 // token never leaves the Authorization header (it is not in any result).
 
 import {URL} from "node:url";
@@ -141,7 +142,10 @@ export const checkNetlifyDeploy = async ({
     }
 
     const functions = countFunctions(deploy);
-    const functionsText = `Functions: ${functions === 0 ? "none" : functions}`;
+    // Only the Functions fields above are read. Edge Functions are not
+    // checked (their API field names are not relied on), so say so instead of
+    // letting "Functions: none" read as "no Edge Functions either".
+    const functionsText = `Functions: ${functions === 0 ? "none" : functions}; Edge Functions: not checked (confirm in the Netlify UI)`;
     const failed = checks.filter(({ok}) => !ok);
 
     return {

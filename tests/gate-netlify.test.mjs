@@ -206,6 +206,27 @@ describe("GATE-001 G8 Netlify check", () => {
     assert.match(result.detail, /Functions: 1/);
   });
 
+  it("says Edge Functions are not checked, whatever the Functions count", async () => {
+    for (const deploy of [
+      readyDeploy(),
+      readyDeploy({available_functions: [{n: "a"}]}),
+    ]) {
+      const {fetch} = fakeNetlify({site: publishedSite(), deploy});
+      const result = await checkNetlifyDeploy({
+        token: TOKEN,
+        identity,
+        isProduction: true,
+        fetch,
+      });
+
+      assert.equal(result.status, "pass");
+      assert.match(
+        result.detail,
+        /Edge Functions: not checked \(confirm in the Netlify UI\)/,
+      );
+    }
+  });
+
   it("reports manual when there is no token and makes no request", async () => {
     const {fetch, calls} = fakeNetlify({site: publishedSite(), deploy: readyDeploy()});
 
