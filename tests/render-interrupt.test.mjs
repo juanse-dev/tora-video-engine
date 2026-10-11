@@ -404,6 +404,50 @@ describe("renderStory interruption", () => {
     assert.deepEqual(await readdir(tempBase), []);
   });
 
+  for (const [label, runnerFails] of [
+    ["a finished render", false],
+    ["a failed render", true],
+  ]) {
+    it(`discards ${label} when a signal arrives during the final cleanup`, async () => {
+      const {storyPath, tempBase, outputPath} = await setup();
+      const signals = makeSignals();
+      const removed = [];
+
+      const error = await settle(
+        renderStory(storyPath, {
+          tempBase,
+          runRemotion: async (_executable, args, control) => {
+            const child = makeChild();
+
+            control.attach(child);
+            await mkdir(dirname(args[4]), {recursive: true});
+            await writeFile(args[4], "video");
+            child.emit("close", runnerFails ? 1 : 0, null);
+
+            if (runnerFails) {
+              throw new Error("Remotion render failed with exit code 1");
+            }
+          },
+          // The signal lands while the temporary directory is being removed.
+          removeDirectory: async (path, options) => {
+            signals.emit("SIGINT");
+            // Still installed: the signal must not hit the default handler.
+            removed.push(signals.listenerCount("SIGINT"));
+            await rm(path, options);
+          },
+          interrupt: {signals, timers: makeTimers(), platform: "linux"},
+        }),
+      );
+
+      assert.ok(error instanceof RenderInterruptedError);
+      assert.equal(error.exitCode, 130);
+      assert.deepEqual(removed, [1]);
+      assert.equal(await exists(outputPath), false);
+      assert.deepEqual(await readdir(tempBase), []);
+      assert.equal(signals.listenerCount("SIGINT"), 0);
+    });
+  }
+
   it("removes the handlers when the render fails", async () => {
     const {storyPath, tempBase} = await setup();
     const signals = makeSignals();

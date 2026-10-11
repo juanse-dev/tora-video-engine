@@ -43,6 +43,11 @@ export type RenderStoryDeps = {
   spawn?: typeof spawn;
   /** Signal source, platform and timers for Ctrl+C handling (tests). */
   interrupt?: InterruptGuardOptions;
+  /** Replaces `fs.rm` for the temporary directory (tests). */
+  removeDirectory?: (
+    path: string,
+    options: {recursive: true; force: true},
+  ) => Promise<void>;
 };
 
 const createRunRemotionProcess =
@@ -95,52 +100,66 @@ export const renderStory = async (
   // so a signal at any point in between still ends in the cleanup below.
   const guard = createInterruptGuard(deps.interrupt);
 
-  try {
-    let props: Record<string, unknown> = {story};
-    let publicDir: string | undefined;
-
-    if (storyHasLocalAssetRefs(story)) {
-      // Bundled-only Stories never reach this branch, so the root is not
-      // required for them and their command line is unchanged.
-      publicDir = join(temporaryDirectory, "public");
-      await cp("public", publicDir, {recursive: true});
-
-      const staged = await stageLocalAssetsForStory(story, {
-        root: deps.localAssetsRoot ?? getLocalAssetsRoot(),
-        publicDir,
-      });
-
-      props = {story, localAssetSources: staged.sources};
-    }
-
-    await writeFile(propsPath, JSON.stringify(props), "utf8");
-    guard.throwIfInterrupted();
-
-    try {
-      await runRemotion(
-        getRemotionExecutable(),
-        buildRenderArgs(outputPath, propsPath, publicDir),
-        guard,
-      );
-      // An interrupt wins even if the child finished first: the output of an
-      // interrupted run is not kept.
-      guard.throwIfInterrupted();
-    } catch (error) {
+  // A signal that lands after the last check (while the temporary directory
+  // is being removed) still ends the run as interrupted: the output goes.
+  const failIfInterrupted = async (): Promise<void> => {
+    if (guard.signal !== null) {
       await rm(outputPath, {force: true});
-      // The child's own failure (killed by the signal) is not the story.
       guard.throwIfInterrupted();
-      throw error;
     }
+  };
 
-    return outputPath;
-  } finally {
+  try {
     try {
-      await rm(temporaryDirectory, {
+      let props: Record<string, unknown> = {story};
+      let publicDir: string | undefined;
+
+      if (storyHasLocalAssetRefs(story)) {
+        // Bundled-only Stories never reach this branch, so the root is not
+        // required for them and their command line is unchanged.
+        publicDir = join(temporaryDirectory, "public");
+        await cp("public", publicDir, {recursive: true});
+
+        const staged = await stageLocalAssetsForStory(story, {
+          root: deps.localAssetsRoot ?? getLocalAssetsRoot(),
+          publicDir,
+        });
+
+        props = {story, localAssetSources: staged.sources};
+      }
+
+      await writeFile(propsPath, JSON.stringify(props), "utf8");
+      guard.throwIfInterrupted();
+
+      try {
+        await runRemotion(
+          getRemotionExecutable(),
+          buildRenderArgs(outputPath, propsPath, publicDir),
+          guard,
+        );
+        // An interrupt wins even if the child finished first: the output of
+        // an interrupted run is not kept.
+        guard.throwIfInterrupted();
+      } catch (error) {
+        await rm(outputPath, {force: true});
+        // The child's own failure (killed by the signal) is not the story.
+        guard.throwIfInterrupted();
+        throw error;
+      }
+    } finally {
+      await (deps.removeDirectory ?? rm)(temporaryDirectory, {
         recursive: true,
         force: true,
       });
-    } finally {
-      guard.dispose();
     }
+
+    await failIfInterrupted();
+
+    return outputPath;
+  } catch (error) {
+    await failIfInterrupted();
+    throw error;
+  } finally {
+    guard.dispose();
   }
 };
