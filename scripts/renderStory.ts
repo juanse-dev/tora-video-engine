@@ -17,12 +17,19 @@ import {
   getOutputPath,
   getRemotionExecutable,
 } from "./renderSupport.ts";
+import {
+  createInterruptGuard,
+  type InterruptGuardOptions,
+  type RenderControl,
+} from "./interrupt.ts";
 import {storyHasLocalAssetRefs} from "../src/localAssets/readiness.ts";
 import {loadStory} from "../src/story/loadStory.ts";
 
 export type RunRemotion = (
   executable: string,
   args: string[],
+  /** Lets the interrupt guard reach the child; fakes may ignore it. */
+  control: RenderControl,
 ) => Promise<void>;
 
 export type RenderStoryDeps = {
@@ -32,38 +39,47 @@ export type RenderStoryDeps = {
   tempBase?: string;
   /** Overrides `TORA_LOCAL_ASSETS_ROOT` / `local-assets`. */
   localAssetsRoot?: string;
+  /** Replaces `child_process.spawn` in the real runner (tests). */
+  spawn?: typeof spawn;
+  /** Signal source, platform and timers for Ctrl+C handling (tests). */
+  interrupt?: InterruptGuardOptions;
 };
 
-const runRemotionProcess: RunRemotion = async (executable, args) => {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn(executable, args, {
-      stdio: "inherit",
+const createRunRemotionProcess =
+  (spawnProcess: typeof spawn): RunRemotion =>
+  async (executable, args, control) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const child = spawnProcess(executable, args, {
+        stdio: "inherit",
+      });
+
+      control.attach(child);
+
+      child.once("error", rejectPromise);
+      child.once("close", (code, signal) => {
+        if (code === 0) {
+          resolvePromise();
+          return;
+        }
+
+        const reason =
+          signal === null
+            ? `exit code ${code ?? "unknown"}`
+            : `signal ${signal}`;
+
+        rejectPromise(
+          new Error(`Remotion render failed with ${reason}`),
+        );
+      });
     });
-
-    child.once("error", rejectPromise);
-    child.once("close", (code, signal) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-
-      const reason =
-        signal === null
-          ? `exit code ${code ?? "unknown"}`
-          : `signal ${signal}`;
-
-      rejectPromise(
-        new Error(`Remotion render failed with ${reason}`),
-      );
-    });
-  });
-};
+  };
 
 export const renderStory = async (
   storyPath: string,
   deps: RenderStoryDeps = {},
 ): Promise<string> => {
-  const runRemotion = deps.runRemotion ?? runRemotionProcess;
+  const runRemotion =
+    deps.runRemotion ?? createRunRemotionProcess(deps.spawn ?? spawn);
   const outputPath = getOutputPath(storyPath);
 
   await mkdir(dirname(outputPath), {recursive: true});
@@ -75,6 +91,9 @@ export const renderStory = async (
     join(deps.tempBase ?? tmpdir(), "tora-video-engine-"),
   );
   const propsPath = join(temporaryDirectory, "props.json");
+  // Installed once the directory exists and removed only after it is gone,
+  // so a signal at any point in between still ends in the cleanup below.
+  const guard = createInterruptGuard(deps.interrupt);
 
   try {
     let props: Record<string, unknown> = {story};
@@ -95,22 +114,33 @@ export const renderStory = async (
     }
 
     await writeFile(propsPath, JSON.stringify(props), "utf8");
+    guard.throwIfInterrupted();
 
     try {
       await runRemotion(
         getRemotionExecutable(),
         buildRenderArgs(outputPath, propsPath, publicDir),
+        guard,
       );
+      // An interrupt wins even if the child finished first: the output of an
+      // interrupted run is not kept.
+      guard.throwIfInterrupted();
     } catch (error) {
       await rm(outputPath, {force: true});
+      // The child's own failure (killed by the signal) is not the story.
+      guard.throwIfInterrupted();
       throw error;
     }
 
     return outputPath;
   } finally {
-    await rm(temporaryDirectory, {
-      recursive: true,
-      force: true,
-    });
+    try {
+      await rm(temporaryDirectory, {
+        recursive: true,
+        force: true,
+      });
+    } finally {
+      guard.dispose();
+    }
   }
 };
