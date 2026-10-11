@@ -209,8 +209,10 @@ const assertEncodedCaptionGeometry = ({
     );
   const bands = brightTextBands(frame, scan, boundaries);
 
-  // Every caption line has encoded text in its own rows.
-  expect(bands).toHaveLength(expectation.lineCount);
+  // Each DOM line window holds encoded text. The windows run to the midpoint
+  // between neighbouring line boxes, so a whole-block shift of less than half
+  // a line pitch still passes here; the per-line golden (assertEncodedCaption
+  // in browser-render-golden.spec.mjs) checks exact positions.
   expect(bands.every((band) => band !== null)).toBe(true);
 
   const bounds = bands.map((band) =>
