@@ -3,7 +3,6 @@ import type {
   LocalAssetCategory,
   LocalAssetRef,
 } from "../localAssets/refs.ts";
-import type {Story} from "../story/types.ts";
 import type {
   AssetLibraryMessage,
   AssetLibraryStatus,
@@ -50,7 +49,6 @@ export type AssetLibraryContextValue = {
   channel: {post(m: AssetLibraryMessage): void};
   refreshToken: number; // ASSET-004; bump to refetch pages
   bumpRefresh: () => void;
-  activeStory: Story; // for delete-in-use counts
   localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
   setAssetImportInFlight: (inFlight: boolean) => void; // locks authoring during imports
   transitionPending: boolean; // App transition panel open -> imports disabled

@@ -1575,3 +1575,46 @@ test("while a rename is being saved, Cancel, Escape and the input are locked, an
     card.getByRole("button", {name: "Rename Held name", exact: true}),
   ).toBeEnabled();
 });
+
+test("the delete warning and the missing card count the pending visual draft, not just the Active Story (#38)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await applyYaml(page, twoSceneStory());
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  // An empty duration makes the draft invalid: it stays pending and the
+  // Active Story keeps scene 1 on the bundled pose.
+  await page.getByLabel("Duration (seconds)").fill("");
+  await expect(page.locator("[data-editor-status]")).toHaveAttribute(
+    "data-editor-status",
+    "schema-invalid",
+  );
+
+  const card = cardFor(page, "pose", pose.digest);
+
+  await card.locator("button[aria-pressed]").click();
+  await expect(card.locator("button[aria-pressed]")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // The user is looking at a draft whose scene 1 uses the asset.
+  const dialog = page.getByRole("dialog");
+
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await expect(dialog).toContainText(
+    '"My cat" (pose) is used by 1 scene in this Story.',
+  );
+  await expect(
+    dialog.getByRole("button", {name: "Delete asset anyway"}),
+  ).toBeVisible();
+  await dialog.getByRole("button", {name: "Delete asset anyway"}).click();
+  await expect(dialog).toHaveCount(0);
+
+  // The missing card names the draft's scene too.
+  await expect(missingCard(page, ref)).toContainText("Used by scene 1.");
+});

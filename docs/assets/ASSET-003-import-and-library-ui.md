@@ -19,8 +19,9 @@ Extend the visual editor's asset catalog so a user can import, apply, rename and
   - Import buttons (including Import matching file) are disabled while an App transition panel (`transition !== null`) or any asset dialog is open, so an import can never start under a pending Reset/mode transition.
   - Defensively, the confirmation buttons of App transition panels are disabled while `assetImportInFlight` is true.
   - The mismatch dialog is part of the import: `assetImportInFlight` stays true until the user picks **Use it as replacement** or **Cancel**. Its buttons stay enabled because the dialog is rendered outside the disabled fieldset; every other authoring control stays locked until the choice is made.
-  - The delete dialog's confirm button is disabled while `renderAuthoringLocked || assetImportInFlight` is true (not `authoringLocked`, which the dialog itself sets). Its `sceneCount` is computed when the dialog opens and stays valid because the Story is frozen while it is open.
+  - The delete dialog's confirm button is disabled while `renderAuthoringLocked || assetImportInFlight` is true (not `authoringLocked`, which the dialog itself sets). Its `sceneCount` is computed when the dialog opens and stays valid because the Story is frozen while it is open. It counts the scenes the user is looking at (see **Scene counts** below).
 - The library handle is shared through a React context so `VisualEditor` does not need new props.
+- **Scene counts follow what the user is looking at.** The delete warning's `sceneCount` and the missing card's `Used by scene(s) …` come from the scenes of the visual editor's draft, not from the Active Story. The draft equals the Active Story unless a draft is pending (invalid, or rejected by the browser policy and not yet applied); a pending draft can already use a ref (for example after clicking a My assets card while another field is invalid) that the Active Story does not, and the warning must not under-count it. `VisualEditor` passes its draft scenes to the catalog, which passes them to each `MyAssetsSection`; the context no longer carries `activeStory`. Only the visual editor shows My assets. A raw YAML text draft is never counted: it is not shown next to My assets, and a text buffer that does not parse has no scenes to count, so the visual editor's scenes (the Active Story's, after a transition) apply.
 
 ## Files
 
@@ -52,7 +53,6 @@ export type AssetLibraryContextValue = {
   channel: {post(m: AssetLibraryMessage): void};
   refreshToken: number;                 // ASSET-004; bump to refetch pages
   bumpRefresh: () => void;
-  activeStory: Story;                   // for delete-in-use counts
   localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
   setAssetImportInFlight: (inFlight: boolean) => void; // locks authoring during imports
   transitionPending: boolean;                          // App transition panel open → imports disabled
@@ -72,8 +72,15 @@ export const AssetLibraryContext = createContext<AssetLibraryContextValue | null
 ### `src/web/localAssetUi.ts`
 
 ~~~ts
-/** Number of scenes in the Active Story whose pose or background equals ref. */
-export const countScenesUsingRef = (story: Story, ref: LocalAssetRef): number;
+/** What a count needs from a scene: a Story scene and a visual draft scene both fit. */
+export type SceneAssetValues = {pose: string; background: string};
+
+/**
+ * Number of scenes whose pose or background equals ref. Callers pass the visual
+ * draft's scenes (the scenes the user is looking at), not the Active Story.
+ */
+export const countScenesUsingRef = (story: {scenes: readonly SceneAssetValues[]}, ref: LocalAssetRef): number;
+export const sceneNumbersUsingRef: (story: {scenes: readonly SceneAssetValues[]}, ref: LocalAssetRef) => number[]; // 1-based
 
 export type MatchingFileResult =
   | {kind: "match"}                               // same category + same digest
@@ -179,7 +186,7 @@ Reset project, YAML import/apply, editor mode switches, and Story deletion of sc
 
 `tests/local-asset-ui.test.mjs`
 
-- `countScenesUsingRef` counts scenes (not fields) and ignores the other category's ref with the same digest;
+- `countScenesUsingRef` counts scenes (not fields) and ignores the other category's ref with the same digest; it counts visual-draft-shaped scenes (a ref the Active Story lacks) the same way;
 - `evaluateMatchingFile`: same ref → `match`; same digest other category → `different`; other digest → `different`;
 - every copy function returns the exact strings above (including singular/plural handling chosen in implementation).
 
@@ -199,6 +206,7 @@ Reset project, YAML import/apply, editor mode switches, and Story deletion of sc
 - 120 seeded pose rows: first page shows 50 cards, count shows 120, Next/Previous work, and (instrumented init script) no `blobs` reads and no `getAll` on `assets`;
 - during an MP4 render, import/rename/delete/select controls are disabled (fieldset);
 - Import matching file with a different fixture while the digest is held: after release the mismatch dialog's buttons are enabled (outside the fieldset) while scene controls stay disabled; both **Use it as replacement** and **Cancel** unlock authoring afterwards;
+- with a pending (invalid) visual draft whose scene uses an asset the Active Story does not, the delete dialog counts that scene and, after confirming, the missing card says `Used by scene 1.`;
 - while a delete dialog is open, scene add/move/delete/select, Open YAML and Reset are disabled, and Cancel/confirm in the dialog work;
 - with the Reset (or Open YAML) transition panel open, import buttons are disabled; with an import in flight, transition panel confirmation buttons are disabled;
 - during an import (hold it with an init script that wraps `crypto.subtle.digest` in a promise released by `window.__releaseDigest()`), scene add/move/delete/select, Open YAML, Reset and Render are disabled; after release the imported ref lands on the scene that was selected when the import started;
