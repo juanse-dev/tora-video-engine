@@ -28,6 +28,9 @@ export const importPhaseText = (phase: ImportPhase): string => {
   }
 };
 
+/** Neutral notice after the user cancelled a commit that was waiting for the library lock. */
+export const IMPORT_CANCELLED_MESSAGE = "Import cancelled.";
+
 export const importSuccessText = (label: string, created: boolean): string =>
   created
     ? `Imported "${label}".`
@@ -107,13 +110,35 @@ export type CommitImportResult =
       label: string;
       message: string;
     }
-  | {ok: false; message: string; error: unknown};
+  | {
+      ok: false;
+      message: string;
+      error: unknown;
+      /** The user cancelled while the commit waited for the lock; nothing was written and `message` is a notice, not an error. */
+      cancelled?: true;
+    };
 
-/** The "storing" phase plus the exclusive-lock commit; never throws. */
+/**
+ * Hands the caller a function that cancels the commit, or `null` once it can no
+ * longer be cancelled. The commit is cancellable only while it waits for the
+ * exclusive library lock; the UI shows Cancel exactly while this holds a function.
+ */
+export type CommitCancelable = (cancel: (() => void) | null) => void;
+
+/**
+ * The "storing" phase plus the exclusive-lock commit; never throws. `signal`
+ * cancels the commit only while it waits for the lock (`onLockAcquired` fires
+ * when that is over); a cancel ends as `{ok: false, cancelled: true}`.
+ */
 export const commitPreparedImport = async (
   prepared: PreparedLocalAssetImport,
   library: AssetLibrary,
-  options: {onPhase?: (phase: ImportPhase) => void; deps?: ImportFlowDeps} = {},
+  options: {
+    onPhase?: (phase: ImportPhase) => void;
+    deps?: ImportFlowDeps;
+    signal?: AbortSignal;
+    onLockAcquired?: () => void;
+  } = {},
 ): Promise<CommitImportResult> => {
   try {
     options.onPhase?.("storing");
@@ -121,7 +146,11 @@ export const commitPreparedImport = async (
     const {ref, created} = await commitPreparedLocalAssetImport(
       prepared,
       library,
-      options.deps,
+      {
+        ...options.deps,
+        signal: options.signal,
+        onLockAcquired: options.onLockAcquired,
+      },
     );
     let label = prepared.defaultLabel;
 
@@ -146,7 +175,59 @@ export const commitPreparedImport = async (
       message: importSuccessText(label, created),
     };
   } catch (error) {
+    if (error instanceof LocalAssetImportError && error.code === "cancelled") {
+      return {
+        ok: false,
+        message: IMPORT_CANCELLED_MESSAGE,
+        error,
+        cancelled: true,
+      };
+    }
+
     return {ok: false, message: describeImportFailure(error), error};
+  }
+};
+
+/**
+ * commitPreparedImport with a Cancel affordance: `onCancelable` gets the cancel
+ * function as the commit starts waiting for the lock and `null` as soon as the
+ * lock is granted or the commit ends (exactly once). Without `onCancelable` the
+ * commit simply cannot be cancelled.
+ */
+const commitWithCancel = async (
+  prepared: PreparedLocalAssetImport,
+  library: AssetLibrary,
+  options: {
+    onPhase?: (phase: ImportPhase) => void;
+    deps?: ImportFlowDeps;
+    onCancelable?: CommitCancelable;
+  },
+): Promise<CommitImportResult> => {
+  const {onCancelable, ...rest} = options;
+
+  if (onCancelable === undefined) {
+    return commitPreparedImport(prepared, library, rest);
+  }
+
+  const controller = new AbortController();
+  let offered = true;
+  const withdraw = () => {
+    if (offered) {
+      offered = false;
+      onCancelable(null);
+    }
+  };
+
+  onCancelable(() => controller.abort());
+
+  try {
+    return await commitPreparedImport(prepared, library, {
+      ...rest,
+      signal: controller.signal,
+      onLockAcquired: withdraw,
+    });
+  } finally {
+    withdraw();
   }
 };
 
@@ -161,6 +242,7 @@ export const runLocalAssetImport = ({
   setInFlight,
   apply,
   onPhase,
+  onCancelable,
   deps,
 }: {
   file: File;
@@ -170,6 +252,8 @@ export const runLocalAssetImport = ({
   /** Applies the imported ref to the selected scene (App's onChange path). */
   apply: (ref: LocalAssetRef) => void;
   onPhase?: (phase: ImportPhase) => void;
+  /** Offers Cancel while "Saving…" waits for the library lock (see CommitCancelable). */
+  onCancelable?: CommitCancelable;
   deps?: ImportFlowDeps;
 }): Promise<CommitImportResult> =>
   withImportLock(setInFlight, async () => {
@@ -179,9 +263,10 @@ export const runLocalAssetImport = ({
       return prepared;
     }
 
-    const committed = await commitPreparedImport(prepared.prepared, library, {
+    const committed = await commitWithCancel(prepared.prepared, library, {
       onPhase,
       deps,
+      onCancelable,
     });
 
     if (committed.ok) {
@@ -200,11 +285,15 @@ export type MismatchDialog = Extract<AssetDialog, {kind: "mismatch"}>;
 export type MatchingFileDialogResult =
   | {kind: "replaced"; message: string}
   | {kind: "cancelled"}
+  /** The user cancelled "Use it as replacement" while it waited for the lock; nothing was written. */
+  | {kind: "commit-cancelled"; message: string}
   | {kind: "failed"; message: string};
 
 export type MatchingFileOutcome =
   | {kind: "restored"; ref: LocalAssetRef; message: string}
   | {kind: "failed"; message: string; error?: unknown}
+  /** The user cancelled the commit while it waited for the lock; nothing was written. */
+  | {kind: "cancelled"; message: string}
   /** The mismatch dialog is open and owns the import lock until the user chooses. */
   | {kind: "dialog"};
 
@@ -226,6 +315,7 @@ export const runMatchingFileImport = ({
   openMismatchDialog,
   apply,
   onPhase,
+  onCancelable,
   onDialogSettled,
   deps,
 }: {
@@ -238,6 +328,8 @@ export const runMatchingFileImport = ({
   openMismatchDialog: (dialog: MismatchDialog) => boolean;
   apply: (ref: LocalAssetRef) => void;
   onPhase?: (phase: ImportPhase) => void;
+  /** Offers Cancel while a commit (the exact file, or the replacement) waits for the library lock. */
+  onCancelable?: CommitCancelable;
   onDialogSettled?: (result: MatchingFileDialogResult) => void;
   deps?: ImportFlowDeps;
 }): Promise<MatchingFileOutcome> =>
@@ -256,14 +348,22 @@ export const runMatchingFileImport = ({
       );
 
       if (evaluation.kind === "match") {
-        const committed = await commitPreparedImport(
+        const committed = await commitWithCancel(
           prepared.prepared,
           library,
-          {onPhase, deps},
+          {onPhase, deps, onCancelable},
         );
 
-        return committed.ok
-          ? {kind: "restored", ref: committed.ref, message: committed.message}
+        if (committed.ok) {
+          return {
+            kind: "restored",
+            ref: committed.ref,
+            message: committed.message,
+          };
+        }
+
+        return committed.cancelled
+          ? {kind: "cancelled", message: committed.message}
           : {kind: "failed", message: committed.message, error: committed.error};
       }
 
@@ -271,11 +371,22 @@ export const runMatchingFileImport = ({
         kind: "mismatch",
         candidateRef: evaluation.candidateRef,
         onReplace: async () => {
-          const committed = await commitPreparedImport(
+          const committed = await commitWithCancel(
             prepared.prepared,
             library,
-            {onPhase, deps},
+            {onPhase, deps, onCancelable},
           );
+
+          if (!committed.ok && committed.cancelled) {
+            // Resolves on purpose: the dialog host then closes the dialog and
+            // releases the import lock, like after Cancel.
+            onDialogSettled?.({
+              kind: "commit-cancelled",
+              message: committed.message,
+            });
+
+            return;
+          }
 
           if (!committed.ok) {
             onDialogSettled?.({kind: "failed", message: committed.message});

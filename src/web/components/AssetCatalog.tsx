@@ -13,6 +13,8 @@ import {MyAssetsSection} from "./MyAssetsSection.tsx";
 
 type AssetCatalogProps = {
   scene: VisualSceneDraft;
+  /** Every scene of the visual draft (for My assets usage counts). */
+  scenes: readonly VisualSceneDraft[];
   onChange: (patch: Partial<VisualSceneDraft>) => void;
 };
 
@@ -24,6 +26,7 @@ const SelectionMark = ({selected}: {selected: boolean}) => (
 
 export const AssetCatalog = ({
   scene,
+  scenes,
   onChange,
 }: AssetCatalogProps) => {
   return (
@@ -78,6 +81,7 @@ export const AssetCatalog = ({
         <MyAssetsSection
           category="pose"
           selectedValue={scene.pose}
+          scenes={scenes}
           // The section only lists refs of its own category.
           onSelect={(ref) => onChange({pose: ref as LocalPoseRef})}
         />
@@ -122,6 +126,7 @@ export const AssetCatalog = ({
         <MyAssetsSection
           category="background"
           selectedValue={scene.background}
+          scenes={scenes}
           onSelect={(ref) =>
             onChange({background: ref as LocalBackgroundRef})
           }

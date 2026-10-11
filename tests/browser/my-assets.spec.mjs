@@ -1575,3 +1575,216 @@ test("while a rename is being saved, Cancel, Escape and the input are locked, an
     card.getByRole("button", {name: "Rename Held name", exact: true}),
   ).toBeEnabled();
 });
+
+test("the delete warning and the missing card count the pending visual draft, not just the Active Story (#38)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+  const ref = localAssetRef("pose", pose.digest);
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await applyYaml(page, twoSceneStory());
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  // An empty duration makes the draft invalid: it stays pending and the
+  // Active Story keeps scene 1 on the bundled pose.
+  await page.getByLabel("Duration (seconds)").fill("");
+  await expect(page.locator("[data-editor-status]")).toHaveAttribute(
+    "data-editor-status",
+    "schema-invalid",
+  );
+
+  const card = cardFor(page, "pose", pose.digest);
+
+  await card.locator("button[aria-pressed]").click();
+  await expect(card.locator("button[aria-pressed]")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // The user is looking at a draft whose scene 1 uses the asset.
+  const dialog = page.getByRole("dialog");
+
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await expect(dialog).toContainText(
+    '"My cat" (pose) is used by 1 scene in this Story.',
+  );
+  await expect(
+    dialog.getByRole("button", {name: "Delete asset anyway"}),
+  ).toBeVisible();
+  await dialog.getByRole("button", {name: "Delete asset anyway"}).click();
+  await expect(dialog).toHaveCount(0);
+
+  // The missing card names the draft's scene too.
+  await expect(missingCard(page, ref)).toContainText("Used by scene 1.");
+});
+
+// --- #39: cancel a commit that waits for the exclusive library lock ---------
+
+const LIBRARY_LOCK = "tora-video-engine:asset-library";
+
+/** A second tab of the same browser context that holds the exclusive library lock until released. */
+const holdLibraryLockInOtherTab = async (page) => {
+  const holder = await page.context().newPage();
+
+  // A secondary tab (the first one owns persistence); it only needs the origin.
+  await holder.goto("/", {waitUntil: "domcontentloaded"});
+  await holder.evaluate(
+    (name) =>
+      new Promise((granted) => {
+        void navigator.locks.request(
+          name,
+          {mode: "exclusive"},
+          () =>
+            new Promise((release) => {
+              window.__releaseLibraryLock = release;
+            }),
+        );
+        // The callback above runs once the lock is granted; poll for it.
+        const poll = () =>
+          window.__releaseLibraryLock === undefined
+            ? setTimeout(poll, 10)
+            : granted();
+
+        poll();
+      }),
+    LIBRARY_LOCK,
+  );
+
+  return {
+    holder,
+    release: () => holder.evaluate(() => window.__releaseLibraryLock()),
+  };
+};
+
+const cancelImportButton = (page) =>
+  page.getByRole("button", {name: "Cancel import"});
+
+test("an import stuck waiting for the library lock can be cancelled: nothing stored, authoring unlocked (#39)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const yamlBefore = await yamlSource(page);
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+
+  // The commit waits for the lock: Saving… with a Cancel outside the locked fieldset.
+  await expect(statusLine(page, "pose")).toHaveText("Saving…");
+  await expectAuthoringLocked(page);
+  await expect(cancelImportButton(page)).toBeEnabled();
+
+  await cancelImportButton(page).click();
+
+  await expect(statusLine(page, "pose")).toHaveText("Import cancelled.");
+  await expect(alertLine(page, "pose")).toHaveCount(0);
+  await expect(cancelImportButton(page)).toHaveCount(0);
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(page.getByRole("button", {name: "Add scene"})).toBeEnabled();
+  await expect(importInput(page, "pose")).toBeEnabled();
+
+  // Once the other tab lets go, the cancelled request must not run.
+  await release();
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 0"}),
+  ).toBeVisible();
+  await expect(cards(page, "pose")).toHaveCount(0);
+  expect(await yamlSource(page)).toBe(yamlBefore);
+
+  // The same file imports normally afterwards.
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+});
+
+test("Cancel disappears once the lock is granted and the import completes (#39)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(cancelImportButton(page)).toBeVisible();
+
+  await release();
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(cancelImportButton(page)).toHaveCount(0);
+  await expect(cardFor(page, "pose", pose.digest)).toContainText("Current");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+});
+
+test("Import matching file with the exact fixture can be cancelled while it waits for the lock (#39)", async ({
+  page,
+}) => {
+  const {pose, ref} = await openMissingStory(page);
+  const yamlBefore = await yamlSource(page);
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await missingCard(page, ref)
+    .locator('input[type="file"]')
+    .setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText("Saving…");
+  await cancelImportButton(page).click();
+
+  await expect(statusLine(page, "pose")).toHaveText("Import cancelled.");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(missingCard(page, ref)).toBeVisible();
+  await release();
+  expect(await yamlSource(page)).toBe(yamlBefore);
+});
+
+test("Use it as replacement can be cancelled while it waits for the lock: the dialog closes and authoring unlocks (#39)", async ({
+  page,
+}) => {
+  const {ref} = await openMissingStory(page);
+  const other = await readFixture("background-cyan.jpg");
+  const dialog = page.getByRole("dialog");
+  const yamlBefore = await yamlSource(page);
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await missingCard(page, ref)
+    .locator('input[type="file"]')
+    .setInputFiles(fixtureUpload(other));
+  await dialog
+    .getByRole("button", {name: "Use it as replacement for this scene"})
+    .click();
+
+  // Busy, waiting for the lock: Cancel is the one enabled button.
+  await expect(statusLine(page, "pose")).toHaveText("Saving…");
+  await expect(
+    dialog.getByRole("button", {name: "Use it as replacement for this scene"}),
+  ).toBeDisabled();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  // The standalone panel would duplicate the dialog's own Cancel.
+  await expect(cancelImportButton(page)).toHaveCount(0);
+
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(statusLine(page, "pose")).toHaveText("Import cancelled.");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(missingCard(page, ref)).toBeVisible();
+  await release();
+  expect(await yamlSource(page)).toBe(yamlBefore);
+  await expect(cards(page, "pose")).toHaveCount(0);
+});

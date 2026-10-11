@@ -28,7 +28,9 @@ export type LocalAssetImportErrorCode =
   | "decode-failed"
   | "thumbnail-failed"
   | "storage-full"
-  | "storage-error";
+  | "storage-error"
+  /** The user cancelled while the commit was still waiting for the library lock; nothing was written. */
+  | "cancelled";
 
 export class LocalAssetImportError extends Error {
   code: LocalAssetImportErrorCode;
@@ -248,6 +250,19 @@ const toStorageError = (error: unknown): LocalAssetImportError =>
         {cause: error},
       );
 
+export type CommitPreparedLocalAssetImportDeps = {
+  storage?: StorageManager;
+  /**
+   * Cancels the commit only while it is still waiting for the exclusive lock
+   * (it rejects with a "cancelled" LocalAssetImportError and writes nothing).
+   * Once the lock is granted the IndexedDB transaction is short and atomic, so
+   * the signal is ignored and the import finishes.
+   */
+  signal?: AbortSignal;
+  /** Called when the lock is granted, right before the transaction starts: cancelling is over. */
+  onLockAcquired?: () => void;
+};
+
 /**
  * Commits an already-prepared import under the exclusive lock and posts the
  * change message. The Story is never touched here.
@@ -255,24 +270,42 @@ const toStorageError = (error: unknown): LocalAssetImportError =>
 export const commitPreparedLocalAssetImport = async (
   prepared: PreparedLocalAssetImport,
   library: ImportLibrary,
-  deps?: {storage?: StorageManager},
+  deps?: CommitPreparedLocalAssetImportDeps,
 ): Promise<{ref: LocalAssetRef; created: boolean}> => {
   let result;
+  let lockAcquired = false;
 
   try {
-    result = await withAssetLibraryLock(library.locks, "exclusive", () =>
-      library.store.apply({
-        kind: "import",
-        ref: prepared.ref,
-        defaultLabel: prepared.defaultLabel,
-        originalFilename: prepared.originalFilename,
-        createdAt: new Date().toISOString(),
-        payloadMeta: prepared.payloadMeta,
-        blob: prepared.blob,
-        thumbnail: prepared.thumbnail,
-      }),
+    result = await withAssetLibraryLock(
+      library.locks,
+      "exclusive",
+      () => {
+        lockAcquired = true;
+        deps?.onLockAcquired?.();
+
+        return library.store.apply({
+          kind: "import",
+          ref: prepared.ref,
+          defaultLabel: prepared.defaultLabel,
+          originalFilename: prepared.originalFilename,
+          createdAt: new Date().toISOString(),
+          payloadMeta: prepared.payloadMeta,
+          blob: prepared.blob,
+          thumbnail: prepared.thumbnail,
+        });
+      },
+      deps?.signal === undefined ? undefined : {signal: deps.signal},
     );
   } catch (error) {
+    // A rejection while the lock was never granted and the signal is aborted is
+    // our own cancel. After the grant an AbortError can only come from the
+    // store (an aborted transaction): that stays a storage error.
+    if (!lockAcquired && deps?.signal?.aborted === true) {
+      throw new LocalAssetImportError("cancelled", "Import cancelled.", {
+        cause: error,
+      });
+    }
+
     throw toStorageError(error);
   }
 

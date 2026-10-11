@@ -48,6 +48,40 @@ describe("ASSET-003 scene usage counts", () => {
   });
 });
 
+describe("ASSET-003 scene usage counts for a pending visual draft (#38)", () => {
+  // A visual draft scene carries more fields than a Story scene (strings for
+  // animation and duration); only pose and background matter to the counts.
+  const draftScene = (pose, background) => ({
+    type: "dialogue",
+    pose,
+    background,
+    animation: "",
+    text: "Hi",
+    duration: "",
+  });
+
+  it("counts the draft's scenes, which can use a ref the Active Story lacks", () => {
+    const active = story(scene("formal", "office"), scene("formal", "office"));
+    const draft = {
+      title: "T",
+      scenes: [draftScene(poseRef, "office"), draftScene("formal", backgroundRef)],
+    };
+
+    assert.equal(countScenesUsingRef(active, poseRef), 0);
+    assert.equal(countScenesUsingRef(draft, poseRef), 1);
+    assert.deepEqual(sceneNumbersUsingRef(draft, poseRef), [1]);
+    assert.deepEqual(sceneNumbersUsingRef(draft, backgroundRef), [2]);
+  });
+
+  it("does not count a scene that the draft moved away from the ref", () => {
+    const active = story(scene(poseRef, "office"));
+    const draft = {title: "T", scenes: [draftScene("formal", "office")]};
+
+    assert.equal(countScenesUsingRef(active, poseRef), 1);
+    assert.equal(countScenesUsingRef(draft, poseRef), 0);
+  });
+});
+
 describe("ASSET-003 matching file evaluation", () => {
   it("matches the same ref", () => {
     assert.deepEqual(evaluateMatchingFile(poseRef, poseRef), {kind: "match"});

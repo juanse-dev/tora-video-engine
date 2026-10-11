@@ -4,24 +4,32 @@ import {
   type LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {shortAssetId} from "../localAssets/sources.ts";
-import type {Story} from "../story/types.ts";
+
+/** What a scene count needs from a scene: a Story scene or a visual draft scene both fit. */
+export type SceneAssetValues = {pose: string; background: string};
 
 /**
- * 1-based numbers of the scenes in the Active Story whose pose or background
- * equals ref. A ref carries its category, so the other category's ref with
- * the same digest never matches.
+ * 1-based numbers of the scenes whose pose or background equals ref. A ref
+ * carries its category, so the other category's ref with the same digest never
+ * matches.
+ *
+ * Pass the scenes the user is looking at: the visual editor's draft scenes
+ * (which equal the Active Story's unless a draft is pending, and then show
+ * what the pending draft uses), never the Active Story behind a pending draft.
  */
 export const sceneNumbersUsingRef = (
-  story: Story,
+  story: {readonly scenes: readonly SceneAssetValues[]},
   ref: LocalAssetRef,
 ): number[] =>
   story.scenes.flatMap((scene, index) =>
     scene.pose === ref || scene.background === ref ? [index + 1] : [],
   );
 
-/** Number of scenes (not fields) in the Active Story that use ref. */
-export const countScenesUsingRef = (story: Story, ref: LocalAssetRef): number =>
-  sceneNumbersUsingRef(story, ref).length;
+/** Number of scenes (not fields) that use ref; see sceneNumbersUsingRef for which scenes to pass. */
+export const countScenesUsingRef = (
+  story: {readonly scenes: readonly SceneAssetValues[]},
+  ref: LocalAssetRef,
+): number => sceneNumbersUsingRef(story, ref).length;
 
 export type MatchingFileResult =
   | {kind: "match"} // same category + same digest

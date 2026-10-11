@@ -1408,6 +1408,107 @@ test("committing the same bytes again reports created=false and still announces"
   assert.equal(library.posted.length, 2);
 });
 
+test("commit waiting for the lock can be cancelled and then writes nothing (#39)", async () => {
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  let releaseHolder = () => {};
+  const holder = withAssetLibraryLock(
+    library.locks,
+    "exclusive",
+    () => new Promise((resolve) => (releaseHolder = resolve)),
+  );
+  const controller = new AbortController();
+  let acquired = 0;
+  const pending = commitPreparedLocalAssetImport(prepared, library, {
+    storage: undefined,
+    signal: controller.signal,
+    onLockAcquired: () => {
+      acquired += 1;
+    },
+  });
+
+  // Still queued behind the holder: aborting cancels the request.
+  await Promise.resolve();
+  controller.abort();
+  await rejectsWithCode(pending, "cancelled");
+  assert.equal(acquired, 0);
+  assert.equal(library.store.applyCalls.length, 0);
+  assert.deepEqual(library.posted, []);
+
+  releaseHolder();
+  await holder;
+  assert.deepEqual(library.locks.held(constants.ASSET_LIBRARY_LOCK), {
+    exclusive: false,
+    shared: 0,
+  });
+  // The cancelled request left the queue: a later lock request is granted at once.
+  await withAssetLibraryLock(library.locks, "exclusive", async () => {});
+  assert.equal(library.store.applyCalls.length, 0);
+});
+
+test("commit with an already-aborted signal is cancelled without queueing", async () => {
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const controller = new AbortController();
+
+  controller.abort();
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, library, {
+      storage: undefined,
+      signal: controller.signal,
+    }),
+    "cancelled",
+  );
+  assert.equal(library.store.applyCalls.length, 0);
+});
+
+test("commit reports the lock as acquired before writing, and aborting afterwards does not stop the write", async () => {
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const controller = new AbortController();
+  const order = [];
+  const realApply = library.store.apply.bind(library.store);
+
+  library.store.apply = async (mutation) => {
+    order.push("apply");
+
+    // Cancel arrives while the transaction runs: too late, it must finish.
+    controller.abort();
+
+    return realApply(mutation);
+  };
+
+  const result = await commitPreparedLocalAssetImport(prepared, library, {
+    storage: undefined,
+    signal: controller.signal,
+    onLockAcquired: () => order.push("lock"),
+  });
+
+  assert.deepEqual(result, {ref: prepared.ref, created: true});
+  assert.deepEqual(order, ["lock", "apply"]);
+  assert.equal(library.store.applyCalls.length, 1);
+  assert.equal(library.posted.length, 1);
+});
+
+test("an AbortError from the store after the lock was granted is a storage error, not a cancel", async () => {
+  const library = makeLibrary();
+  const {deps} = makeDeps();
+  const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);
+  const controller = new AbortController();
+
+  library.store.failNextApply(new DOMException("tx aborted", "AbortError"));
+  await rejectsWithCode(
+    commitPreparedLocalAssetImport(prepared, library, {
+      storage: undefined,
+      signal: controller.signal,
+    }),
+    "storage-error",
+  );
+});
+
 test("commit maps the adapter's storage-full error to storage-full without impersonating QuotaExceededError", async () => {
   const {deps} = makeDeps();
   const prepared = await prepareLocalAssetImport(makeFile(PNG_10x20).file, "pose", deps);

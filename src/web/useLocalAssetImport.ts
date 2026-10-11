@@ -18,7 +18,7 @@ import {
 import {libraryFromContext} from "./localAssetManageFlow.ts";
 
 export type LocalAssetImportUi = {
-  /** Current phase ("Reading…"), else the last success message, else "". For a role="status" line. */
+  /** Current phase ("Reading…"), else the last success or neutral notice ("Import cancelled."), else "". For a role="status" line. */
   statusText: string;
   /** The last failure message, for a role="alert" line. */
   errorText: string | null;
@@ -41,7 +41,7 @@ export const useLocalAssetImport = (
   const context = useContext(AssetLibraryContext);
   const [phase, setPhase] = useState<ImportPhase | null>(null);
   const [outcome, setOutcome] = useState<
-    {kind: "success" | "error"; text: string} | null
+    {kind: "success" | "notice" | "error"; text: string} | null
   >(null);
   const runningRef = useRef(false);
   // The import can outlive a render; always use the latest of these. The
@@ -110,11 +110,15 @@ export const useLocalAssetImport = (
           library,
           setInFlight: current.setAssetImportInFlight,
           onPhase: setPhase,
+          onCancelable: current.setAssetImportCancel,
           apply: (ref) => onImportedRef.current(ref),
         });
 
         if (result.ok) {
           setOutcome({kind: "success", text: result.message});
+        } else if (result.cancelled) {
+          // A neutral notice, not an error: the user asked for it.
+          setOutcome({kind: "notice", text: result.message});
         } else {
           reportFailure(result.message, result.error);
         }
@@ -134,6 +138,7 @@ export const useLocalAssetImport = (
           openMismatchDialog: current.openAssetDialog,
           apply: (ref) => onImportedRef.current(ref),
           onPhase: setPhase,
+          onCancelable: current.setAssetImportCancel,
           // The mismatch dialog host owns the lock from here and reports
           // errors itself; this only keeps the status line honest.
           onDialogSettled: (settled) => {
@@ -141,13 +146,17 @@ export const useLocalAssetImport = (
             setOutcome(
               settled.kind === "replaced"
                 ? {kind: "success", text: settled.message}
-                : null,
+                : settled.kind === "commit-cancelled"
+                  ? {kind: "notice", text: settled.message}
+                  : null,
             );
           },
         });
 
         if (result.kind === "restored") {
           setOutcome({kind: "success", text: result.message});
+        } else if (result.kind === "cancelled") {
+          setOutcome({kind: "notice", text: result.message});
         } else if (result.kind === "failed") {
           reportFailure(result.message, result.error);
         }
@@ -161,7 +170,7 @@ export const useLocalAssetImport = (
     statusText:
       phase !== null
         ? importPhaseText(phase)
-        : outcome?.kind === "success"
+        : outcome?.kind === "success" || outcome?.kind === "notice"
           ? outcome.text
           : "",
     errorText: outcome?.kind === "error" ? outcome.text : null,

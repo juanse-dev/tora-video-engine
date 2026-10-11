@@ -211,15 +211,21 @@ export const probeMp4 = async (path) => {
   };
 };
 
-/** Decodes an 8-bit, non-interlaced RGB PNG (what ffmpeg writes for rgb24). */
-export const decodeRgbPng = (png) => {
+/** Samples per pixel of the 8-bit PNG colour types ffmpeg writes (RGB, RGBA). */
+const PNG_CHANNELS = {2: 3, 6: 4};
+
+/**
+ * Decodes an 8-bit, non-interlaced RGB or RGBA PNG (what ffmpeg writes for
+ * rgb24 and rgba): `{width, height, channels, pixels}`.
+ */
+const decodePng8 = (png) => {
   const width = png.readUInt32BE(16);
   const height = png.readUInt32BE(20);
+  const channels = PNG_CHANNELS[png[25]];
 
-  assert.deepEqual(
-    [png[24], png[25], png[28]],
-    [8, 2, 0],
-    "PNG must be 8-bit RGB, not interlaced",
+  assert.ok(
+    png[24] === 8 && channels !== undefined && png[28] === 0,
+    "PNG must be 8-bit RGB or RGBA, not interlaced",
   );
 
   const idat = [];
@@ -236,7 +242,7 @@ export const decodeRgbPng = (png) => {
   }
 
   const raw = inflateSync(Buffer.concat(idat));
-  const stride = width * 3;
+  const stride = width * channels;
   const out = Buffer.alloc(stride * height);
 
   for (let row = 0; row < height; row += 1) {
@@ -244,10 +250,12 @@ export const decodeRgbPng = (png) => {
     const source = row * (stride + 1) + 1;
 
     for (let column = 0; column < stride; column += 1) {
-      const left = column >= 3 ? out[row * stride + column - 3] : 0;
+      const left = column >= channels ? out[row * stride + column - channels] : 0;
       const up = row > 0 ? out[(row - 1) * stride + column] : 0;
       const upLeft =
-        row > 0 && column >= 3 ? out[(row - 1) * stride + column - 3] : 0;
+        row > 0 && column >= channels
+          ? out[(row - 1) * stride + column - channels]
+          : 0;
       const estimate = left + up - upLeft;
       const paeth = [left, up, upLeft].reduce((best, candidate) =>
         Math.abs(estimate - candidate) < Math.abs(estimate - best)
@@ -260,7 +268,16 @@ export const decodeRgbPng = (png) => {
     }
   }
 
-  return {width, height, pixels: out};
+  return {width, height, channels, pixels: out};
+};
+
+/** Decodes an 8-bit, non-interlaced RGB PNG (what ffmpeg writes for rgb24). */
+export const decodeRgbPng = (png) => {
+  assert.equal(png[25], 2, "PNG must be 8-bit RGB, not interlaced");
+
+  const {width, height, pixels} = decodePng8(png);
+
+  return {width, height, pixels};
 };
 
 /**
@@ -310,6 +327,51 @@ export const decodeFrame = async (path, seconds, {width, height}) => {
     const decoded = decodeRgbPng(png);
 
     assert.deepEqual([decoded.width, decoded.height], [width, height]);
+
+    return decoded.pixels;
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+};
+
+/**
+ * RGBA pixels (a Buffer of width*height*4 bytes) of an image file (any format
+ * ffmpeg reads, such as the bundled palette PNG poses), scaled to `width` x
+ * `height` and keeping its alpha channel.
+ */
+export const decodeImageRgba = async (path, {width, height}) => {
+  const {ffmpeg, dir} = resolveFfmpegBinaries();
+  const directory = await mkdtemp(join(tmpdir(), "tora-image-"));
+  const output = join(directory, "image.png");
+
+  try {
+    try {
+      await run(ffmpeg, dir, [
+        "-v",
+        "error",
+        "-i",
+        path,
+        "-frames:v",
+        "1",
+        "-vf",
+        `scale=${width}:${height}:flags=bilinear,format=rgba`,
+        "-pix_fmt",
+        "rgba",
+        "-y",
+        output,
+      ]);
+    } catch (error) {
+      throw new Error(
+        `decodeImageRgba failed on ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const decoded = decodePng8(await readFile(output));
+
+    assert.deepEqual(
+      [decoded.width, decoded.height, decoded.channels],
+      [width, height, 4],
+    );
 
     return decoded.pixels;
   } finally {
