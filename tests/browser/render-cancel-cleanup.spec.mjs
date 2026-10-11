@@ -4,6 +4,7 @@ import {
   listRemotionOpfsEntries,
   waitForOwner,
 } from "./helpers/localAssetPage.mjs";
+import {readRenderStates, recordRenderStates} from "./helpers/renderStates.mjs";
 
 // Issue #29. Real-browser contract for the render storage after Cancel Render
 // and after a mid-render failure: the render settles in `idle` / `failure`
@@ -59,25 +60,7 @@ test("Cancel Render settles idle with clean OPFS and the next render succeeds", 
   };
 
   page.on("download", onDownload);
-  // Cancel now settles in a fraction of a second, so the transient
-  // `cancelling` state can be gone before an assertion polls for it. Record
-  // every state the shell goes through instead.
-  await page.evaluate(() => {
-    const target = document.querySelector(".app-shell");
-    const seen = [target.getAttribute("data-render-state")];
-
-    window.__renderStates = seen;
-    new MutationObserver(() => {
-      const state = target.getAttribute("data-render-state");
-
-      if (seen[seen.length - 1] !== state) {
-        seen.push(state);
-      }
-    }).observe(target, {
-      attributes: true,
-      attributeFilter: ["data-render-state"],
-    });
-  });
+  await recordRenderStates(page);
   await page.getByRole("button", {name: "Render MP4"}).click();
   await expect(shell(page)).toHaveAttribute("data-authoring-locked", "true");
   // Let the encode start so the cancel lands mid-render.
@@ -88,7 +71,7 @@ test("Cancel Render settles idle with clean OPFS and the next render succeeds", 
     timeout: 90_000,
   });
 
-  const states = await page.evaluate(() => window.__renderStates);
+  const states = await readRenderStates(page);
 
   expect(states).toContain("cancelling");
   expect(states).not.toContain("success");

@@ -8,6 +8,10 @@ import {
   meanLuminance,
   waitForOwner,
 } from "../browser/helpers/localAssetPage.mjs";
+import {
+  readRenderStates,
+  recordRenderStates,
+} from "../browser/helpers/renderStates.mjs";
 import {probeMp4} from "../helpers/ffmpeg.mjs";
 import {
   previewDrawerContext,
@@ -541,13 +545,12 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       page.on("download", onDownload);
 
       try {
+        await recordRenderStates(page);
         await startRender();
         await expect(shell()).toHaveAttribute("data-authoring-locked", "true");
         await page.getByRole("button", {name: "Cancel Render"}).click();
-        await expect(shell()).toHaveAttribute(
-          "data-render-state",
-          "cancelling",
-        );
+        // Cancel can settle faster than a poll sees `cancelling`, so wait for
+        // the settled state and check the recorded sequence afterwards.
         await expect
           .poll(() => shell().getAttribute("data-render-state"), {
             timeout: 90_000,
@@ -568,6 +571,13 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       // Issue #29: Tora owns and aborts the OPFS writer, so a cancelled
       // render must settle in "idle" with no leftover render storage.
       expect(endState).toBe("idle");
+
+      const states = await readRenderStates(page);
+
+      expect(states).toContain("cancelling");
+      expect(states).not.toContain("success");
+      expect(states).not.toContain("failure");
+      expect(states).not.toContain("cleanup-blocked");
 
       const leftover = await listRemotionOpfsEntries(page);
 
