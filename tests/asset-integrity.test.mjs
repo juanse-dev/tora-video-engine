@@ -929,3 +929,34 @@ test("different digests verified by overlapping callers never read at the same t
   assert.equal(maxInFlight, 1);
   assert.equal(store.reads.blobs, 4);
 });
+
+test("aborting in the same tick as an idle-cache verify never reads the blob", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const controller = new AbortController();
+  const pending = cache.verify(store, digest, {signal: controller.signal});
+
+  // No await in between: the queued task has not had a microtask turn yet.
+  controller.abort();
+
+  await assert.rejects(
+    () => pending,
+    (error) => error?.name === "AbortError",
+  );
+  await tick();
+  state.release();
+  await tick();
+
+  assert.equal(state.reads, 0);
+  assert.equal(store.reads.blobs, 0);
+  assert.equal(cache.get(digest), undefined);
+
+  // The digest is not stuck: a later caller verifies it normally.
+  const again = cache.verify(store, digest);
+
+  await tick();
+
+  assert.equal((await again).ok, true);
+  assert.equal(state.reads, 1);
+});

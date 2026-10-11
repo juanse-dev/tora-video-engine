@@ -199,29 +199,17 @@ export class IntegrityCache {
 
     joined.waiters += 1;
 
-    let leave = () => {
-      joined.waiters -= 1;
-    };
-
-    try {
-      if (signal === undefined) {
-        return await joined.promise;
+    let left = false;
+    // Synchronous, so the abort handler runs it before the queued task (a
+    // microtask) can start: a read nobody waits for any more is never begun.
+    const leave = () => {
+      if (left) {
+        return;
       }
 
-      return await new Promise<PayloadVerification>((resolve, reject) => {
-        const onAbort = () => reject(signal.reason);
+      left = true;
+      joined.waiters -= 1;
 
-        signal.addEventListener("abort", onAbort, {once: true});
-        leave = () => {
-          signal.removeEventListener("abort", onAbort);
-          joined.waiters -= 1;
-        };
-        joined.promise.then(resolve, reject);
-      });
-    } finally {
-      leave();
-
-      // Nobody waits and the read has not begun: drop it from the queue.
       if (joined.waiters === 0 && !joined.started) {
         joined.cancelled = true;
 
@@ -229,6 +217,37 @@ export class IntegrityCache {
           this.inFlight.delete(digest);
         }
       }
+    };
+
+    if (signal === undefined) {
+      try {
+        return await joined.promise;
+      } finally {
+        leave();
+      }
+    }
+
+    try {
+      return await new Promise<PayloadVerification>((resolve, reject) => {
+        const onAbort = () => {
+          leave();
+          reject(signal.reason);
+        };
+
+        signal.addEventListener("abort", onAbort, {once: true});
+        joined.promise.then(
+          (result) => {
+            signal.removeEventListener("abort", onAbort);
+            resolve(result);
+          },
+          (error) => {
+            signal.removeEventListener("abort", onAbort);
+            reject(error);
+          },
+        );
+      });
+    } finally {
+      leave();
     }
   }
 
