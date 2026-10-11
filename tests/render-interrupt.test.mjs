@@ -670,6 +670,61 @@ describe("renderStory interruption", () => {
   });
 });
 
+describe("process-group sweep after an interrupt", () => {
+  const run = (platform) => {
+    const signals = makeSignals();
+    const timers = makeTimers();
+    const sent = [];
+    const guard = createInterruptGuard({
+      signals,
+      timers,
+      platform,
+      killTree: (_child, signal) => sent.push(signal),
+    });
+    const child = new EventEmitter();
+
+    child.pid = 99;
+    guard.attach(child);
+    signals.emit("SIGTERM");
+    // The CLI exits on the forwarded signal; a descendant may not have.
+    child.emit("close", null, "SIGTERM");
+    guard.dispose();
+
+    return {sent, timers};
+  };
+
+  it("SIGKILLs what is left of the group once the CLI exits on POSIX", () => {
+    const {sent} = run("linux");
+
+    assert.deepEqual(sent, ["SIGTERM", "SIGKILL"]);
+  });
+
+  it("does not sweep on Windows, where taskkill /T /F already ended the tree", () => {
+    const {sent} = run("win32");
+
+    assert.deepEqual(sent, ["SIGTERM"]);
+  });
+
+  it("does not sweep after a normal exit", () => {
+    const signals = makeSignals();
+    const sent = [];
+    const guard = createInterruptGuard({
+      signals,
+      timers: makeTimers(),
+      platform: "linux",
+      killTree: (_child, signal) => sent.push(signal),
+    });
+    const child = new EventEmitter();
+
+    child.pid = 99;
+    guard.attach(child);
+    child.emit("close", 0, null);
+    guard.dispose();
+
+    assert.deepEqual(sent, []);
+  });
+});
+
 describe("killProcessTree", () => {
   it("signals the child's process group on POSIX", () => {
     const calls = [];

@@ -40,6 +40,8 @@ export type InterruptGuardOptions = {
   killTimeoutMs?: number;
   /** Defaults to the global timers. */
   timers?: Timers;
+  /** Defaults to `killProcessTree` (tests record the signals instead). */
+  killTree?: (child: KillableChild, signal: NodeJS.Signals) => void;
 };
 
 /** Handed to the Remotion runner so the guard can reach the child. */
@@ -153,6 +155,10 @@ export const createInterruptGuard = (
   const names: InterruptSignal[] = ["SIGINT", "SIGTERM"];
 
   const platform = options.platform ?? process.platform;
+  const killTree =
+    options.killTree ??
+    ((target: KillableChild, signal: NodeJS.Signals) =>
+      killProcessTree(target, signal, {platform}));
 
   if (platform === "win32") {
     names.push("SIGBREAK");
@@ -177,7 +183,7 @@ export const createInterruptGuard = (
     }
 
     try {
-      killProcessTree(child, signal, {platform});
+      killTree(child, signal);
     } catch {
       // The child is already gone (or cannot be signalled): the `close`
       // event, or the SIGKILL timer, settles the run either way.
@@ -187,6 +193,22 @@ export const createInterruptGuard = (
   const onChildClose = (): void => {
     childExited = true;
     stopKillTimer();
+
+    // The CLI exiting on the forwarded signal does not mean Chrome or ffmpeg
+    // did: SIGKILL whatever is left of its process group before the cleanup.
+    // Not on Windows, where taskkill /T /F already ended the whole tree.
+    if (
+      first !== null &&
+      platform !== "win32" &&
+      child !== null &&
+      child.pid !== undefined
+    ) {
+      try {
+        killTree(child, "SIGKILL");
+      } catch {
+        // The group is already gone.
+      }
+    }
   };
 
   const handle = (signal: InterruptSignal): void => {
