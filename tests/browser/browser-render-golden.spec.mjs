@@ -25,279 +25,160 @@ const FRAME_WIDTH = 540;
 const FRAME_HEIGHT = 960;
 const RGB_CHANNELS = 3;
 
-const analyzeCanonicalEncodedFrames = async (page, path) => {
-  const encodedMp4 = (await readFile(path)).toString("base64");
+// Frames below are RGB24 buffers from decodeMp4Frame (ffmpeg, 540x960), not
+// pixels read back from a <video> element: headless Chrome on Windows paints a
+// seeked frame to a canvas only after `seeked` has fired, so an in-page read
+// raced the decoder and saw a blank canvas (#30).
+const frameLuminance = (frame, px, py) => {
+  const index = (py * FRAME_WIDTH + px) * RGB_CHANNELS;
 
-  return page.evaluate(
-    async ({encodedMp4: base64, frameWidth, frameHeight}) => {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-
-      const blob = new Blob([bytes], {type: "video/mp4"});
-      const url = URL.createObjectURL(blob);
-      const video = document.createElement("video");
-      video.muted = true;
-      video.preload = "auto";
-      video.src = url;
-
-      const waitFor = (eventName, errorMessage) =>
-        new Promise((resolve, reject) => {
-          const cleanup = () => {
-            video.removeEventListener(eventName, onSuccess);
-            video.removeEventListener("error", onError);
-          };
-          const onSuccess = () => {
-            cleanup();
-            resolve();
-          };
-          const onError = () => {
-            cleanup();
-            reject(
-              new Error(
-                `${errorMessage}: ${video.error?.message ?? "unknown video error"}`,
-              ),
-            );
-          };
-
-          video.addEventListener(eventName, onSuccess, {once: true});
-          video.addEventListener("error", onError, {once: true});
-        });
-
-      const canvas = document.createElement("canvas");
-      canvas.width = frameWidth;
-      canvas.height = frameHeight;
-      const context = canvas.getContext("2d", {
-        willReadFrequently: true,
-      });
-
-      if (context === null) {
-        throw new Error("Could not create canonical frame canvas");
-      }
-
-      const regionStats = (
-        frame,
-        {x, y, width, height},
-        step = 3,
-      ) => {
-        let count = 0;
-        let sum = 0;
-        let sumSquares = 0;
-        let dark = 0;
-        let bright = 0;
-
-        for (let py = y; py < y + height; py += step) {
-          for (let px = x; px < x + width; px += step) {
-            const index = (py * frameWidth + px) * 4;
-            const luminance =
-              frame[index] * 0.2126 +
-              frame[index + 1] * 0.7152 +
-              frame[index + 2] * 0.0722;
-
-            count += 1;
-            sum += luminance;
-            sumSquares += luminance * luminance;
-
-            if (luminance < 70) {
-              dark += 1;
-            }
-
-            if (luminance > 210) {
-              bright += 1;
-            }
-          }
-        }
-
-        const mean = sum / count;
-
-        return {
-          mean,
-          standardDeviation: Math.sqrt(
-            Math.max(0, sumSquares / count - mean * mean),
-          ),
-          darkRatio: dark / count,
-          brightRatio: bright / count,
-        };
-      };
-
-      const meanAbsoluteFrameDifference = (
-        first,
-        second,
-        {x, y, width, height},
-        step = 4,
-      ) => {
-        let count = 0;
-        let difference = 0;
-
-        for (let py = y; py < y + height; py += step) {
-          for (let px = x; px < x + width; px += step) {
-            const index = (py * frameWidth + px) * 4;
-
-            difference +=
-              (Math.abs(first[index] - second[index]) +
-                Math.abs(first[index + 1] - second[index + 1]) +
-                Math.abs(first[index + 2] - second[index + 2])) /
-              3;
-            count += 1;
-          }
-        }
-
-        return difference / count;
-      };
-
-      const captionHorizontalEdgeContrast = (frame, y) => {
-        const insideLeft = regionStats(
-          frame,
-          {x: 42, y, width: 18, height: 18},
-          1,
-        ).mean;
-        const insideRight = regionStats(
-          frame,
-          {x: 480, y, width: 18, height: 18},
-          1,
-        ).mean;
-        const outsideLeft = regionStats(
-          frame,
-          {x: 12, y, width: 18, height: 18},
-          1,
-        ).mean;
-        const outsideRight = regionStats(
-          frame,
-          {x: 510, y, width: 18, height: 18},
-          1,
-        ).mean;
-
-        return (
-          (outsideLeft + outsideRight) / 2 -
-          (insideLeft + insideRight) / 2
-        );
-      };
-
-      const capture = async (seconds) => {
-        if (Math.abs(video.currentTime - seconds) > 0.001) {
-          const seeked = waitFor(
-            "seeked",
-            "Could not seek canonical browser MP4",
-          );
-          video.currentTime = seconds;
-          await seeked;
-        }
-
-        context.clearRect(0, 0, frameWidth, frameHeight);
-        context.drawImage(
-          video,
-          0,
-          0,
-          frameWidth,
-          frameHeight,
-        );
-
-        return new Uint8ClampedArray(
-          context.getImageData(
-            0,
-            0,
-            frameWidth,
-            frameHeight,
-          ).data,
-        );
-      };
-
-      document.body.append(video);
-
-      try {
-        await waitFor(
-          "loadedmetadata",
-          "Could not load canonical browser MP4 metadata",
-        );
-
-        const frames = [];
-        for (const seconds of [1.5, 4.5, 7.5, 10.5]) {
-          frames.push(await capture(seconds));
-        }
-
-        const [
-          introFrame,
-          dialogueFrame,
-          chaosFrame,
-          punchlineFrame,
-        ] = frames;
-        const fullRegion = {
-          x: 0,
-          y: 0,
-          width: frameWidth,
-          height: frameHeight,
-        };
-        const topCaptionRegion = {
-          x: 36,
-          y: 48,
-          width: 468,
-          height: 92,
-        };
-        const bottomCaptionRegion = {
-          x: 36,
-          y: 830,
-          width: 468,
-          height: 82,
-        };
-        const captionFrames = [
-          [introFrame, topCaptionRegion, 68],
-          [dialogueFrame, bottomCaptionRegion, 860],
-          [chaosFrame, topCaptionRegion, 68],
-          [punchlineFrame, bottomCaptionRegion, 860],
-        ];
-        const toraRegion = {
-          x: 36,
-          y: 390,
-          width: 430,
-          height: 390,
-        };
-
-        return {
-          decodedDuration: video.duration,
-          fullFrameStats: frames.map((frame) =>
-            regionStats(frame, fullRegion),
-          ),
-          captionStats: captionFrames.map(
-            ([frame, region, edgeY]) => ({
-              region: regionStats(frame, region, 2),
-              edgeContrast:
-                captionHorizontalEdgeContrast(frame, edgeY),
-            }),
-          ),
-          introDialogueToraDifference:
-            meanAbsoluteFrameDifference(
-              introFrame,
-              dialogueFrame,
-              toraRegion,
-            ),
-          introPunchlineToraDifference:
-            meanAbsoluteFrameDifference(
-              introFrame,
-              punchlineFrame,
-              toraRegion,
-            ),
-          dialogueChaosFrameDifference:
-            meanAbsoluteFrameDifference(
-              dialogueFrame,
-              chaosFrame,
-              fullRegion,
-              6,
-            ),
-        };
-      } finally {
-        video.remove();
-        URL.revokeObjectURL(url);
-      }
-    },
-    {
-      encodedMp4,
-      frameWidth: FRAME_WIDTH,
-      frameHeight: FRAME_HEIGHT,
-    },
+  return (
+    frame[index] * 0.2126 +
+    frame[index + 1] * 0.7152 +
+    frame[index + 2] * 0.0722
   );
+};
+
+const regionStats = (frame, {x, y, width, height}, step = 3) => {
+  let count = 0;
+  let sum = 0;
+  let sumSquares = 0;
+  let dark = 0;
+  let bright = 0;
+
+  for (let py = y; py < y + height; py += step) {
+    for (let px = x; px < x + width; px += step) {
+      const luminance = frameLuminance(frame, px, py);
+
+      count += 1;
+      sum += luminance;
+      sumSquares += luminance * luminance;
+
+      if (luminance < 70) {
+        dark += 1;
+      }
+
+      if (luminance > 210) {
+        bright += 1;
+      }
+    }
+  }
+
+  const mean = sum / count;
+
+  return {
+    mean,
+    standardDeviation: Math.sqrt(
+      Math.max(0, sumSquares / count - mean * mean),
+    ),
+    darkRatio: dark / count,
+    brightRatio: bright / count,
+  };
+};
+
+const meanAbsoluteFrameDifference = (
+  first,
+  second,
+  {x, y, width, height},
+  step = 4,
+) => {
+  let count = 0;
+  let difference = 0;
+
+  for (let py = y; py < y + height; py += step) {
+    for (let px = x; px < x + width; px += step) {
+      const index = (py * FRAME_WIDTH + px) * RGB_CHANNELS;
+
+      difference +=
+        (Math.abs(first[index] - second[index]) +
+          Math.abs(first[index + 1] - second[index + 1]) +
+          Math.abs(first[index + 2] - second[index + 2])) /
+        3;
+      count += 1;
+    }
+  }
+
+  return difference / count;
+};
+
+const captionHorizontalEdgeContrast = (frame, y) => {
+  const insideLeft = regionStats(
+    frame,
+    {x: 42, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const insideRight = regionStats(
+    frame,
+    {x: 480, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const outsideLeft = regionStats(
+    frame,
+    {x: 12, y, width: 18, height: 18},
+    1,
+  ).mean;
+  const outsideRight = regionStats(
+    frame,
+    {x: 510, y, width: 18, height: 18},
+    1,
+  ).mean;
+
+  return (
+    (outsideLeft + outsideRight) / 2 -
+    (insideLeft + insideRight) / 2
+  );
+};
+
+const analyzeCanonicalEncodedFrames = async (path) => {
+  const frames = [];
+
+  for (const seconds of [1.5, 4.5, 7.5, 10.5]) {
+    frames.push(await decodeMp4Frame(path, seconds));
+  }
+
+  const [introFrame, dialogueFrame, chaosFrame, punchlineFrame] =
+    frames;
+  const fullRegion = {
+    x: 0,
+    y: 0,
+    width: FRAME_WIDTH,
+    height: FRAME_HEIGHT,
+  };
+  const topCaptionRegion = {x: 36, y: 48, width: 468, height: 92};
+  const bottomCaptionRegion = {x: 36, y: 830, width: 468, height: 82};
+  const captionFrames = [
+    [introFrame, topCaptionRegion, 68],
+    [dialogueFrame, bottomCaptionRegion, 860],
+    [chaosFrame, topCaptionRegion, 68],
+    [punchlineFrame, bottomCaptionRegion, 860],
+  ];
+  const toraRegion = {x: 36, y: 390, width: 430, height: 390};
+
+  return {
+    fullFrameStats: frames.map((frame) =>
+      regionStats(frame, fullRegion),
+    ),
+    captionStats: captionFrames.map(([frame, region, edgeY]) => ({
+      region: regionStats(frame, region, 2),
+      edgeContrast: captionHorizontalEdgeContrast(frame, edgeY),
+    })),
+    introDialogueToraDifference: meanAbsoluteFrameDifference(
+      introFrame,
+      dialogueFrame,
+      toraRegion,
+    ),
+    introPunchlineToraDifference: meanAbsoluteFrameDifference(
+      introFrame,
+      punchlineFrame,
+      toraRegion,
+    ),
+    dialogueChaosFrameDifference: meanAbsoluteFrameDifference(
+      dialogueFrame,
+      chaosFrame,
+      fullRegion,
+      6,
+    ),
+  };
 };
 
 const luminanceStandardDeviation = (frame) => {
@@ -460,195 +341,62 @@ const getCaptionExpectation = async (page) => {
   });
 };
 
-const analyzeEncodedCaptionFrame = async (
-  page,
-  path,
-  lineRegions,
-) => {
-  const encodedMp4 = (await readFile(path)).toString("base64");
+const analyzeEncodedCaptionFrame = async (path, lineRegions) => {
+  // The 1 s fixture's frame at 0.5 s, decoded outside the browser (see the
+  // note above analyzeCanonicalEncodedFrames).
+  const frame = await decodeMp4Frame(path, 0.5);
 
-  return page.evaluate(
-    async ({
-      encodedMp4: base64,
-      frameWidth,
-      frameHeight,
-      lineRegions: regions,
-    }) => {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
+  const lines = lineRegions.map((region) => {
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let brightPixels = 0;
 
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
+    const startX = Math.max(0, Math.floor(region.x));
+    const endX = Math.min(
+      FRAME_WIDTH,
+      Math.ceil(region.x + region.width),
+    );
+    const startY = Math.max(0, Math.floor(region.y));
+    const endY = Math.min(
+      FRAME_HEIGHT,
+      Math.ceil(region.y + region.height),
+    );
 
-      const blob = new Blob([bytes], {type: "video/mp4"});
-      const url = URL.createObjectURL(blob);
-      const video = document.createElement("video");
-      video.muted = true;
-      video.preload = "auto";
-      video.src = url;
-
-      const waitFor = (eventName, errorMessage) =>
-        new Promise((resolve, reject) => {
-          const cleanup = () => {
-            video.removeEventListener(eventName, onSuccess);
-            video.removeEventListener("error", onError);
-          };
-          const onSuccess = () => {
-            cleanup();
-            resolve();
-          };
-          const onError = () => {
-            cleanup();
-            reject(
-              new Error(
-                `${errorMessage}: ${video.error?.message ?? "unknown video error"}`,
-              ),
-            );
-          };
-
-          video.addEventListener(eventName, onSuccess, {once: true});
-          video.addEventListener("error", onError, {once: true});
-        });
-
-      document.body.append(video);
-
-      try {
-        await waitFor(
-          "loadedmetadata",
-          "Could not load rendered MP4 metadata",
-        );
-
-        const seekTime = Math.min(
-          0.5,
-          Math.max(0, video.duration / 2),
-        );
-
-        if (Math.abs(video.currentTime - seekTime) > 0.001) {
-          const seeked = waitFor(
-            "seeked",
-            "Could not seek rendered MP4",
-          );
-          video.currentTime = seekTime;
-          await seeked;
-        } else if (
-          video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-        ) {
-          await waitFor(
-            "loadeddata",
-            "Could not decode rendered MP4 frame",
-          );
+    for (let py = startY; py < endY; py += 1) {
+      for (let px = startX; px < endX; px += 1) {
+        // Caption text is #f8fafc over a dark translucent panel. A high
+        // threshold isolates encoded glyph pixels from the underlying
+        // scene, which may still be moderately bright through the panel.
+        if (frameLuminance(frame, px, py) > 210) {
+          minX = Math.min(minX, px);
+          maxX = Math.max(maxX, px);
+          minY = Math.min(minY, py);
+          maxY = Math.max(maxY, py);
+          brightPixels += 1;
         }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = frameWidth;
-        canvas.height = frameHeight;
-        const context = canvas.getContext("2d", {
-          willReadFrequently: true,
-        });
-
-        if (context === null) {
-          throw new Error("Could not create canvas context");
-        }
-
-        context.drawImage(
-          video,
-          0,
-          0,
-          frameWidth,
-          frameHeight,
-        );
-
-        const pixels = context.getImageData(
-          0,
-          0,
-          frameWidth,
-          frameHeight,
-        ).data;
-
-        const luminanceAt = (x, y) => {
-          const index = (y * frameWidth + x) * 4;
-
-          return (
-            pixels[index] * 0.2126 +
-            pixels[index + 1] * 0.7152 +
-            pixels[index + 2] * 0.0722
-          );
-        };
-
-        const lines = regions.map((region) => {
-          let minX = Number.POSITIVE_INFINITY;
-          let maxX = Number.NEGATIVE_INFINITY;
-          let minY = Number.POSITIVE_INFINITY;
-          let maxY = Number.NEGATIVE_INFINITY;
-          let brightPixels = 0;
-
-          const startX = Math.max(0, Math.floor(region.x));
-          const endX = Math.min(
-            frameWidth,
-            Math.ceil(region.x + region.width),
-          );
-          const startY = Math.max(0, Math.floor(region.y));
-          const endY = Math.min(
-            frameHeight,
-            Math.ceil(region.y + region.height),
-          );
-
-          for (let py = startY; py < endY; py += 1) {
-            for (let px = startX; px < endX; px += 1) {
-              // Caption text is #f8fafc over a dark translucent panel. A high
-              // threshold isolates encoded glyph pixels from the underlying
-              // scene, which may still be moderately bright through the panel.
-              if (luminanceAt(px, py) > 210) {
-                minX = Math.min(minX, px);
-                maxX = Math.max(maxX, px);
-                minY = Math.min(minY, py);
-                maxY = Math.max(maxY, py);
-                brightPixels += 1;
-              }
-            }
-          }
-
-          if (
-            !Number.isFinite(minX) ||
-            !Number.isFinite(maxX) ||
-            !Number.isFinite(minY) ||
-            !Number.isFinite(maxY)
-          ) {
-            throw new Error(
-              "Expected encoded caption pixels in every line window",
-            );
-          }
-
-          return {
-            minX,
-            maxX,
-            minY,
-            maxY,
-            brightPixels,
-          };
-        });
-
-        return {
-          decodedDuration: video.duration,
-          lines,
-        };
-      } finally {
-        video.remove();
-        URL.revokeObjectURL(url);
       }
-    },
-    {
-      encodedMp4,
-      frameWidth: FRAME_WIDTH,
-      frameHeight: FRAME_HEIGHT,
-      lineRegions,
-    },
-  );
+    }
+
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxY)
+    ) {
+      throw new Error(
+        "Expected encoded caption pixels in every line window",
+      );
+    }
+
+    return {minX, maxX, minY, maxY, brightPixels};
+  });
+
+  return {lines};
 };
 
 const assertEncodedCaption = async ({
-  page,
   path,
   expectation,
   placement,
@@ -680,14 +428,8 @@ const assertEncodedCaption = async ({
       4,
   }));
 
-  const {decodedDuration, lines} =
-    await analyzeEncodedCaptionFrame(
-      page,
-      path,
-      lineRegions,
-    );
+  const {lines} = await analyzeEncodedCaptionFrame(path, lineRegions);
 
-  expect(decodedDuration).toBeCloseTo(1, 2);
   expect(lines).toHaveLength(expectation.lineCount);
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -811,10 +553,9 @@ test("required Chrome runtime renders the canonical 12-second Story golden", asy
     expectedDuration: 12,
   });
 
-  const analysis =
-    await analyzeCanonicalEncodedFrames(page, path);
-
-  expect(analysis.decodedDuration).toBeCloseTo(12, 2);
+  // assertMp4Metadata above has already checked the 12 s duration and 360
+  // frames, so the frames are decoded straight away.
+  const analysis = await analyzeCanonicalEncodedFrames(path);
 
   for (const fullFrame of analysis.fullFrameStats) {
     expect(fullFrame.standardDeviation).toBeGreaterThan(15);
@@ -888,7 +629,6 @@ test("required Chrome runtime renders encoded long-wrap MP4 goldens", async ({
 
     await assertMp4Metadata(path);
     await assertEncodedCaption({
-      page,
       path,
       expectation,
       placement: fixture.placement,
