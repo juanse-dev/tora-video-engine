@@ -99,7 +99,7 @@ Use one browser profile for the whole gate and do not clear its site data.
 ## Implementation notes
 
 - R1: the persistence spec launches system Chrome (`channel: "chrome"`, persistent contexts), because bundled Chromium cannot encode H.264 and A1 completes a real MP4 render.
-- R2: any browser test that starts Player playback mutes the Player first (issue #24).
+- R2: the Player starts muted with no volume controls (issue #24), so persistence tests that start Player playback need no mute step.
 - R3: in the bundled-Chromium suite, "render is eligible" means the local-asset render block is gone (no `data-local-asset-block`, no missing cards or placeholders, render state idle); the Render MP4 button is not asserted.
 - R4: the v0.2 baseline is commit `962e030`; `tests/fixtures/v0.2/` holds real v0.2 YAML exports and a v1 envelope generated from it (see its README).
 - R5: the near-simultaneous cross-tab import is checked by one card per tab plus an in-page IndexedDB read of one `assets` row and one payload.

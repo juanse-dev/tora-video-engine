@@ -121,6 +121,11 @@ export const Preview = ({
         compositionWidth={config.compositionWidth}
         compositionHeight={config.compositionHeight}
         controls
+        // Stories are video-only. Starting muted with no volume controls keeps
+        // the Player from waiting on the shared AudioContext to resume after
+        // buffering, which can stay pending forever (issue #24).
+        initiallyMuted
+        showVolumeControls={false}
         errorFallback={({error}) => (
           <div data-preview-error role="alert">
             Preview unavailable: {error.message}

@@ -80,6 +80,32 @@ test("built Player waits for scene images before advancing", async ({
   });
 });
 
+test("built Player advances when AudioContext.resume never settles", async ({
+  page,
+}) => {
+  // A machine without an audio device (or a context resumed without a user
+  // gesture) can leave resume() pending forever. Stories have no audio, so
+  // the Player must not wait on the AudioContext at all (issue #24).
+  await page.addInitScript(() => {
+    AudioContext.prototype.resume = () => new Promise(() => {});
+  });
+
+  await runBlockedPlaybackCase({
+    page,
+    shouldDelay: (url) =>
+      url.includes("/characters/tora/") ||
+      url.includes("/backgrounds/"),
+  });
+});
+
+test("built Player has no volume controls because Stories are video-only", async ({
+  page,
+}) => {
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+
+  await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
+  await expect(page.getByRole("button", {name: /mute sound/i})).toHaveCount(0);
+});
 
 test("built Player surfaces font failure without unhandled rejection", async ({
   page,

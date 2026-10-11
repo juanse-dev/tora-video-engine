@@ -101,21 +101,10 @@ export const expectSameProfile = async (profileDir, token) => {
 export const openApp = async (page) => {
   await page.goto("/", {waitUntil: "domcontentloaded"});
   await waitForOwner(page);
-};
-
-/** Issue #24: mute before anything can play. Idempotent. */
-export const mutePlayer = async (page) => {
-  // exact: "Unmute sound" also contains "mute sound".
-  const mute = page.getByRole("button", {name: "Mute sound", exact: true});
-  const unmute = page.getByRole("button", {name: "Unmute sound", exact: true});
-
-  await expect(mute.or(unmute)).toBeVisible();
-
-  if (await mute.isVisible()) {
-    await mute.click();
-  }
-
-  await expect(unmute).toBeVisible();
+  // Stories are video-only: the Player starts muted with no volume controls
+  // (issue #24).
+  await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
+  await expect(page.getByRole("button", {name: /mute sound/i})).toHaveCount(0);
 };
 
 export const storedEnvelope = (page) =>
@@ -238,7 +227,6 @@ export const renderAndSave = async (page, savePath) => {
   await expect(banner).toContainText(
     /Browser MP4 rendering is ready.|rendered and downloaded successfully/u,
   );
-  await mutePlayer(page);
 
   const downloadPromise = page.waitForEvent("download", {timeout: 240_000});
 
