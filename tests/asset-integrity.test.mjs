@@ -643,3 +643,289 @@ test("a blob whose bytes cannot be read is corrupt and its digest is not cached"
   assert.match(result.detail, /could not be read/);
   assert.equal(cache.get(digest), undefined);
 });
+
+/* ----------------------------- shared in-flight verification (#35, D-8) */
+
+/** A payload whose blob read stays pending until `release()`; `reads` counts reads. */
+const gatedPayload = async (store, width = 4) => {
+  const bytes = pngBytes(width, 3);
+  const digest = await sha256Hex(bytes);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const state = {reads: 0, release: () => release()};
+  const {blob} = fakeBlob({
+    size: bytes.length,
+    bytes,
+    onArrayBuffer: async () => {
+      state.reads += 1;
+      await gate;
+    },
+  });
+
+  store.setRaw("payloadMeta", digest, {
+    mimeType: "image/png",
+    byteSize: bytes.length,
+    width,
+    height: 3,
+  });
+  store.setRaw("blobs", digest, {blob});
+
+  return {digest, state};
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+test("two concurrent callers share one read and hash per digest", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const first = verifyPayloadsSequentially(store, [digest], cache);
+  const second = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  state.release();
+
+  const [one, two] = await Promise.all([first, second]);
+
+  assert.equal(state.reads, 1);
+  assert.equal(store.reads.blobs, 1);
+  assert.equal(one.get(digest)?.ok, true);
+  assert.equal(two.get(digest)?.ok, true);
+  assert.ok(cache.get(digest));
+});
+
+test("a caller that starts after the shared verification settled hits the cache", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const first = verifyPayloadsSequentially(store, [digest], cache);
+
+  state.release();
+  await first;
+  await verifyPayloadsSequentially(store, [digest], cache);
+
+  assert.equal(state.reads, 1);
+});
+
+test("invalidating a digest in flight does not cache the stale result", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const stale = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  cache.invalidate([digest]);
+  state.release();
+
+  assert.equal((await stale).get(digest)?.ok, true);
+  assert.equal(cache.get(digest), undefined);
+});
+
+test("clear() while a verification is in flight does not cache it either", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const stale = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  cache.clear();
+  state.release();
+  await stale;
+
+  assert.equal(cache.get(digest), undefined);
+});
+
+test("a caller that starts after an invalidation does not join the stale verification", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const stale = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  cache.invalidate([digest]);
+
+  const fresh = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  // The stale read still holds the page-wide slot; the fresh one waits for it.
+  assert.equal(state.reads, 1);
+  state.release();
+
+  const [, freshResults] = await Promise.all([stale, fresh]);
+
+  assert.equal(state.reads, 2);
+  assert.equal(store.reads.blobs, 2);
+  assert.equal(freshResults.get(digest)?.ok, true);
+  assert.ok(cache.get(digest), "the fresh verification is cached");
+});
+
+test("the stale verification finishing late does not evict the fresh cache entry or in-flight slot", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const stale = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  cache.invalidate([digest]);
+
+  const fresh = verifyPayloadsSequentially(store, [digest], cache);
+
+  state.release();
+  await Promise.all([stale, fresh]);
+
+  // A third caller must hit the cache, not start a third read.
+  await verifyPayloadsSequentially(store, [digest], cache);
+
+  assert.equal(state.reads, 2);
+});
+
+test("one caller aborting does not reject or cancel another caller sharing the verification", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const controller = new AbortController();
+  const aborted = verifyPayloadsSequentially(store, [digest], cache, {
+    signal: controller.signal,
+  });
+  const survivor = verifyPayloadsSequentially(store, [digest], cache);
+
+  await tick();
+  controller.abort();
+
+  await assert.rejects(
+    () => aborted,
+    (error) => error?.name === "AbortError",
+  );
+
+  state.release();
+
+  assert.equal((await survivor).get(digest)?.ok, true);
+  assert.equal(state.reads, 1);
+  assert.ok(cache.get(digest));
+});
+
+test("the last waiter aborting lets a started read finish and cache the result", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, state} = await gatedPayload(store);
+  const cache = new IntegrityCache();
+  const controller = new AbortController();
+  const aborted = verifyPayloadsSequentially(store, [digest], cache, {
+    signal: controller.signal,
+  });
+
+  await tick();
+  controller.abort();
+  await assert.rejects(() => aborted);
+  state.release();
+  await tick();
+
+  assert.ok(cache.get(digest));
+  assert.equal(state.reads, 1);
+});
+
+test("a queued verification nobody waits for any more is never read", async () => {
+  const store = createMemoryAssetStore();
+  const head = await gatedPayload(store, 4);
+  const queued = await gatedPayload(store, 5);
+  const cache = new IntegrityCache();
+  const controller = new AbortController();
+  const first = verifyPayloadsSequentially(store, [head.digest], cache);
+  const second = verifyPayloadsSequentially(store, [queued.digest], cache, {
+    signal: controller.signal,
+  });
+
+  await tick();
+  controller.abort();
+  await assert.rejects(() => second);
+  head.state.release();
+  await first;
+  await tick();
+
+  assert.equal(queued.state.reads, 0);
+  assert.equal(cache.get(queued.digest), undefined);
+
+  // The slot is free again: a later caller verifies the same digest normally.
+  const again = verifyPayloadsSequentially(store, [queued.digest], cache);
+
+  await tick();
+  queued.state.release();
+
+  assert.equal((await again).get(queued.digest)?.ok, true);
+  assert.equal(queued.state.reads, 1);
+});
+
+test("a failing shared verification rejects every sharer and is not stuck in flight", async () => {
+  const store = createMemoryAssetStore();
+  const {digest} = await putPayload(store, pngBytes());
+  const cache = new IntegrityCache();
+  const original = store.getPayloadMeta;
+  let fail = true;
+
+  store.getPayloadMeta = async (...args) => {
+    if (fail) {
+      throw new Error("idb closed");
+    }
+
+    return original.apply(store, args);
+  };
+
+  const results = await Promise.allSettled([
+    verifyPayloadsSequentially(store, [digest], cache),
+    verifyPayloadsSequentially(store, [digest], cache),
+  ]);
+
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["rejected", "rejected"],
+  );
+
+  fail = false;
+
+  assert.equal(
+    (await verifyPayloadsSequentially(store, [digest], cache)).get(digest)?.ok,
+    true,
+  );
+});
+
+test("different digests verified by overlapping callers never read at the same time (page-wide D-8)", async () => {
+  const store = createMemoryAssetStore();
+  const cache = new IntegrityCache();
+  const digests = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  for (let i = 0; i < 4; i += 1) {
+    const bytes = pngBytes(10 + i, 3);
+    const digest = await sha256Hex(bytes);
+    const {blob} = fakeBlob({
+      size: bytes.length,
+      bytes,
+      onArrayBuffer: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 3));
+        inFlight -= 1;
+      },
+    });
+
+    store.setRaw("payloadMeta", digest, {
+      mimeType: "image/png",
+      byteSize: bytes.length,
+      width: 10 + i,
+      height: 3,
+    });
+    store.setRaw("blobs", digest, {blob});
+    digests.push(digest);
+  }
+
+  // Two overlapping "generations" over different, partly shared digests.
+  await Promise.all([
+    verifyPayloadsSequentially(store, [digests[0], digests[1], digests[2]], cache),
+    verifyPayloadsSequentially(store, [digests[3], digests[2], digests[1]], cache),
+  ]);
+
+  assert.equal(maxInFlight, 1);
+  assert.equal(store.reads.blobs, 4);
+});

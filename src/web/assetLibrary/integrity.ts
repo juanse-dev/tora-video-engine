@@ -127,16 +127,32 @@ const samePayload = (a: VerifiedPayload, b: PayloadMetadata): boolean =>
   a.width === b.width &&
   a.height === b.height;
 
+/** A verification that is queued or running, shared by every caller of a digest. */
+type InFlight = {
+  promise: Promise<PayloadVerification>;
+  waiters: number;
+  started: boolean;
+  cancelled: boolean;
+};
+
 /**
  * Per-page-session cache of verified payloads. In memory only. The Blob is a
  * handle onto the stored bytes (it does not copy them), kept so that a cache
  * hit can still produce a runtime source.
+ *
+ * Verification also lives here (D-8, ASSET-004 R14): `verify` shares one
+ * in-flight verification per digest between callers and runs verifications one
+ * at a time page-wide, so overlapping Story generations never hold two payloads.
  */
 export class IntegrityCache {
   private readonly entries = new Map<
     string,
     {payload: VerifiedPayload; blob: Blob}
   >();
+  // Dropped by `invalidate`/`clear`, so an entry that is no longer here is stale:
+  // its result is not cached and later callers start a fresh verification.
+  private readonly inFlight = new Map<string, InFlight>();
+  private queueTail: Promise<void> = Promise.resolve();
 
   get(digest: string): {payload: VerifiedPayload; blob: Blob} | undefined {
     return this.entries.get(digest);
@@ -149,15 +165,126 @@ export class IntegrityCache {
   invalidate(digests: Iterable<string>): void {
     for (const digest of digests) {
       this.entries.delete(digest);
+      this.inFlight.delete(digest);
     }
   }
 
   clear(): void {
     this.entries.clear();
+    this.inFlight.clear();
+  }
+
+  /**
+   * Verifies `digest`, joining a verification already queued or running for it.
+   * Aborting `signal` only stops this caller from waiting: the shared
+   * verification keeps going for the others (and is skipped when it has not
+   * started and nobody waits for it any more). Never caches a failure.
+   */
+  async verify(
+    store: AssetLibraryStore,
+    digest: string,
+    deps: {subtle?: SubtleCrypto; signal?: AbortSignal} = {},
+  ): Promise<PayloadVerification> {
+    const {signal} = deps;
+
+    signal?.throwIfAborted();
+
+    let entry = this.inFlight.get(digest);
+
+    if (entry === undefined) {
+      entry = this.startVerification(store, digest, deps.subtle);
+    }
+
+    const joined = entry;
+
+    joined.waiters += 1;
+
+    let leave = () => {
+      joined.waiters -= 1;
+    };
+
+    try {
+      if (signal === undefined) {
+        return await joined.promise;
+      }
+
+      return await new Promise<PayloadVerification>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+
+        signal.addEventListener("abort", onAbort, {once: true});
+        leave = () => {
+          signal.removeEventListener("abort", onAbort);
+          joined.waiters -= 1;
+        };
+        joined.promise.then(resolve, reject);
+      });
+    } finally {
+      leave();
+
+      // Nobody waits and the read has not begun: drop it from the queue.
+      if (joined.waiters === 0 && !joined.started) {
+        joined.cancelled = true;
+
+        if (this.inFlight.get(digest) === joined) {
+          this.inFlight.delete(digest);
+        }
+      }
+    }
+  }
+
+  private startVerification(
+    store: AssetLibraryStore,
+    digest: string,
+    subtle: SubtleCrypto | undefined,
+  ): InFlight {
+    const entry: InFlight = {
+      promise: undefined as unknown as Promise<PayloadVerification>,
+      waiters: 0,
+      started: false,
+      cancelled: false,
+    };
+    const task = async (): Promise<PayloadVerification> => {
+      if (entry.cancelled) {
+        return missing("verification was cancelled");
+      }
+
+      entry.started = true;
+
+      try {
+        const result = await verifyPayload(store, digest, {subtle});
+
+        // Invalidation wins: a stale verification is returned to the callers
+        // that joined it but never cached.
+        if (result.ok && this.inFlight.get(digest) === entry) {
+          this.set(result.payload, result.blob);
+        }
+
+        return result;
+      } finally {
+        if (this.inFlight.get(digest) === entry) {
+          this.inFlight.delete(digest);
+        }
+      }
+    };
+
+    // One verification at a time, page-wide.
+    const run = this.queueTail.then(task);
+
+    this.queueTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    entry.promise = run;
+    this.inFlight.set(digest, entry);
+
+    return entry;
   }
 }
 
-/** Verifies digests strictly one after another (MAX one payload in memory). */
+/**
+ * Verifies digests strictly one after another; `cache.verify` shares and
+ * serializes the reads page-wide (MAX one payload in memory, D-8).
+ */
 export const verifyPayloadsSequentially = async (
   store: AssetLibraryStore,
   digests: readonly string[],
@@ -197,13 +324,7 @@ export const verifyPayloadsSequentially = async (
       }
     }
 
-    const result = await verifyPayload(store, digest, {subtle: deps.subtle});
-
-    if (result.ok) {
-      cache.set(result.payload, result.blob);
-    }
-
-    results.set(digest, result);
+    results.set(digest, await cache.verify(store, digest, deps));
   }
 
   return results;
