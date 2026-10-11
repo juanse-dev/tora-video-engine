@@ -28,12 +28,14 @@ The lock covers:
 
 1. bounded pre-render cleanup of every `__remotion_render:` entry;
 2. `renderMediaOnWeb()`;
-3. the public Remotion `getBlob()`;
+3. reading the Tora-read OPFS File Blob (`getFile()` after the writer is closed);
 4. post-render materialization of one independent download Blob while the OPFS backing file still exists;
 5. success-path browser download handoff;
 6. bounded post-render cleanup.
 
 Cleanup re-enumerates the prefix and retries with the WEB-006 backoff schedule before declaring `cleanup-blocked`. A blocked cleanup keeps the lock until cleanup succeeds or the page is unloaded.
+
+Tora owns the OPFS writer that the renderer streams into (issue #29): the pinned renderer's built-in `web-fs` target never closes its writer on cancel or failure, which would keep the file locked and make every cleanup retry fail. Tora creates the `__remotion_render:tora:<uuid>` file, hands the renderer an `outputWritable`, and aborts the writer on any non-success exit before the post-render cleanup. Revisit if Remotion fixes this upstream.
 
 Chrome can keep Remotion's public `web-fs` Blob lazily dependent on its OPFS backing file, and an automatic download may still be reading that backing file after its download event starts. Tora therefore materializes one independent Blob snapshot after rendering completes and before post-render cleanup, then hands that snapshot to the browser and enters a non-cancellable finalizing phase until cleanup releases the render lock. Rendering itself still streams to `web-fs`; the full-payload copy exists only after the completed MP4 is available. Tora adds no further payload copy and no additional encoded-file-size limit.
 

@@ -4,9 +4,14 @@ import {parse as parseYaml} from "yaml";
 import {
   decodeMp4Frame,
   isBrowserRenderSupported,
+  listRemotionOpfsEntries,
   meanLuminance,
   waitForOwner,
 } from "../browser/helpers/localAssetPage.mjs";
+import {
+  readRenderStates,
+  recordRenderStates,
+} from "../browser/helpers/renderStates.mjs";
 import {probeMp4} from "../helpers/ffmpeg.mjs";
 import {
   previewDrawerContext,
@@ -540,13 +545,12 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
       page.on("download", onDownload);
 
       try {
+        await recordRenderStates(page);
         await startRender();
         await expect(shell()).toHaveAttribute("data-authoring-locked", "true");
         await page.getByRole("button", {name: "Cancel Render"}).click();
-        await expect(shell()).toHaveAttribute(
-          "data-render-state",
-          "cancelling",
-        );
+        // Cancel can settle faster than a poll sees `cancelling`, so wait for
+        // the settled state and check the recorded sequence afterwards.
         await expect
           .poll(() => shell().getAttribute("data-render-state"), {
             timeout: 90_000,
@@ -564,13 +568,22 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
 
       expect(downloaded).toBe(false);
 
-      // Settled means "idle" (cancelled cleanly) or "cleanup-blocked" (the
-      // render's storage is still being released: a known app behaviour the
-      // existing Cancel Render spec also accepts, tracked as a follow-up).
-      // Anything else, such as "success" or "failure", is wrong.
-      expect(["idle", "cleanup-blocked"]).toContain(endState);
+      // Issue #29: Tora owns and aborts the OPFS writer, so a cancelled
+      // render must settle in "idle" with no leftover render storage.
+      expect(endState).toBe("idle");
 
-      return `Settled in "${endState}"${endState === "cleanup-blocked" ? " (known app behaviour after Cancel Render)" : ""}.`;
+      const states = await readRenderStates(page);
+
+      expect(states).toContain("cancelling");
+      expect(states).not.toContain("success");
+      expect(states).not.toContain("failure");
+      expect(states).not.toContain("cleanup-blocked");
+
+      const leftover = await listRemotionOpfsEntries(page);
+
+      expect(leftover).toEqual([]);
+
+      return 'Settled in "idle"; no __remotion_render: OPFS entries remain.';
     },
     {timeout: 180_000},
   );

@@ -95,7 +95,7 @@ Rulings made while building this (the full ledger is in the SDD progress file):
 - R1: the golden spec was first built against a temporary local config and request listener, then switched to the real `networkGuard` and gate config once T1 landed.
 - R2: T2 consumed T3's `renderWithCli`, `probeMp4` and `decodeFrame` under fixed names and paths (`tests/gate/helpers/cliParity.mjs`, `tests/helpers/ffmpeg.mjs`).
 - R3: parallel lanes used separate local ports (4190 in the main checkout, 4191 in the worktree); the committed config uses 4190 only.
-- R4: Cancel Render accepts the app's existing `cleanup-blocked` outcome and records the actual end state; not a GATE regression.
+- R4: Cancel Render accepts the app's existing `cleanup-blocked` outcome and records the actual end state; not a GATE regression. Superseded by issue #29: Tora now releases the render writer, and the item requires `idle` with no leftover OPFS entries.
 - R5: the golden spec records its network-guard result under the non-table key `goldenNetwork`; only the gate spec owns the "No-upload check" Record row.
 - R6: the gate deletes only `Default/History*` from its dedicated profile before launch, because Chrome 154 on Windows crashes on a download when History lists an earlier session's download; site data is untouched.
 - R7: phase B snapshots the gate profile to `profile-before-b/` on its first run and restores it on reruns, so a flaky step 10 or 11 does not cost another production deploy cycle.
