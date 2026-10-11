@@ -29,7 +29,6 @@ import {
   expectSameProfile,
   launchGateProfile,
   markProfile,
-  mutePlayer,
   openApp,
   readYaml,
   renderAndSave,
@@ -223,7 +222,6 @@ const phaseA = async () => {
           [STORAGE_KEY, envelopeRaw],
         );
         await openApp(page);
-        await mutePlayer(page);
 
         // The Story from the envelope is active: title, scene count, caption.
         const scenes = envelope.story.scenes;
@@ -331,7 +329,6 @@ const phaseA = async () => {
         const {page} = setup.current();
 
         await page.reload({waitUntil: "domcontentloaded"});
-        await mutePlayer(page);
 
         const restored = await expectLocalAssetsRestored(page, refs);
 
@@ -354,7 +351,6 @@ const phaseA = async () => {
         const {page} = await setup.open();
 
         await openApp(page);
-        await mutePlayer(page);
 
         const restored = await expectLocalAssetsRestored(page, refs);
 
@@ -502,8 +498,6 @@ const phaseB = async () => {
           browser: {name: "Chrome", version: await chromeVersion(page)},
         });
         assertNewBuild(state, identity);
-
-        await mutePlayer(page);
 
         // Assets are there with no import in this page.
         const restored = await expectLocalAssetsRestored(page, refs);

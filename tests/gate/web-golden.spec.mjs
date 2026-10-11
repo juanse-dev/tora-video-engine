@@ -73,24 +73,13 @@ let guard = null;
 let exportedYaml = null;
 let renderedMp4 = null;
 
-/** Issue #24: mute the Player before anything can play. Idempotent. */
-const mutePlayer = async () => {
-  const mute = page.getByRole("button", {name: "Mute sound", exact: true});
-  const unmute = page.getByRole("button", {name: "Unmute sound", exact: true});
-
-  await expect(mute.or(unmute)).toBeVisible();
-
-  if (await mute.isVisible()) {
-    await mute.click();
-  }
-
-  await expect(unmute).toBeVisible();
-};
-
 const openApp = async () => {
   await page.goto("/", {waitUntil: "domcontentloaded"});
   await waitForOwner(page);
-  await mutePlayer();
+  // Stories are video-only: the Player starts muted with no volume controls
+  // (issue #24).
+  await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
+  await expect(page.getByRole("button", {name: /mute sound/i})).toHaveCount(0);
 };
 
 const shell = () => page.locator(".app-shell");
@@ -395,7 +384,6 @@ test.describe("WEB-007 golden on the bundled canonical Story", () => {
 
     await page.reload({waitUntil: "domcontentloaded"});
     await waitForOwner(page);
-    await mutePlayer();
 
     await expect(page.locator("#preview-heading")).toHaveText("Deploy Friday");
     await expect(sceneItems()).toHaveCount(4);

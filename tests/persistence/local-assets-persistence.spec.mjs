@@ -239,22 +239,6 @@ const openApp = async (page) => {
   await waitForOwner(page);
 };
 
-/** Issue #24: mute before anything can play. */
-const mutePlayer = async (page) => {
-  // exact: "Unmute sound" also contains "mute sound", and clicking it would
-  // turn the sound back on. Idempotent: a muted Player is left as it is.
-  const mute = page.getByRole("button", {name: "Mute sound", exact: true});
-  const unmute = page.getByRole("button", {name: "Unmute sound", exact: true});
-
-  await expect(mute.or(unmute)).toBeVisible();
-
-  if (await mute.isVisible()) {
-    await mute.click();
-  }
-
-  await expect(unmute).toBeVisible();
-};
-
 const yamlSource = async (page) => {
   await page.getByRole("button", {name: "Open YAML"}).click();
 
@@ -374,7 +358,6 @@ const renderAndVerifyMp4 = async (page) => {
     .not.toContain("Checking browser render support");
   await expect(renderButton).toBeEnabled({timeout: 20_000});
   await expect(banner).toContainText("Browser MP4 rendering is ready.");
-  await mutePlayer(page);
 
   const downloadPromise = page.waitForEvent("download", {timeout: 120_000});
 
@@ -452,7 +435,6 @@ test("local assets persist across reload, browser restart and a new build", asyn
       const {page} = session;
 
       await openApp(page);
-      await mutePlayer(page);
       await applyYaml(page, STORY);
       await page.getByRole("button", {name: "Open visual editor"}).click();
 
@@ -494,7 +476,6 @@ test("local assets persist across reload, browser restart and a new build", asyn
 
       await page.reload({waitUntil: "domcontentloaded"});
       await waitForOwner(page);
-      await mutePlayer(page);
 
       const restored = await expectLocalAssetsRestored(page, refs);
 
@@ -511,7 +492,6 @@ test("local assets persist across reload, browser restart and a new build", asyn
       const {page} = session;
 
       await openApp(page);
-      await mutePlayer(page);
 
       const restored = await expectLocalAssetsRestored(page, refs);
 
@@ -597,8 +577,6 @@ test("local assets persist across reload, browser restart and a new build", asyn
         expect(indexB).toContain(src);
         expect(indexA).not.toContain(src);
       }
-
-      await mutePlayer(page);
 
       const restored = await expectLocalAssetsRestored(page, refs);
 

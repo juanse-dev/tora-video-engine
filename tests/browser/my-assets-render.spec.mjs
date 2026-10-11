@@ -69,9 +69,6 @@ test("during an MP4 render the My assets import, rename, delete and select contr
     await expect(control).toBeEnabled();
   }
 
-  // Issue #24: mute before anything can play.
-  await page.getByRole("button", {name: "Mute sound"}).click();
-
   const downloadPromise = page.waitForEvent("download", {timeout: 150_000});
 
   await page.getByRole("button", {name: "Render MP4"}).click();
