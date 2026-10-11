@@ -28,7 +28,7 @@ The lock covers:
 
 1. bounded pre-render cleanup of every `__remotion_render:` entry;
 2. `renderMediaOnWeb()`;
-3. the public Remotion `getBlob()`;
+3. reading the Tora-read OPFS File Blob (`getFile()` after the writer is closed);
 4. post-render materialization of one independent download Blob while the OPFS backing file still exists;
 5. success-path browser download handoff;
 6. bounded post-render cleanup.
