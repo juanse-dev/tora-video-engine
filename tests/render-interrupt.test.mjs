@@ -448,6 +448,41 @@ describe("renderStory interruption", () => {
     });
   }
 
+  it("handles a signal that lands while the temporary directory is being created", async () => {
+    const {storyPath, tempBase, outputPath} = await setup();
+    const signals = makeSignals();
+    let listening = null;
+    let ran = false;
+
+    const error = await settle(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          ran = true;
+        },
+        // The directory exists on disk before the signal lands.
+        makeTempDirectory: async (prefix) => {
+          const created = await mkdtemp(prefix);
+
+          listening = signals.listenerCount("SIGINT");
+          signals.emit("SIGINT");
+
+          return created;
+        },
+        interrupt: {signals, timers: makeTimers(), platform: "linux"},
+      }),
+    );
+
+    // Already installed: the signal must not hit the default handler.
+    assert.equal(listening, 1);
+    assert.ok(error instanceof RenderInterruptedError);
+    assert.equal(error.exitCode, 130);
+    assert.equal(ran, false);
+    assert.equal(await exists(outputPath), false);
+    assert.deepEqual(await readdir(tempBase), []);
+    assert.equal(signals.listenerCount("SIGINT"), 0);
+  });
+
   it("removes the handlers when the render fails", async () => {
     const {storyPath, tempBase} = await setup();
     const signals = makeSignals();

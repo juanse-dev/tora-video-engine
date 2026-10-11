@@ -43,6 +43,8 @@ export type RenderStoryDeps = {
   spawn?: typeof spawn;
   /** Signal source, platform and timers for Ctrl+C handling (tests). */
   interrupt?: InterruptGuardOptions;
+  /** Replaces `fs.mkdtemp` for the temporary directory (tests). */
+  makeTempDirectory?: (prefix: string) => Promise<string>;
   /** Replaces `fs.rm` for the temporary directory (tests). */
   removeDirectory?: (
     path: string,
@@ -92,12 +94,8 @@ export const renderStory = async (
 
   const story = await loadStory(storyPath);
 
-  const temporaryDirectory = await mkdtemp(
-    join(deps.tempBase ?? tmpdir(), "tora-video-engine-"),
-  );
-  const propsPath = join(temporaryDirectory, "props.json");
-  // Installed once the directory exists and removed only after it is gone,
-  // so a signal at any point in between still ends in the cleanup below.
+  // Installed before the directory is created and removed only after it is
+  // gone, so a signal at any point in between still ends in the cleanup below.
   const guard = createInterruptGuard(deps.interrupt);
 
   // A signal that lands after the last check (while the temporary directory
@@ -110,7 +108,15 @@ export const renderStory = async (
   };
 
   try {
+    const temporaryDirectory = await (deps.makeTempDirectory ?? mkdtemp)(
+      join(deps.tempBase ?? tmpdir(), "tora-video-engine-"),
+    );
+    const propsPath = join(temporaryDirectory, "props.json");
+
     try {
+      // A signal while the directory was being created: skip the staging.
+      guard.throwIfInterrupted();
+
       let props: Record<string, unknown> = {story};
       let publicDir: string | undefined;
 
