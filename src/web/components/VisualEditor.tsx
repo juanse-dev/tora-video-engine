@@ -273,6 +273,7 @@ export const VisualEditor = ({
 
             <AssetCatalog
               scene={selected}
+              scenes={draft.scenes}
               onChange={(patch) =>
                 updateScene(selectedScene, patch)
               }

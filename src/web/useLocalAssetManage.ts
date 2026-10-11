@@ -4,7 +4,6 @@ import type {
   LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {AssetLibraryContext} from "./assetLibraryContext.ts";
-import {countScenesUsingRef} from "./localAssetUi.ts";
 import {
   deleteAssetFlow,
   libraryFromContext,
@@ -17,11 +16,16 @@ export type LocalAssetManage = {
   clearNotice: () => void;
   /** Resolves to an inline error message for the card, or null when the card is done editing. */
   rename: (ref: LocalAssetRef, label: string) => Promise<string | null>;
-  /** Opens the delete dialog; `sceneCount` is computed now (the Story is frozen while it is open). */
+  /**
+   * Opens the delete dialog. `sceneCount` is the number of scenes the user is
+   * looking at that use the ref (the visual draft, see sceneNumbersUsingRef);
+   * it is fixed now because the Story is frozen while the dialog is open.
+   */
   requestDelete: (asset: {
     ref: LocalAssetRef;
     label: string;
     category: LocalAssetCategory;
+    sceneCount: number;
   }) => void;
 };
 
@@ -70,10 +74,12 @@ export const useLocalAssetManage = (): LocalAssetManage => {
       ref,
       label,
       category,
+      sceneCount,
     }: {
       ref: LocalAssetRef;
       label: string;
       category: LocalAssetCategory;
+      sceneCount: number;
     }) => {
       const current = contextRef.current;
       const library = current === null ? null : libraryFromContext(current);
@@ -88,7 +94,7 @@ export const useLocalAssetManage = (): LocalAssetManage => {
         ref,
         label,
         category,
-        sceneCount: countScenesUsingRef(current.activeStory, ref),
+        sceneCount,
         onConfirm: async () => {
           const result = await deleteAssetFlow(library, ref);
 

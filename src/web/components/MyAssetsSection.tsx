@@ -12,6 +12,7 @@ import {
 import {
   localOnlyDisclosure,
   sceneNumbersUsingRef,
+  type SceneAssetValues,
 } from "../localAssetUi.ts";
 import {
   LOCAL_ASSET_LOAD_ERROR,
@@ -30,6 +31,12 @@ type MyAssetsSectionProps = {
   category: LocalAssetCategory;
   /** The selected scene's pose or background value for this category. */
   selectedValue: string;
+  /**
+   * The scenes the user is looking at: the visual draft, which is the Active
+   * Story's scenes unless a draft is pending. Scene numbers and the delete
+   * warning's count come from these, so a pending draft is never under-counted.
+   */
+  scenes: readonly SceneAssetValues[];
   onSelect: (ref: LocalAssetRef) => void;
 };
 
@@ -87,6 +94,7 @@ const currentLocalRef = (
 export const MyAssetsSection = ({
   category,
   selectedValue,
+  scenes,
   onSelect,
 }: MyAssetsSectionProps) => {
   const context = useContext(AssetLibraryContext);
@@ -100,7 +108,7 @@ export const MyAssetsSection = ({
     return null;
   }
 
-  const {status, localAssetState, activeStory, transitionPending} = context;
+  const {status, localAssetState, transitionPending} = context;
   const ready = status.kind === "ready";
   const noun = categoryLabel(category);
   const renderMissing = (
@@ -112,7 +120,7 @@ export const MyAssetsSection = ({
       assetRef={assetRef}
       category={category}
       kind={kind}
-      sceneNumbers={sceneNumbersUsingRef(activeStory, assetRef)}
+      sceneNumbers={sceneNumbersUsingRef({scenes}, assetRef)}
       unavailableMessage={unavailableMessage}
       // Only a disabled or unavailable LIBRARY hides the action (R11); a ref
       // that is unavailable in a ready library (for example a read failure)
@@ -145,6 +153,7 @@ export const MyAssetsSection = ({
             ? entry.row.value.label
             : `Damaged entry ${shortAssetId(entry.ref)}`,
         category,
+        sceneCount: sceneNumbersUsingRef({scenes}, entry.ref).length,
       });
     },
   });
