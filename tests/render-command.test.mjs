@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {resolve} from "node:path";
+import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
 import {
   buildRenderArgs,
@@ -36,11 +36,11 @@ describe("render command support", () => {
     );
     assert.equal(
       getOutputPath("stories/friday-deploy.yaml"),
-      "output/friday-deploy.mp4",
+      join("output", "friday-deploy.mp4"),
     );
     assert.equal(
       getOutputPath("stories/Deploy de Tóra!.yml"),
-      "output/deploy-de-tora.mp4",
+      join("output", "deploy-de-tora.mp4"),
     );
   });
 
