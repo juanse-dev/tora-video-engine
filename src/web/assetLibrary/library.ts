@@ -102,9 +102,12 @@ export const normalizeLocalAssetLabel = (
   return {ok: true, label: trimmed};
 };
 
+// `invalidatesPayload`: false for a label-only change. The message then names no
+// digests, so tabs keep their verified payloads (no re-hash) and only refresh.
 const mutateLibrary = async (
   library: AssetLibrary,
   mutation: AssetLibraryMutation,
+  invalidatesPayload: boolean,
 ): Promise<AssetLibraryMutationResult> => {
   const result = await withAssetLibraryLock(library.locks, "exclusive", () =>
     library.store.apply(mutation),
@@ -117,7 +120,7 @@ const mutateLibrary = async (
       library.channel.post({
         type: "asset-library-changed",
         refs: [mutation.ref],
-        digests: parsed === null ? [] : [parsed.digest],
+        digests: parsed === null || !invalidatesPayload ? [] : [parsed.digest],
       });
     } catch {
       // The channel is a best-effort refresh signal; the mutation succeeded.
@@ -139,14 +142,18 @@ export const renameLocalAsset = (
     return Promise.reject(new Error(normalized.message));
   }
 
-  return mutateLibrary(library, {kind: "rename", ref, label: normalized.label});
+  return mutateLibrary(
+    library,
+    {kind: "rename", ref, label: normalized.label},
+    false,
+  );
 };
 
 export const deleteLocalAsset = (
   library: AssetLibrary,
   ref: LocalAssetRef,
 ): Promise<AssetLibraryMutationResult> =>
-  mutateLibrary(library, {kind: "delete", ref});
+  mutateLibrary(library, {kind: "delete", ref}, true);
 
 /**
  * Record metadata does not bound what the Blob really encodes, so the bytes are

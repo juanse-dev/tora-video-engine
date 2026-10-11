@@ -539,12 +539,14 @@ test.describe("IndexedDB asset library", () => {
       "After",
     );
 
+    // A rename only changes the label, so it names no digests: tabs refresh
+    // the row but keep the verified payload (#36).
     await expect
       .poll(() => harness(pageA, "messages"))
       .toContainEqual({
         type: "asset-library-changed",
         refs: [pose.ref],
-        digests: [pose.digest],
+        digests: [],
       });
   });
 

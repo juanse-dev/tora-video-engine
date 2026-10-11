@@ -22,6 +22,10 @@ import {
   renameLocalAsset,
 } from "../src/web/assetLibrary/library.ts";
 import {
+  IntegrityCache,
+  verifyPayloadsSequentially,
+} from "../src/web/assetLibrary/integrity.ts";
+import {
   commitPreparedLocalAssetImport,
   importLocalAsset,
   LocalAssetImportError,
@@ -724,9 +728,40 @@ test("renameLocalAsset locks exclusively, normalizes the label and announces the
     library.locks.requests.map(({name, mode}) => ({name, mode})),
     [{name: constants.ASSET_LIBRARY_LOCK, mode: "exclusive"}],
   );
+  // A label-only change names no digests: the payload bytes did not change (#36).
   assert.deepEqual(library.posted, [
-    {type: "asset-library-changed", refs: [POSE], digests: [DIGEST]},
+    {type: "asset-library-changed", refs: [POSE], digests: []},
   ]);
+});
+
+test("a rename keeps the verified payload cached while a delete drops it (#36)", async () => {
+  const bytes = buildPng({width: 4, height: 3});
+  const digest = await sha256Hex(bytes);
+  const ref = buildLocalAssetRef("pose", digest);
+  const library = makeLibrary();
+  const cache = new IntegrityCache();
+  // Same handling as App: every announced digest invalidates the cache.
+  library.channel.post = (message) => cache.invalidate(message.digests);
+
+  await library.store.apply(
+    importMutation(ref, {
+      payloadMeta: {mimeType: "image/png", byteSize: bytes.length, width: 4, height: 3},
+      blob: new Blob([bytes], {type: "image/png"}),
+    }),
+  );
+
+  await verifyPayloadsSequentially(library.store, [digest], cache);
+  assert.equal(library.store.reads.blobs, 1);
+
+  await renameLocalAsset(library, ref, "Renamed");
+
+  assert.ok(cache.get(digest), "rename must not invalidate the verified payload");
+  await verifyPayloadsSequentially(library.store, [digest], cache);
+  assert.equal(library.store.reads.blobs, 1, "no second read or hash after a rename");
+
+  await deleteLocalAsset(library, ref);
+
+  assert.equal(cache.get(digest), undefined);
 });
 
 test("renameLocalAsset rejects invalid labels without touching the store or the lock", async () => {
