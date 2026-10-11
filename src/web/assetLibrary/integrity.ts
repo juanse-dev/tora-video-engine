@@ -175,6 +175,17 @@ export class IntegrityCache {
   }
 
   /**
+   * Drops `stale` (a cached value whose metadata no longer agrees) if it is
+   * still the cached value. Unlike `invalidate`, it leaves any in-flight
+   * verification alone: another caller may already be re-verifying the digest.
+   */
+  evict(digest: string, stale: {payload: VerifiedPayload; blob: Blob}): void {
+    if (this.entries.get(digest) === stale) {
+      this.entries.delete(digest);
+    }
+  }
+
+  /**
    * Verifies `digest`, joining a verification already queued or running for it.
    * Aborting `signal` only stops this caller from waiting: the shared
    * verification keeps going for the others (and is skipped when it has not
@@ -335,7 +346,7 @@ export const verifyPayloadsSequentially = async (
         continue;
       }
 
-      cache.invalidate([digest]);
+      cache.evict(digest, cached);
 
       if (metaRecord.status === "absent") {
         results.set(digest, missing("payload metadata is missing"));

@@ -960,3 +960,24 @@ test("aborting in the same tick as an idle-cache verify never reads the blob", a
   assert.equal((await again).ok, true);
   assert.equal(state.reads, 1);
 });
+
+test("two callers dropping the same stale cache entry share one re-verification", async () => {
+  const store = createMemoryAssetStore();
+  const bytes = pngBytes();
+  const {digest, meta} = await putPayload(store, bytes);
+  const cache = new IntegrityCache();
+
+  // A cached payload whose metadata no longer agrees with the store.
+  cache.set({digest, ...meta, width: 99}, new Blob([bytes]));
+
+  // Both callers see the stale hit before either metadata check resolves.
+  const [one, two] = await Promise.all([
+    verifyPayloadsSequentially(store, [digest], cache),
+    verifyPayloadsSequentially(store, [digest], cache),
+  ]);
+
+  assert.equal(store.reads.blobs, 1);
+  assert.equal(one.get(digest)?.ok, true);
+  assert.equal(two.get(digest)?.ok, true);
+  assert.equal(cache.get(digest)?.payload.width, meta.width);
+});
