@@ -76,6 +76,16 @@ const getCaptionExpectation = async (page) => {
       fontSize: Number.parseFloat(style.fontSize),
       height: rect.height,
       width: rect.width,
+      lineBoxes: [
+        ...element.querySelectorAll("[data-caption-line]"),
+      ].map((line) => {
+        const lineRect = line.getBoundingClientRect();
+
+        return {
+          topRatio: (lineRect.top - rect.top) / rect.height,
+          heightRatio: lineRect.height / rect.height,
+        };
+      }),
     };
   });
 
@@ -88,50 +98,57 @@ const getCaptionExpectation = async (page) => {
     fontFamily: geometry.fontFamily,
     fontSize: geometry.fontSize,
     lineCount,
+    lineBoxes: geometry.lineBoxes,
   };
 };
 
+// One band of bright text rows per caption line. The line windows come from
+// the DOM line boxes (split halfway between neighbouring boxes) instead of from
+// gaps in the ink: caption lines are set tight, and how many empty rows
+// separate a descender from the next line's ascenders depends on the platform
+// glyph rasterizer (2 rows under Windows Chrome, so a "gap of 3 or less joins
+// the bands" scan reads 7 lines as 4). A descender that crosses a boundary
+// counts towards the next window; the height limits below have room for it.
 const brightTextBands = (
   frame,
   {x, y, width, height},
+  boundaries,
 ) => {
-  const activeRows = [];
+  const edges = [y, ...boundaries, y + height];
 
-  for (let py = y; py < y + height; py += 1) {
-    let brightPixels = 0;
+  return edges.slice(0, -1).map((windowStart, line) => {
+    const windowEnd = edges[line + 1];
+    let first = null;
+    let last = null;
 
-    for (let px = x; px < x + width; px += 1) {
-      const index =
-        (py * DECODED_FRAME_WIDTH + px) * RGB_CHANNELS;
-      const luminance =
-        frame[index] * 0.2126 +
-        frame[index + 1] * 0.7152 +
-        frame[index + 2] * 0.0722;
+    for (
+      let py = Math.max(y, Math.round(windowStart));
+      py < Math.min(y + height, Math.round(windowEnd));
+      py += 1
+    ) {
+      let brightPixels = 0;
 
-      if (luminance > 150) {
-        brightPixels += 1;
+      for (let px = x; px < x + width; px += 1) {
+        const index =
+          (py * DECODED_FRAME_WIDTH + px) * RGB_CHANNELS;
+        const luminance =
+          frame[index] * 0.2126 +
+          frame[index + 1] * 0.7152 +
+          frame[index + 2] * 0.0722;
+
+        if (luminance > 150) {
+          brightPixels += 1;
+        }
+      }
+
+      if (brightPixels >= 3) {
+        first ??= py;
+        last = py;
       }
     }
 
-    if (brightPixels >= 3) {
-      activeRows.push(py);
-    }
-  }
-
-  const bands = [];
-
-  for (const row of activeRows) {
-    const previous = bands.at(-1);
-
-    if (previous && row - previous.end <= 3) {
-      previous.end = row;
-      continue;
-    }
-
-    bands.push({start: row, end: row});
-  }
-
-  return bands;
+    return first === null ? null : {start: first, end: last};
+  });
 };
 
 const brightBoundsForBand = (
@@ -189,11 +206,26 @@ const assertEncodedCaptionGeometry = ({
     width: frameWidth - 16,
     height: Math.max(1, frameHeight - 8),
   };
-  const bands = brightTextBands(frame, scan);
-
   expect(expectation.fontFamily).toMatch(/Inter/i);
   expect(expectation.lineCount).toBeGreaterThan(1);
+  expect(expectation.lineBoxes).toHaveLength(expectation.lineCount);
+
+  const boundaries = expectation.lineBoxes
+    .slice(1)
+    .map(
+      (box, index) =>
+        frameY +
+        ((expectation.lineBoxes[index].topRatio +
+          expectation.lineBoxes[index].heightRatio +
+          box.topRatio) /
+          2) *
+          expectation.frameHeight,
+    );
+  const bands = brightTextBands(frame, scan, boundaries);
+
+  // Every caption line has encoded text in its own rows.
   expect(bands).toHaveLength(expectation.lineCount);
+  expect(bands.every((band) => band !== null)).toBe(true);
 
   const bounds = bands.map((band) =>
     brightBoundsForBand(frame, band, {
