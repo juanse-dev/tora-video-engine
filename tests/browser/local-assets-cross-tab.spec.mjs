@@ -176,6 +176,79 @@ test("a rename in tab A updates tab B's label and leaves B's Story YAML unchange
   expect(await yamlSource(b)).toBe(before);
 });
 
+// #36: a label-only change must not re-hash payloads. Every integrity check
+// ends in one SubtleCrypto SHA-256 digest of the stored bytes, so counting those
+// calls observes re-verification in the page that renamed and in the other tab.
+test("a rename re-hashes the payload in neither the renaming tab nor the other tab", async ({
+  context,
+  page,
+}) => {
+  await context.addInitScript(() => {
+    window.__sha256Calls = 0;
+
+    const original = SubtleCrypto.prototype.digest;
+
+    SubtleCrypto.prototype.digest = function digest(algorithm, ...rest) {
+      const name = typeof algorithm === "string" ? algorithm : algorithm?.name;
+
+      if (name === "SHA-256") {
+        window.__sha256Calls += 1;
+      }
+
+      return original.call(this, algorithm, ...rest);
+    };
+  });
+
+  const pose = await readFixture("pose-magenta.png");
+  const poseRef = localAssetRef("pose", pose.digest);
+  const b = await openTwoTabs(context, page);
+  const sha256Calls = (tab) => tab.evaluate(() => window.__sha256Calls);
+
+  await importInput(page, "pose").setInputFiles(fixtureUpload(pose));
+  await expect(statusLine(page, "pose")).toHaveText('Imported "pose-magenta".');
+  await expect(label(b, "pose", pose.digest)).toHaveText(
+    "pose-magenta",
+    CONVERGE,
+  );
+
+  // Both tabs show the asset in their Story, so both have verified it.
+  const story = buildStoryYaml([{pose: poseRef, background: "office"}], "Both");
+
+  for (const tab of [b, page]) {
+    await drive(tab);
+    await applyYaml(tab, story);
+    await tab.getByRole("button", {name: "Open visual editor"}).click();
+    await expect(blobImages(tab)).toHaveCount(1);
+  }
+
+  const hashedBefore = [await sha256Calls(page), await sha256Calls(b)];
+
+  expect(hashedBefore[0], "A verified the payload").toBeGreaterThan(0);
+  expect(hashedBefore[1], "B verified the payload").toBeGreaterThan(0);
+
+  const cardA = cardFor(page, "pose", pose.digest);
+
+  await drive(page);
+  await cardA
+    .getByRole("button", {name: "Rename pose-magenta", exact: true})
+    .click();
+  await cardA.getByRole("textbox").fill("Renamed once");
+  await cardA.getByRole("textbox").press("Enter");
+  await expect(label(page, "pose", pose.digest)).toHaveText("Renamed once");
+  await expect(label(b, "pose", pose.digest)).toHaveText(
+    "Renamed once",
+    CONVERGE,
+  );
+
+  // Both tabs have refreshed; give a (wrong) re-verification time to run.
+  for (const tab of [page, b]) {
+    await tab.evaluate(() => new Promise((resolve) => setTimeout(resolve, 750)));
+  }
+
+  expect([await sha256Calls(page), await sha256Calls(b)]).toEqual(hashedBefore);
+  await expect(blobImages(page)).toHaveCount(1);
+});
+
 test("deleting an in-use asset in tab A leaves tab B with the missing card and a Player placeholder", async ({
   context,
   page,
