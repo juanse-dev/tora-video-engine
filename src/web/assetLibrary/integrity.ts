@@ -352,6 +352,19 @@ export const verifyPayloadsSequentially = async (
         results.set(digest, missing("payload metadata is missing"));
         continue;
       }
+
+      // Another caller may have re-verified the digest while this metadata
+      // check was pending: serve that newer entry if it agrees.
+      const fresh = cache.get(digest);
+
+      if (
+        fresh !== undefined &&
+        metaRecord.status === "present" &&
+        samePayload(fresh.payload, metaRecord.value)
+      ) {
+        results.set(digest, {ok: true, payload: fresh.payload, blob: fresh.blob});
+        continue;
+      }
     }
 
     results.set(digest, await cache.verify(store, digest, deps));

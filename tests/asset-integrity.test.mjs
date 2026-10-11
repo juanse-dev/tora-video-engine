@@ -981,3 +981,40 @@ test("two callers dropping the same stale cache entry share one re-verification"
   assert.equal(two.get(digest)?.ok, true);
   assert.equal(cache.get(digest)?.payload.width, meta.width);
 });
+
+test("a stale-hit caller whose metadata check settles after the re-verification uses the fresh entry", async () => {
+  const store = createMemoryAssetStore();
+  const bytes = pngBytes();
+  const {digest, meta} = await putPayload(store, bytes);
+  const cache = new IntegrityCache();
+  let releaseLate;
+  const late = new Promise((resolve) => {
+    releaseLate = resolve;
+  });
+  let metaCalls = 0;
+  // The second metadata lookup is held until the first caller has finished.
+  const slowStore = Object.create(store);
+
+  slowStore.getPayloadMeta = async (key) => {
+    metaCalls += 1;
+
+    if (metaCalls === 2) {
+      await late;
+    }
+
+    return store.getPayloadMeta(key);
+  };
+  cache.set({digest, ...meta, width: 99}, new Blob([bytes]));
+
+  const first = verifyPayloadsSequentially(slowStore, [digest], cache);
+  const second = verifyPayloadsSequentially(slowStore, [digest], cache);
+  const one = await first;
+
+  releaseLate();
+
+  const two = await second;
+
+  assert.equal(store.reads.blobs, 1);
+  assert.equal(one.get(digest)?.ok, true);
+  assert.equal(two.get(digest)?.ok, true);
+});
