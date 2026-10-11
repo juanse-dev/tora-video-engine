@@ -26,7 +26,10 @@ import {
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
-import {AssetDialogHost} from "./components/AssetDialogHost.tsx";
+import {
+  AssetDialogHost,
+  ImportCancelPanel,
+} from "./components/AssetDialogHost.tsx";
 import {Preview} from "./components/Preview.tsx";
 import {VisualEditor} from "./components/VisualEditor.tsx";
 import {YamlEditor} from "./components/YamlEditor.tsx";
@@ -280,6 +283,11 @@ export const App = () => {
   // True from the start of a My assets import until the import (including its
   // mismatch dialog) ends; locks authoring so the selected scene cannot move.
   const [assetImportInFlight, setAssetImportInFlight] = useState(false);
+  // Set only while an import's commit waits for the exclusive asset-library
+  // lock (e.g. another tab holds it); null once the lock is granted.
+  const [assetImportCancel, setAssetImportCancelState] = useState<
+    (() => void) | null
+  >(null);
   const [assetDialog, setAssetDialog] = useState<AssetDialog | null>(null);
   const [integrityCache] = useState(() => new IntegrityCache());
   const [objectUrlPool] = useState(() => new ObjectUrlPool());
@@ -493,6 +501,12 @@ export const App = () => {
   }, []);
   const assetLibraryLocks =
     typeof navigator === "undefined" ? undefined : navigator.locks;
+  // A function is wrapped: useState would call it as an updater.
+  const setAssetImportCancel = useCallback(
+    (cancel: (() => void) | null) =>
+      setAssetImportCancelState(() => cancel),
+    [],
+  );
   const transitionPending = transition !== null;
   const assetLibraryContext = useMemo<AssetLibraryContextValue>(
     () => ({
@@ -503,6 +517,7 @@ export const App = () => {
       bumpRefresh: bumpAssetRefresh,
       localAssetState: localAssets.state,
       setAssetImportInFlight,
+      setAssetImportCancel,
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
@@ -514,6 +529,7 @@ export const App = () => {
       assetRefreshToken,
       bumpAssetRefresh,
       localAssets.state,
+      setAssetImportCancel,
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
@@ -1998,8 +2014,13 @@ export const App = () => {
         renderAuthoringLocked={renderAuthoringLocked}
         assetImportInFlight={assetImportInFlight}
         setAssetImportInFlight={setAssetImportInFlight}
+        importCancel={assetImportCancel}
         onClose={closeAssetDialogIfCurrent}
       />
+      {/* An open mismatch dialog carries its own Cancel for the same wait. */}
+      {assetDialog === null ? (
+        <ImportCancelPanel cancel={assetImportCancel} />
+      ) : null}
 
       <main className="app-main editor-workspace">
         <fieldset

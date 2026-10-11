@@ -19,6 +19,8 @@ type AssetDialogHostProps = {
   renderAuthoringLocked: boolean;
   assetImportInFlight: boolean;
   setAssetImportInFlight: (inFlight: boolean) => void;
+  /** Set while the replacement's commit waits for the library lock: Cancel then abandons it. */
+  importCancel: (() => void) | null;
   /** Closes `dialog` only if it is still the open one (a newer dialog is left alone). */
   onClose: (dialog: AssetDialog) => void;
 };
@@ -43,6 +45,7 @@ export const AssetDialogHost = ({
   renderAuthoringLocked,
   assetImportInFlight,
   setAssetImportInFlight,
+  importCancel,
   onClose,
 }: AssetDialogHostProps) => {
   const [busy, setBusy] = useState(false);
@@ -142,10 +145,23 @@ export const AssetDialogHost = ({
     dialog.kind === "delete"
       ? run(dialog.onConfirm, {closeOnFailure: false, releaseImport: false})
       : run(dialog.onReplace, {closeOnFailure: false, releaseImport: true});
-  const runCancel = () =>
-    dialog.kind === "delete"
+  // "Use it as replacement" is waiting for the library lock: Cancel stays
+  // enabled and aborts that wait (the replacement then ends like a Cancel).
+  // Once the lock is granted importCancel is null and the dialog is busy until
+  // the short transaction ends.
+  const cancelsWaitingCommit =
+    dialog.kind === "mismatch" && busy && importCancel !== null;
+  const runCancel = () => {
+    if (cancelsWaitingCommit) {
+      importCancel();
+
+      return;
+    }
+
+    return dialog.kind === "delete"
       ? onClose(dialog)
       : run(dialog.onCancel, {closeOnFailure: true, releaseImport: true});
+  };
 
   // One shell for both kinds. Delete lists Cancel first, mismatch lists the
   // replacement first (matching the spec's button order).
@@ -166,7 +182,7 @@ export const AssetDialogHost = ({
       ref={cancelRef}
       type="button"
       onClick={() => void runCancel()}
-      disabled={busy}
+      disabled={busy && !cancelsWaitingCommit}
     >
       Cancel
     </button>
@@ -179,7 +195,7 @@ export const AssetDialogHost = ({
       data-asset-dialog=""
       aria-labelledby={headingId}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) {
+        if (event.key === "Escape" && (!busy || cancelsWaitingCommit)) {
           event.preventDefault();
           event.stopPropagation();
           void runCancel();
@@ -195,3 +211,31 @@ export const AssetDialogHost = ({
     </div>
   );
 };
+
+/**
+ * Cancel for an import whose commit ("Saving…") is waiting for the exclusive
+ * asset-library lock, for example because another tab holds it. Rendered by
+ * App outside the disabled authoring fieldset so the button stays enabled
+ * while the Story is locked; absent as soon as the lock is granted, because
+ * the transaction that follows is short and atomic and is never aborted.
+ */
+export const ImportCancelPanel = ({
+  cancel,
+}: {
+  cancel: (() => void) | null;
+}) =>
+  cancel === null ? null : (
+    <div
+      className={ASSET_DIALOG_CLASS_NAME}
+      role="group"
+      aria-label="Import waiting"
+      data-import-cancel-panel=""
+    >
+      <strong>Waiting for another tab to finish using My assets…</strong>
+      <div>
+        <button type="button" onClick={cancel}>
+          Cancel import
+        </button>
+      </div>
+    </div>
+  );

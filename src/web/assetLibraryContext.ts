@@ -51,6 +51,12 @@ export type AssetLibraryContextValue = {
   bumpRefresh: () => void;
   localAssetState: StoryLocalAssetState; // ASSET-004; per-ref readiness
   setAssetImportInFlight: (inFlight: boolean) => void; // locks authoring during imports
+  /**
+   * Offers (a function) or withdraws (null) Cancel for an import whose commit
+   * is waiting for the exclusive library lock. App renders it outside the
+   * authoring fieldset, which is disabled for the whole import.
+   */
+  setAssetImportCancel: (cancel: (() => void) | null) => void;
   transitionPending: boolean; // App transition panel open -> imports disabled
   /** Rendered by App outside the fieldset. Returns false (nothing opened) while an App transition panel or another asset dialog is open. */
   openAssetDialog: (dialog: AssetDialog) => boolean;

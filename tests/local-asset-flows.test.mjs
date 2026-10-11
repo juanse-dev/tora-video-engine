@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
+import {ASSET_LIBRARY_LOCK} from "../src/web/assetLibrary/constants.ts";
 import {
+  IMPORT_CANCELLED_MESSAGE,
   importPhaseText,
   importSuccessText,
   runLocalAssetImport,
@@ -529,5 +531,180 @@ describe("ASSET-003 import matching file", () => {
     assert.equal(outcome.kind, "failed");
     assert.equal(library.store.applyCalls.length, 0);
     assert.equal(events.at(-1), "inFlight:false");
+  });
+});
+
+describe("ASSET-003 cancelling a commit that waits for the lock (#39)", () => {
+  const PNG_OTHER = buildPng({width: 10, height: 20, extraChunksBeforeIdat: [{type: "tEXt", data: new Uint8Array([65])}]});
+
+  /** Another tab holding the exclusive library lock until `release()`. */
+  const holdLock = (library) => {
+    let release = () => {};
+    const held = library.locks.request(
+      ASSET_LIBRARY_LOCK,
+      {mode: "exclusive"},
+      () => new Promise((resolve) => (release = resolve)),
+    );
+
+    return {release, held};
+  };
+
+  /** Records every onCancelable call; `cancel` is the latest non-null function. */
+  const cancelables = () => {
+    const calls = [];
+
+    return {
+      calls,
+      onCancelable: (cancel) => calls.push(cancel),
+      get cancel() {
+        return calls.filter((call) => call !== null).at(-1);
+      },
+    };
+  };
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it("offers Cancel while Saving… waits for the lock; cancelling leaves nothing stored and unlocks", async () => {
+    const library = makeLibrary();
+    const {release, held} = holdLock(library);
+    const spy = cancelables();
+    const {events, run} = makeImport(library, {onCancelable: spy.onCancelable});
+    const pending = run();
+
+    await settle();
+    assert.equal(events.at(-1), "phase:storing");
+    assert.equal(typeof spy.cancel, "function");
+    assert.equal(spy.calls.length, 1); // offered, not yet withdrawn
+
+    spy.cancel();
+
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    assert.equal(result.cancelled, true);
+    assert.equal(result.message, IMPORT_CANCELLED_MESSAGE);
+    assert.equal(IMPORT_CANCELLED_MESSAGE, "Import cancelled.");
+    assert.equal(events.some((event) => event.startsWith("apply:")), false);
+    assert.equal(events.at(-1), "inFlight:false");
+    assert.deepEqual(spy.calls.at(-1), null); // Cancel is withdrawn
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+
+    release();
+    await held;
+    await settle();
+    // The cancelled request does not run once the holder lets go.
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.locks.held(ASSET_LIBRARY_LOCK), {exclusive: false, shared: 0});
+  });
+
+  it("withdraws Cancel when the lock is granted, and a late cancel() cannot stop the write", async () => {
+    const library = makeLibrary();
+    const {release, held} = holdLock(library);
+    const spy = cancelables();
+    const {events, run} = makeImport(library, {onCancelable: spy.onCancelable});
+    const pending = run();
+
+    await settle();
+
+    const staleCancel = spy.cancel;
+
+    release();
+    await held;
+
+    const result = await pending;
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(spy.calls.map((call) => call === null), [false, true]);
+    staleCancel(); // too late: nothing to abort any more
+    assert.equal(library.store.applyCalls.length, 1);
+    assert.equal(events.some((event) => event.startsWith("apply:")), true);
+  });
+
+  it("never offers Cancel before the storing phase", async () => {
+    const library = makeLibrary();
+    const spy = cancelables();
+    const {run} = makeImport(library, {
+      onCancelable: spy.onCancelable,
+      onPhase: (phase) => {
+        if (phase !== "storing") {
+          spy.calls.push(`before-storing:${phase}`);
+        }
+      },
+    });
+
+    await run();
+    assert.equal(spy.calls.filter((call) => typeof call === "function").length, 1);
+  });
+
+  it("Import matching file: cancelling the exact-file commit ends as cancelled, Story untouched", async () => {
+    const library = makeLibrary();
+    const probe = await makeImport(makeLibrary()).run();
+    const spy = cancelables();
+    const events = [];
+    const {release, held} = holdLock(library);
+    const pending = runMatchingFileImport({
+      file: new File([PNG], "same.png"),
+      category: "pose",
+      missingRef: probe.ref,
+      library,
+      setInFlight: (value) => events.push(`inFlight:${value}`),
+      onPhase: (phase) => events.push(`phase:${phase}`),
+      apply: (ref) => events.push(`apply:${ref}`),
+      openMismatchDialog: () => true,
+      onCancelable: spy.onCancelable,
+      deps: imageDeps(),
+    });
+
+    await settle();
+    spy.cancel();
+
+    const outcome = await pending;
+
+    assert.deepEqual(outcome, {kind: "cancelled", message: IMPORT_CANCELLED_MESSAGE});
+    assert.equal(events.at(-1), "inFlight:false");
+    assert.equal(events.some((event) => event.startsWith("apply:")), false);
+    assert.equal(library.store.applyCalls.length, 0);
+    release();
+    await held;
+  });
+
+  it("Use it as replacement: cancelling the commit resolves (the host closes the dialog and unlocks) and writes nothing", async () => {
+    const library = makeLibrary();
+    const probe = await makeImport(makeLibrary()).run();
+    const spy = cancelables();
+    const events = [];
+    const dialogs = [];
+
+    await runMatchingFileImport({
+      file: new File([PNG_OTHER], "other.png"),
+      category: "pose",
+      missingRef: probe.ref,
+      library,
+      setInFlight: (value) => events.push(`inFlight:${value}`),
+      onPhase: (phase) => events.push(`phase:${phase}`),
+      apply: (ref) => events.push(`apply:${ref}`),
+      openMismatchDialog: (dialog) => {
+        dialogs.push(dialog);
+
+        return true;
+      },
+      onDialogSettled: (result) => events.push(`settled:${result.kind}`),
+      onCancelable: spy.onCancelable,
+      deps: imageDeps(),
+    });
+
+    const {release, held} = holdLock(library);
+    const replacing = dialogs[0].onReplace();
+
+    await settle();
+    spy.cancel();
+    await replacing; // resolves: the dialog host then closes and releases the import lock
+    assert.equal(events.some((event) => event.startsWith("apply:")), false);
+    assert.equal(events.at(-1), "settled:commit-cancelled");
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+    release();
+    await held;
   });
 });
