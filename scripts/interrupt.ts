@@ -7,6 +7,8 @@
  * lets `renderStory` finish its normal cleanup before the process exits.
  */
 
+import {spawn} from "node:child_process";
+
 export type InterruptSignal = "SIGINT" | "SIGTERM" | "SIGBREAK";
 
 /** The part of `process` the guard uses; tests pass an EventEmitter. */
@@ -17,6 +19,8 @@ export type SignalSource = {
 
 /** The part of a child process the guard uses. */
 export type KillableChild = {
+  /** Present for a real child; its process tree is signalled through it. */
+  pid?: number;
   kill(signal?: NodeJS.Signals): boolean;
   once(event: "close", listener: () => void): unknown;
   off(event: "close", listener: () => void): unknown;
@@ -90,6 +94,51 @@ export class RenderInterruptedError extends Error {
   }
 }
 
+export type KillTreeDeps = {
+  platform?: string;
+  /** Defaults to `process.kill` (a negative pid signals a process group). */
+  processKill?: (pid: number, signal: NodeJS.Signals) => void;
+  /** Defaults to `child_process.spawn` (runs `taskkill`). */
+  spawnProcess?: (
+    command: string,
+    args: string[],
+    options: {stdio: "ignore"; windowsHide: true},
+  ) => {on(event: "error", listener: () => void): unknown};
+};
+
+/**
+ * Signals the child and everything it started (the Remotion CLI launches
+ * Chrome and ffmpeg): `taskkill /T /F` on Windows, which has no signals to
+ * forward, and the child's process group elsewhere (the runner spawns it
+ * detached, so it leads its own group). Falls back to the child alone.
+ */
+export const killProcessTree = (
+  child: KillableChild,
+  signal: NodeJS.Signals,
+  deps: KillTreeDeps = {},
+): void => {
+  if (child.pid === undefined) {
+    child.kill(signal);
+
+    return;
+  }
+
+  if ((deps.platform ?? process.platform) === "win32") {
+    (deps.spawnProcess ?? spawn)("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    }).on("error", () => child.kill(signal));
+
+    return;
+  }
+
+  try {
+    (deps.processKill ?? process.kill)(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+};
+
 const globalTimers: Timers = {
   set: (callback, milliseconds) => setTimeout(callback, milliseconds),
   clear: (handle) => clearTimeout(handle as NodeJS.Timeout),
@@ -103,7 +152,9 @@ export const createInterruptGuard = (
   const killTimeoutMs = options.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
   const names: InterruptSignal[] = ["SIGINT", "SIGTERM"];
 
-  if ((options.platform ?? process.platform) === "win32") {
+  const platform = options.platform ?? process.platform;
+
+  if (platform === "win32") {
     names.push("SIGBREAK");
   }
 
@@ -126,7 +177,7 @@ export const createInterruptGuard = (
     }
 
     try {
-      child.kill(signal);
+      killProcessTree(child, signal, {platform});
     } catch {
       // The child is already gone (or cannot be signalled): the `close`
       // event, or the SIGKILL timer, settles the run either way.
@@ -216,7 +267,7 @@ export const reportRenderError = (error: unknown, io: ReportIo): void => {
     io.error(
       failure === null
         ? INTERRUPT_MESSAGE
-        : `Render interrupted; could not remove the temporary directory ${failure.path}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+        : `Render interrupted; could not remove ${failure.path}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
     );
     io.exit(error.exitCode);
 

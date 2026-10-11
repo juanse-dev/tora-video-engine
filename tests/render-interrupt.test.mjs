@@ -11,6 +11,7 @@ import {
   createInterruptGuard,
   exitCodeForSignal,
   INTERRUPT_MESSAGE,
+  killProcessTree,
   RenderInterruptedError,
   reportRenderError,
 } from "../scripts/interrupt.ts";
@@ -511,6 +512,31 @@ describe("renderStory interruption", () => {
     await rm(leftBehind, {recursive: true, force: true});
   });
 
+  it("keeps the interrupt exit code when the partial output cannot be removed", async () => {
+    const {storyPath, tempBase, outputPath} = await setup();
+    const signals = makeSignals();
+    const busy = Object.assign(new Error("EPERM: operation not permitted"), {code: "EPERM"});
+
+    const error = await settle(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          signals.emit("SIGTERM");
+        },
+        removeOutput: async () => {
+          throw busy;
+        },
+        interrupt: {signals, timers: makeTimers(), platform: "linux"},
+      }),
+    );
+
+    assert.ok(error instanceof RenderInterruptedError);
+    assert.equal(error.exitCode, 143);
+    assert.equal(resolve(error.cleanupFailure.path), outputPath);
+    assert.equal(error.cleanupFailure.error, busy);
+    assert.deepEqual(await readdir(tempBase), []);
+  });
+
   it("removes the handlers when the render fails", async () => {
     const {storyPath, tempBase} = await setup();
     const signals = makeSignals();
@@ -644,6 +670,87 @@ describe("renderStory interruption", () => {
   });
 });
 
+describe("killProcessTree", () => {
+  it("signals the child's process group on POSIX", () => {
+    const calls = [];
+    const child = {pid: 4321, kill: (signal) => calls.push(["child", signal])};
+
+    killProcessTree(child, "SIGTERM", {
+      platform: "linux",
+      processKill: (pid, signal) => calls.push(["group", pid, signal]),
+    });
+
+    assert.deepEqual(calls, [["group", -4321, "SIGTERM"]]);
+  });
+
+  it("falls back to the child alone when the group cannot be signalled", () => {
+    const calls = [];
+    const child = {pid: 4321, kill: (signal) => calls.push(["child", signal])};
+
+    killProcessTree(child, "SIGINT", {
+      platform: "linux",
+      processKill: () => {
+        throw new Error("ESRCH");
+      },
+    });
+
+    assert.deepEqual(calls, [["child", "SIGINT"]]);
+  });
+
+  it("uses taskkill /T on Windows so Chrome and ffmpeg go too", () => {
+    const spawned = [];
+    const child = {pid: 77, kill: () => assert.fail("not the child alone")};
+
+    killProcessTree(child, "SIGTERM", {
+      platform: "win32",
+      spawnProcess: (command, args) => {
+        spawned.push([command, ...args]);
+
+        return new EventEmitter();
+      },
+    });
+
+    assert.deepEqual(spawned, [["taskkill", "/PID", "77", "/T", "/F"]]);
+  });
+
+  it("signals the child itself when it has no pid", () => {
+    const calls = [];
+
+    killProcessTree({kill: (signal) => calls.push(signal)}, "SIGKILL", {
+      platform: "linux",
+    });
+
+    assert.deepEqual(calls, ["SIGKILL"]);
+  });
+});
+
+describe("the Remotion runner", () => {
+  it("starts the CLI in its own process group on POSIX so the tree can be signalled", async () => {
+    const {storyPath, tempBase} = await setup();
+    const options = [];
+
+    await settle(
+      renderStory(storyPath, {
+        tempBase,
+        spawn: (_command, _args, spawnOptions) => {
+          options.push(spawnOptions);
+
+          const child = new EventEmitter();
+
+          child.kill = () => true;
+          queueMicrotask(() => child.emit("close", 1, null));
+
+          return child;
+        },
+        interrupt: {signals: makeSignals(), timers: makeTimers(), platform: "linux"},
+      }),
+    );
+
+    assert.equal(options.length, 1);
+    assert.equal(options[0].detached, process.platform !== "win32");
+  });
+});
+
 describe("reportRenderError", () => {
   const makeIo = () => {
     const io = {lines: [], codes: []};
@@ -683,7 +790,7 @@ describe("reportRenderError", () => {
     );
 
     assert.deepEqual(io.lines, [
-      "Render interrupted; could not remove the temporary directory /tmp/tora-video-engine-x: EBUSY",
+      "Render interrupted; could not remove /tmp/tora-video-engine-x: EBUSY",
     ]);
     assert.deepEqual(io.codes, [130]);
   });

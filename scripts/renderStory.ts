@@ -47,6 +47,8 @@ export type RenderStoryDeps = {
   interrupt?: InterruptGuardOptions;
   /** Replaces `fs.mkdtemp` for the temporary directory (tests). */
   makeTempDirectory?: (prefix: string) => Promise<string>;
+  /** Replaces `fs.rm` for the partial output after an interrupt (tests). */
+  removeOutput?: (path: string, options: {force: true}) => Promise<void>;
   /** Replaces `fs.rm` for the temporary directory (tests). */
   removeDirectory?: (
     path: string,
@@ -60,6 +62,9 @@ const createRunRemotionProcess =
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const child = spawnProcess(executable, args, {
         stdio: "inherit",
+        // Its own process group on POSIX, so an interrupt can signal the
+        // Chrome and ffmpeg it starts too (Windows uses taskkill /T instead).
+        detached: process.platform !== "win32",
       });
 
       control.attach(child);
@@ -107,7 +112,13 @@ export const renderStory = async (
   let cleanupFailure: CleanupFailure | null = null;
   const failIfInterrupted = async (): Promise<void> => {
     if (guard.signal !== null) {
-      await rm(outputPath, {force: true});
+      try {
+        await (deps.removeOutput ?? rm)(outputPath, {force: true});
+      } catch (error) {
+        // Still an interrupt (130/143): name the file left behind as well.
+        cleanupFailure ??= {path: outputPath, error};
+      }
+
       throw new RenderInterruptedError(guard.signal, {cleanupFailure});
     }
   };
