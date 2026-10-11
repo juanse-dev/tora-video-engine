@@ -59,16 +59,41 @@ test("Cancel Render settles idle with clean OPFS and the next render succeeds", 
   };
 
   page.on("download", onDownload);
+  // Cancel now settles in a fraction of a second, so the transient
+  // `cancelling` state can be gone before an assertion polls for it. Record
+  // every state the shell goes through instead.
+  await page.evaluate(() => {
+    const target = document.querySelector(".app-shell");
+    const seen = [target.getAttribute("data-render-state")];
+
+    window.__renderStates = seen;
+    new MutationObserver(() => {
+      const state = target.getAttribute("data-render-state");
+
+      if (seen[seen.length - 1] !== state) {
+        seen.push(state);
+      }
+    }).observe(target, {
+      attributes: true,
+      attributeFilter: ["data-render-state"],
+    });
+  });
   await page.getByRole("button", {name: "Render MP4"}).click();
   await expect(shell(page)).toHaveAttribute("data-authoring-locked", "true");
   // Let the encode start so the cancel lands mid-render.
   await expect(page.locator(".render-banner")).toContainText(/Rendering MP4/);
 
   await page.getByRole("button", {name: "Cancel Render"}).click();
-  await expect(shell(page)).toHaveAttribute("data-render-state", "cancelling");
   await expect(shell(page)).toHaveAttribute("data-render-state", "idle", {
     timeout: 90_000,
   });
+
+  const states = await page.evaluate(() => window.__renderStates);
+
+  expect(states).toContain("cancelling");
+  expect(states).not.toContain("success");
+  expect(states).not.toContain("failure");
+  expect(states).not.toContain("cleanup-blocked");
   await expect(shell(page)).toHaveAttribute("data-authoring-locked", "false");
   page.off("download", onDownload);
   expect(downloaded).toBe(false);
