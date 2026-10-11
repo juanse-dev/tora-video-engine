@@ -9,6 +9,7 @@ import {fileURLToPath} from "node:url";
 import {
   compositorPackageName,
   decodeFrame,
+  decodeImageRgba,
   probeMp4,
   resolveFfmpegBinaries,
 } from "./helpers/ffmpeg.mjs";
@@ -188,6 +189,33 @@ describe("probeMp4 and decodeFrame", () => {
     await assert.rejects(
       () => decodeFrame(silent, 30, {width: 54, height: 96}),
       /decodeFrame/u,
+    );
+  });
+});
+
+describe("decodeImageRgba", () => {
+  it("scales an image and keeps its alpha channel", async () => {
+    const width = 60;
+    const height = 90;
+    const pixels = await decodeImageRgba(
+      join(fixtureDir, "pose-magenta.png"),
+      {width, height},
+    );
+
+    assert.equal(pixels.length, width * height * 4);
+
+    const pixel = (x, y) => [...pixels.subarray((y * width + x) * 4).subarray(0, 4)];
+    const [r, g, b, a] = pixel(30, 45); // inside the magenta rectangle
+    const corner = pixel(1, 1); // transparent margin
+
+    assert.ok(r > 200 && g < 60 && b > 200 && a === 255, `centre ${[r, g, b, a]}`);
+    assert.equal(corner[3], 0);
+  });
+
+  it("fails clearly when the image does not exist", async () => {
+    await assert.rejects(
+      () => decodeImageRgba(join(fixtureDir, "missing.png"), {width: 4, height: 4}),
+      /decodeImageRgba/u,
     );
   });
 });

@@ -1,6 +1,7 @@
 import {readFile} from "node:fs/promises";
+import {fileURLToPath} from "node:url";
 import {expect, test} from "@playwright/test";
-import {probeMp4} from "../helpers/ffmpeg.mjs";
+import {decodeImageRgba, probeMp4} from "../helpers/ffmpeg.mjs";
 import {
   applyYaml,
   BACKGROUND_BOTTOM_REGION,
@@ -127,6 +128,149 @@ const captionHorizontalEdgeContrast = (frame, y) => {
     (outsideLeft + outsideRight) / 2 -
     (insideLeft + insideRight) / 2
   );
+};
+
+// Pose check for the canonical Story (#33). The Tora-region difference in
+// analyzeCanonicalEncodedFrames also covers the background, so a wrong pose
+// barely moves it. Instead, each scene's frame is classified against every
+// bundled pose: the pose PNG is scaled to where the scene preset places it, and
+// scored by the mean colour distance between its opaque pixels and the encoded
+// frame there (the sprite sits above the scene overlay, so its colours reach
+// the MP4 untinted). The expected pose must score lowest, by a margin; there is
+// no absolute threshold to tune against H.264 noise. Each frame is sampled
+// where the animation is at rest (fade is done after 0.35 s, float crosses zero
+// at 1.5 s, slowZoom is ~1.00 just after the scene starts), and the best of a
+// few pixel shifts absorbs the residual placement error.
+const POSE_DIRECTORY = new URL(
+  "../../public/characters/tora/",
+  import.meta.url,
+);
+// Correct poses measure ~4-7 and the nearest wrong ones ~32-41 (mean 0-255
+// colour distance), so 10 leaves room for encoder noise without admitting a
+// near miss.
+const POSE_MATCH_MARGIN = 10;
+const POSE_SHIFT_RANGE = 6;
+const POSE_SHIFT_STEP = 2;
+const POSE_SAMPLE_STEP = 2;
+// The sprite box per scene type in the 540x960 decoded frame, i.e. half of
+// src/scenePresets.ts (toraWidth, toraBottom, toraPlacement): the box is
+// toraWidth wide and toraWidth * 1.18 tall, and the pose is contained in it.
+const POSE_SCENES = [
+  {pose: "formal", seconds: 1.5, width: 340, bottom: 117.5, left: 100},
+  {pose: "confused", seconds: 4.5, width: 320, bottom: 180, left: 36},
+  {pose: "panic", seconds: 7.5, width: 385, bottom: 107.5, left: 77.5},
+  {pose: "coffee", seconds: 9.2, width: 312.5, bottom: 177.5, left: 191.25},
+];
+const BUNDLED_POSES = ["formal", "confused", "panic", "coffee"];
+
+const poseReferences = async (box) => {
+  const references = {};
+
+  for (const pose of BUNDLED_POSES) {
+    const file = new URL(`${pose}.png`, POSE_DIRECTORY);
+    const header = await readFile(file);
+    const imageWidth = header.readUInt32BE(16);
+    const imageHeight = header.readUInt32BE(20);
+    const scale = Math.min(box.width / imageWidth, box.height / imageHeight);
+    const width = Math.round(imageWidth * scale);
+    const height = Math.round(imageHeight * scale);
+
+    references[pose] = {
+      width,
+      height,
+      x: Math.round(box.left + (box.width - width) / 2),
+      y: Math.round(box.top + (box.height - height) / 2),
+      pixels: await decodeImageRgba(fileURLToPath(file), {
+        width,
+        height,
+      }),
+    };
+  }
+
+  return references;
+};
+
+const poseDistance = (frame, reference) => {
+  let best = Number.POSITIVE_INFINITY;
+
+  for (
+    let dy = -POSE_SHIFT_RANGE;
+    dy <= POSE_SHIFT_RANGE;
+    dy += POSE_SHIFT_STEP
+  ) {
+    for (
+      let dx = -POSE_SHIFT_RANGE;
+      dx <= POSE_SHIFT_RANGE;
+      dx += POSE_SHIFT_STEP
+    ) {
+      let count = 0;
+      let difference = 0;
+
+      for (let py = 0; py < reference.height; py += POSE_SAMPLE_STEP) {
+        for (let px = 0; px < reference.width; px += POSE_SAMPLE_STEP) {
+          const source = (py * reference.width + px) * 4;
+          const fx = reference.x + px + dx;
+          const fy = reference.y + py + dy;
+
+          if (
+            reference.pixels[source + 3] < 250 ||
+            fx < 0 ||
+            fx >= FRAME_WIDTH ||
+            fy < 0 ||
+            fy >= FRAME_HEIGHT
+          ) {
+            continue;
+          }
+
+          const target = (fy * FRAME_WIDTH + fx) * RGB_CHANNELS;
+
+          difference +=
+            (Math.abs(reference.pixels[source] - frame[target]) +
+              Math.abs(reference.pixels[source + 1] - frame[target + 1]) +
+              Math.abs(reference.pixels[source + 2] - frame[target + 2])) /
+            3;
+          count += 1;
+        }
+      }
+
+      best = Math.min(best, difference / count);
+    }
+  }
+
+  return best;
+};
+
+const classifyEncodedPoses = async (path) => {
+  const results = [];
+
+  for (const scene of POSE_SCENES) {
+    const box = {
+      width: scene.width,
+      height: scene.width * 1.18,
+      left: scene.left,
+      top: FRAME_HEIGHT - scene.bottom - scene.width * 1.18,
+    };
+    const references = await poseReferences(box);
+    const frame = await decodeMp4Frame(path, scene.seconds);
+    const distances = Object.fromEntries(
+      BUNDLED_POSES.map((pose) => [
+        pose,
+        poseDistance(frame, references[pose]),
+      ]),
+    );
+    const [nearest, runnerUp] = Object.entries(distances).sort(
+      (a, b) => a[1] - b[1],
+    );
+
+    results.push({
+      expected: scene.pose,
+      nearest: nearest[0],
+      margin: runnerUp[1] - nearest[1],
+      distances,
+    });
+  }
+
+  return results;
 };
 
 const analyzeCanonicalEncodedFrames = async (path) => {
@@ -556,6 +700,16 @@ test("required Chrome runtime renders the canonical 12-second Story golden", asy
   // assertMp4Metadata above has already checked the 12 s duration and 360
   // frames, so the frames are decoded straight away.
   const analysis = await analyzeCanonicalEncodedFrames(path);
+
+  // Each scene shows its own pose, and no other bundled pose comes close.
+  const poses = await classifyEncodedPoses(path);
+
+  for (const {expected, nearest, margin, distances} of poses) {
+    expect(nearest, JSON.stringify(distances)).toBe(expected);
+    expect(margin, JSON.stringify(distances)).toBeGreaterThan(
+      POSE_MATCH_MARGIN,
+    );
+  }
 
   for (const fullFrame of analysis.fullFrameStats) {
     expect(fullFrame.standardDeviation).toBeGreaterThan(15);
