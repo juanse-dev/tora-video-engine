@@ -5,6 +5,7 @@ export default defineConfig({
   // The golden plus the specs whose render paths bundled Chromium cannot run.
   testMatch: [
     "browser-render-golden.spec.mjs",
+    "render-caption-geometry.spec.mjs",
     "local-asset-preview.spec.mjs",
     "local-asset-render-race.spec.mjs",
     "my-assets-render.spec.mjs",
