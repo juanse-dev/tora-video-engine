@@ -70,15 +70,23 @@ const EXIT_CODES: Record<InterruptSignal, number> = {
 export const exitCodeForSignal = (signal: InterruptSignal): number =>
   EXIT_CODES[signal];
 
+/** The temporary directory that could not be removed after an interrupt. */
+export type CleanupFailure = {path: string; error: unknown};
+
 export class RenderInterruptedError extends Error {
   readonly signal: InterruptSignal;
   readonly exitCode: number;
+  readonly cleanupFailure: CleanupFailure | null;
 
-  constructor(signal: InterruptSignal) {
+  constructor(
+    signal: InterruptSignal,
+    options: {cleanupFailure?: CleanupFailure | null} = {},
+  ) {
     super(`Render interrupted by ${signal}`);
     this.name = "RenderInterruptedError";
     this.signal = signal;
     this.exitCode = exitCodeForSignal(signal);
+    this.cleanupFailure = options.cleanupFailure ?? null;
   }
 }
 
@@ -202,7 +210,14 @@ export type ReportIo = {
 /** The CLI's last word: one line to stderr and the exit code. */
 export const reportRenderError = (error: unknown, io: ReportIo): void => {
   if (error instanceof RenderInterruptedError) {
-    io.error(INTERRUPT_MESSAGE);
+    const failure = error.cleanupFailure;
+
+    // Never claim a cleanup that did not happen: name what was left behind.
+    io.error(
+      failure === null
+        ? INTERRUPT_MESSAGE
+        : `Render interrupted; could not remove the temporary directory ${failure.path}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+    );
     io.exit(error.exitCode);
 
     return;

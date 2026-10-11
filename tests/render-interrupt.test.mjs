@@ -483,6 +483,34 @@ describe("renderStory interruption", () => {
     assert.equal(signals.listenerCount("SIGINT"), 0);
   });
 
+  it("reports a failed temporary-directory removal after a signal instead of claiming cleanup", async () => {
+    const {storyPath, tempBase, outputPath} = await setup();
+    const signals = makeSignals();
+    const busy = Object.assign(new Error("EBUSY: resource busy"), {code: "EBUSY"});
+    let leftBehind = null;
+
+    const error = await settle(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          signals.emit("SIGINT");
+        },
+        removeDirectory: async (path) => {
+          leftBehind = path;
+          throw busy;
+        },
+        interrupt: {signals, timers: makeTimers(), platform: "linux"},
+      }),
+    );
+
+    assert.ok(error instanceof RenderInterruptedError);
+    assert.equal(error.exitCode, 130);
+    assert.deepEqual(error.cleanupFailure, {path: leftBehind, error: busy});
+    assert.equal(await exists(outputPath), false);
+    assert.equal(signals.listenerCount("SIGINT"), 0);
+    await rm(leftBehind, {recursive: true, force: true});
+  });
+
   it("removes the handlers when the render fails", async () => {
     const {storyPath, tempBase} = await setup();
     const signals = makeSignals();
@@ -642,6 +670,22 @@ describe("reportRenderError", () => {
 
     reportRenderError(new RenderInterruptedError("SIGTERM"), termIo);
     assert.deepEqual(termIo.codes, [143]);
+  });
+
+  it("names the directory it could not remove instead of claiming cleanup", () => {
+    const io = makeIo();
+
+    reportRenderError(
+      new RenderInterruptedError("SIGINT", {
+        cleanupFailure: {path: "/tmp/tora-video-engine-x", error: new Error("EBUSY")},
+      }),
+      io,
+    );
+
+    assert.deepEqual(io.lines, [
+      "Render interrupted; could not remove the temporary directory /tmp/tora-video-engine-x: EBUSY",
+    ]);
+    assert.deepEqual(io.codes, [130]);
   });
 
   it("keeps exit code 1 and the message for other failures", () => {

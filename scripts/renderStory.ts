@@ -18,9 +18,11 @@ import {
   getRemotionExecutable,
 } from "./renderSupport.ts";
 import {
+  type CleanupFailure,
   createInterruptGuard,
   type InterruptGuardOptions,
   type RenderControl,
+  RenderInterruptedError,
 } from "./interrupt.ts";
 import {storyHasLocalAssetRefs} from "../src/localAssets/readiness.ts";
 import {loadStory} from "../src/story/loadStory.ts";
@@ -100,10 +102,13 @@ export const renderStory = async (
 
   // A signal that lands after the last check (while the temporary directory
   // is being removed) still ends the run as interrupted: the output goes.
+  // A failed removal after a signal is carried on the interrupt error, so the
+  // CLI names the directory left behind instead of claiming a cleanup.
+  let cleanupFailure: CleanupFailure | null = null;
   const failIfInterrupted = async (): Promise<void> => {
     if (guard.signal !== null) {
       await rm(outputPath, {force: true});
-      guard.throwIfInterrupted();
+      throw new RenderInterruptedError(guard.signal, {cleanupFailure});
     }
   };
 
@@ -153,13 +158,23 @@ export const renderStory = async (
         throw error;
       }
     } finally {
-      await (deps.removeDirectory ?? rm)(temporaryDirectory, {
-        recursive: true,
-        force: true,
-      });
+      try {
+        await (deps.removeDirectory ?? rm)(temporaryDirectory, {
+          recursive: true,
+          force: true,
+        });
+      } catch (error) {
+        // Recorded, not thrown from the finally: a render error stays the
+        // reported failure, and an interrupt reports what was left behind.
+        cleanupFailure = {path: temporaryDirectory, error};
+      }
     }
 
     await failIfInterrupted();
+
+    if (cleanupFailure !== null) {
+      throw cleanupFailure.error;
+    }
 
     return outputPath;
   } catch (error) {
