@@ -35,8 +35,16 @@ The web shell should contain:
 - a Tora Video Engine header;
 - a main content area;
 - one responsive 9:16 preview;
-- basic Player controls;
+- basic Player controls (play/pause, seek bar, time, fullscreen) with no volume controls (see Muted Player);
 - the canonical/example Story passed as \`inputProps\`.
+
+## Muted Player
+
+Tora Stories are video-only. The Player is rendered with `initiallyMuted` and `showVolumeControls={false}`, so it starts muted and offers no mute button or volume slider.
+
+This is also a correctness requirement (issue #24). `@remotion/player` 4.0.529 makes an unmuted Player wait for the shared `AudioContext` to resume before it advances after a buffering pause. If `AudioContext.resume()` never settles, for example on a machine with no audio device, playback freezes at the current frame while the button shows "Pause video". A muted Player skips that wait, and the `AudioContext` is not created at all.
+
+Do not add volume controls or unmute the Player unless Stories gain an audio track.
 
 ## Shared rendering requirement
 
@@ -101,6 +109,7 @@ Exact placement may differ if the build remains clearly separated from the Remot
 - \`npm run web:build\` produces a static build artifact;
 - the canonical story is visible and playable in a Remotion Player;
 - Player duration matches the canonical compiled Story duration;
+- the Player starts muted and shows no volume controls, and playback advances after a buffering pause even when `AudioContext.resume()` never settles;
 - Tora images, backgrounds, captions, and animations render correctly;
 - the caption font is bundled through the existing \`@fontsource-variable/inter\` import/font-loading path rather than duplicated under \`public/\`;
 - resizing the browser does not change composition semantics or crop the Player controls unexpectedly;
