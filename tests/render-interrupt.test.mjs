@@ -768,6 +768,20 @@ describe("killProcessTree", () => {
     assert.deepEqual(spawned, [["taskkill", "/PID", "77", "/T", "/F"]]);
   });
 
+  it("falls back to the child when taskkill exits nonzero", () => {
+    const calls = [];
+    const taskkill = new EventEmitter();
+    const child = {pid: 77, kill: (signal) => calls.push(signal)};
+
+    killProcessTree(child, "SIGTERM", {
+      platform: "win32",
+      spawnProcess: () => taskkill,
+    });
+    taskkill.emit("close", 128);
+
+    assert.deepEqual(calls, ["SIGTERM"]);
+  });
+
   it("signals the child itself when it has no pid", () => {
     const calls = [];
 

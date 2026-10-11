@@ -105,7 +105,10 @@ export type KillTreeDeps = {
     command: string,
     args: string[],
     options: {stdio: "ignore"; windowsHide: true},
-  ) => {on(event: "error", listener: () => void): unknown};
+  ) => {
+    on(event: "error", listener: () => void): unknown;
+    on(event: "close", listener: (code: number | null) => void): unknown;
+  };
 };
 
 /**
@@ -126,10 +129,27 @@ export const killProcessTree = (
   }
 
   if ((deps.platform ?? process.platform) === "win32") {
-    (deps.spawnProcess ?? spawn)("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true,
-    }).on("error", () => child.kill(signal));
+    const fallback = (): void => {
+      try {
+        child.kill(signal);
+      } catch {
+        // Already gone.
+      }
+    };
+    const taskkill = (deps.spawnProcess ?? spawn)(
+      "taskkill",
+      ["/PID", String(child.pid), "/T", "/F"],
+      {stdio: "ignore", windowsHide: true},
+    );
+
+    // `error` is a spawn failure; a nonzero `close` is taskkill failing (for
+    // example access denied). Either way, at least stop the CLI itself.
+    taskkill.on("error", fallback);
+    taskkill.on("close", (code) => {
+      if (code !== 0) {
+        fallback();
+      }
+    });
 
     return;
   }
