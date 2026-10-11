@@ -8,6 +8,7 @@ export default defineConfig({
     "local-asset-preview.spec.mjs",
     "local-asset-render-race.spec.mjs",
     "my-assets-render.spec.mjs",
+    "render-cancel-cleanup.spec.mjs",
   ],
   timeout: 240_000,
   workers: 1,

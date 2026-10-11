@@ -159,4 +159,4 @@ The suite only reads the static site and writes to its own profile under `.gate/
 | `Gate environment is not set` | Do not call `playwright test --config=playwright.gate.config.mjs` directly; use `npm run gate -- ...`. |
 | Netlify check: fail | Read the check list in the report. `check NETLIFY_AUTH_TOKEN` means the token is wrong or lacks access. |
 | Network guard violation | The report lists the request. Something sent data the suite forbids: treat it as a release blocker and investigate before shipping. |
-| Cancel Render item says `cleanup-blocked` | Known app behaviour after cancelling a render; the item still passes as long as authoring unlocks and nothing downloads. |
+| Cancel Render item fails | The item requires the render to settle in `idle` with no `__remotion_render:` OPFS entries left (issue #29). `cleanup-blocked` means the render writer was not released: treat it as a regression. |
