@@ -1529,7 +1529,7 @@ test("a failed Use it as replacement keeps the dialog open and the Story frozen,
 
 // --- Codex round 1 ------------------------------------------------------------------
 
-test("while a rename is being saved, Cancel, Escape and the input are locked, and it completes on release", async ({
+test("while a rename waits for the lock, Save, Escape and the input are locked (Cancel aborts the wait, see #46), and it completes on release", async ({
   page,
 }) => {
   const pose = await readFixture("pose-magenta.png");
@@ -1559,7 +1559,8 @@ test("while a rename is being saved, Cancel, Escape and the input are locked, an
   await card.getByRole("button", {name: "Save"}).click();
 
   await expect(card.getByRole("button", {name: "Save"})).toBeDisabled();
-  await expect(card.getByRole("button", {name: "Cancel"})).toBeDisabled();
+  // Cancel stays enabled while the save waits for the lock (#46); it is not clicked here.
+  await expect(card.getByRole("button", {name: "Cancel"})).toBeEnabled();
   await expect(input).toBeDisabled();
 
   // Escape and Enter do nothing while the save is in flight.
@@ -1787,4 +1788,166 @@ test("Use it as replacement can be cancelled while it waits for the lock: the di
   await release();
   expect(await yamlSource(page)).toBe(yamlBefore);
   await expect(cards(page, "pose")).toHaveCount(0);
+});
+
+// --- #46: cancel a rename or delete that waits for the exclusive library lock ---
+
+const authoringUnlocked = async (page) => {
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-authoring-locked",
+    "false",
+  );
+  await expect(page.getByRole("button", {name: "Add scene"})).toBeEnabled();
+};
+
+const startRenameWhileLockHeld = async (page, card, name) => {
+  await card.getByRole("button", {name: "Rename My cat", exact: true}).click();
+  await card.getByRole("textbox").fill(name);
+  await card.getByRole("button", {name: "Save"}).click();
+  // Saving: the input and Save lock, Cancel stays enabled to abort the wait.
+  await expect(card.getByRole("textbox")).toBeDisabled();
+  await expect(card.getByRole("button", {name: "Save"})).toBeDisabled();
+  await expect(card.getByRole("button", {name: "Cancel"})).toBeEnabled();
+};
+
+test("a rename waiting for the library lock can be cancelled: label unchanged, even after release, and a later rename works (#46)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const yamlBefore = await yamlSource(page);
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await startRenameWhileLockHeld(page, card, "Never saved");
+  await card.getByRole("button", {name: "Cancel"}).click();
+
+  await expect(statusLine(page, "pose")).toHaveText("Rename cancelled.");
+  await expect(alertLine(page, "pose")).toHaveCount(0);
+  await expect(card.getByRole("textbox")).toHaveCount(0);
+  await expect(card).toContainText("My cat");
+  await authoringUnlocked(page);
+
+  // The cancelled request must not run once the other tab lets go.
+  await release();
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(card).toContainText("My cat");
+  await expect(card).not.toContainText("Never saved");
+  expect(await yamlSource(page)).toBe(yamlBefore);
+
+  // A later rename works and clears the notice.
+  await card.getByRole("button", {name: "Rename My cat", exact: true}).click();
+  await card.getByRole("textbox").fill("Better cat");
+  await card.getByRole("button", {name: "Save"}).click();
+  await expect(card).toContainText("Better cat");
+  await expect(statusLine(page, "pose")).not.toHaveText("Rename cancelled.");
+});
+
+test("a rename that waits for the library lock completes once it is released (#46)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await startRenameWhileLockHeld(page, card, "Patient cat");
+  await release();
+
+  await expect(card.getByRole("textbox")).toHaveCount(0);
+  await expect(card).toContainText("Patient cat");
+  await expect(statusLine(page, "pose")).not.toHaveText("Rename cancelled.");
+  await authoringUnlocked(page);
+});
+
+test("a delete waiting for the library lock can be cancelled: the asset stays, even after release, and authoring unlocks (#46)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const dialog = page.getByRole("dialog");
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await dialog.getByRole("button", {name: "Delete asset"}).click();
+
+  // Busy, waiting for the lock: Cancel is the one enabled button.
+  await expect(dialog.getByRole("button", {name: "Delete asset"})).toBeDisabled();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  await expectAuthoringLocked(page);
+
+  await dialog.getByRole("button", {name: "Cancel"}).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(statusLine(page, "pose")).toHaveText("Delete cancelled.");
+  await expect(alertLine(page, "pose")).toHaveCount(0);
+  await authoringUnlocked(page);
+  await expect(card).toContainText("My cat");
+
+  await release();
+  await page.reload({waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await expect(
+    section(page, "pose").getByRole("heading", {name: "My assets · 1"}),
+  ).toBeVisible();
+  await expect(card).toContainText("My cat");
+
+  // A later delete works.
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await dialog.getByRole("button", {name: "Delete asset"}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cards(page, "pose")).toHaveCount(0);
+});
+
+test("a delete waiting for the library lock can be cancelled with Escape (#46)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const dialog = page.getByRole("dialog");
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await dialog.getByRole("button", {name: "Delete asset"}).click();
+  await expect(dialog.getByRole("button", {name: "Delete asset"})).toBeDisabled();
+  await dialog.getByRole("button", {name: "Cancel"}).focus();
+  await page.keyboard.press("Escape");
+
+  await expect(dialog).toHaveCount(0);
+  await expect(statusLine(page, "pose")).toHaveText("Delete cancelled.");
+  await release();
+  await expect(card).toContainText("My cat");
+});
+
+test("a delete that waits for the library lock completes once it is released, and Cancel is gone (#46)", async ({
+  page,
+}) => {
+  const pose = await readFixture("pose-magenta.png");
+
+  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+
+  const card = cardFor(page, "pose", pose.digest);
+  const dialog = page.getByRole("dialog");
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await card.getByRole("button", {name: "Delete My cat", exact: true}).click();
+  await dialog.getByRole("button", {name: "Delete asset"}).click();
+  await expect(dialog.getByRole("button", {name: "Cancel"})).toBeEnabled();
+  await release();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(cards(page, "pose")).toHaveCount(0);
+  await expect(statusLine(page, "pose")).not.toHaveText("Delete cancelled.");
+  await authoringUnlocked(page);
 });

@@ -30,6 +30,9 @@ type AssetDialogHostProps = {
  * App renders it next to the transition panel, outside the disabled authoring
  * fieldset, so the buttons stay enabled while the Story is frozen.
  *
+ * While a confirmed delete or the replacement commit waits for the library
+ * lock (another tab holds it) Cancel stays enabled and abandons the wait.
+ *
  * Failure policy (see AssetDialog in assetLibraryContext.ts): a callback that
  * throws or rejects is always logged with console.error, never left unhandled.
  * A failed confirm/replace also shows its message in a role="alert" line and
@@ -49,6 +52,8 @@ export const AssetDialogHost = ({
   onClose,
 }: AssetDialogHostProps) => {
   const [busy, setBusy] = useState(false);
+  // Set only while a delete waits for the library lock: Cancel then aborts it.
+  const [deleteCancel, setDeleteCancel] = useState<(() => void) | null>(null);
   const [failure, setFailure] = useState<{
     dialog: AssetDialog;
     message: string;
@@ -108,6 +113,7 @@ export const AssetDialogHost = ({
       }
 
       setBusy(false);
+      setDeleteCancel(null);
     });
 
     if (result.ok) {
@@ -143,17 +149,26 @@ export const AssetDialogHost = ({
       : "Use it as replacement for this scene";
   const runPrimary = () =>
     dialog.kind === "delete"
-      ? run(dialog.onConfirm, {closeOnFailure: false, releaseImport: false})
+      ? run(
+          // A function is wrapped: useState would call it as an updater.
+          () => dialog.onConfirm((cancel) => setDeleteCancel(() => cancel)),
+          {closeOnFailure: false, releaseImport: false},
+        )
       : run(dialog.onReplace, {closeOnFailure: false, releaseImport: true});
-  // "Use it as replacement" is waiting for the library lock: Cancel stays
-  // enabled and aborts that wait (the replacement then ends like a Cancel).
-  // Once the lock is granted importCancel is null and the dialog is busy until
-  // the short transaction ends.
-  const cancelsWaitingCommit =
-    dialog.kind === "mismatch" && busy && importCancel !== null;
+  // "Use it as replacement" or the confirmed delete is waiting for the library
+  // lock: Cancel stays enabled and aborts that wait (the replacement then ends
+  // like a Cancel; a cancelled delete closes the dialog and changes nothing).
+  // Once the lock is granted the cancel function is null and the dialog is busy
+  // until the short transaction ends.
+  const waitCancel = !busy
+    ? null
+    : dialog.kind === "mismatch"
+      ? importCancel
+      : deleteCancel;
+  const cancelsWaitingCommit = waitCancel !== null;
   const runCancel = () => {
-    if (cancelsWaitingCommit) {
-      importCancel();
+    if (waitCancel !== null) {
+      waitCancel();
 
       return;
     }
@@ -204,6 +219,9 @@ export const AssetDialogHost = ({
     >
       <strong id={headingId}>{heading}</strong>
       {failureLine}
+      {isDelete && cancelsWaitingCommit ? (
+        <span>Waiting for another tab to finish using My assets…</span>
+      ) : null}
       <div>
         {isDelete ? cancel : primary}
         {isDelete ? primary : cancel}
