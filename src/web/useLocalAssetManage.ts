@@ -5,17 +5,33 @@ import type {
 } from "../localAssets/refs.ts";
 import {AssetLibraryContext} from "./assetLibraryContext.ts";
 import {
+  DELETE_CANCELLED_MESSAGE,
   deleteAssetFlow,
   libraryFromContext,
   renameAssetFlow,
+  type MutationCancelable,
 } from "./localAssetManageFlow.ts";
 
 export type LocalAssetManage = {
   /** A message that outlives the card it is about (for example "deleted in another tab"). */
   notice: string | null;
+  /**
+   * A neutral line (not an error) after the user cancelled a rename/delete that
+   * was waiting for the library lock: "Rename cancelled." / "Delete cancelled.".
+   */
+  cancelledNotice: string | null;
+  /** Clears both `notice` and `cancelledNotice`. */
   clearNotice: () => void;
-  /** Resolves to an inline error message for the card, or null when the card is done editing. */
-  rename: (ref: LocalAssetRef, label: string) => Promise<string | null>;
+  /**
+   * Resolves to an inline error message for the card, or null when the card is
+   * done editing (also after a cancel). `onCancelable` offers Cancel while the
+   * rename waits for the library lock (see MutationCancelable).
+   */
+  rename: (
+    ref: LocalAssetRef,
+    label: string,
+    onCancelable?: MutationCancelable,
+  ) => Promise<string | null>;
   /**
    * Opens the delete dialog. `sceneCount` is the number of scenes the user is
    * looking at that use the ref (the visual draft, see sceneNumbersUsingRef);
@@ -33,41 +49,58 @@ export type LocalAssetManage = {
 export const useLocalAssetManage = (): LocalAssetManage => {
   const context = useContext(AssetLibraryContext);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cancelledNotice, setCancelledNotice] = useState<string | null>(null);
   const contextRef = useRef(context);
 
   contextRef.current = context;
 
-  const clearNotice = useCallback(() => setNotice(null), []);
-
-  const rename = useCallback(async (ref: LocalAssetRef, label: string) => {
-    const current = contextRef.current;
-    const library = current === null ? null : libraryFromContext(current);
-
-    if (current === null || library === null) {
-      return "My assets is not available right now.";
-    }
-
+  const clearNotice = useCallback(() => {
     setNotice(null);
-
-    const outcome = await renameAssetFlow(library, ref, label);
-
-    switch (outcome.kind) {
-      case "renamed":
-        return null;
-      case "invalid":
-        return outcome.message;
-      case "not-found":
-        // Nothing was written, so nothing was announced: refresh by hand.
-        setNotice(outcome.message);
-        current.bumpRefresh();
-
-        return null;
-      case "failed":
-        console.error("My assets rename failed:", outcome.error);
-
-        return outcome.message;
-    }
+    setCancelledNotice(null);
   }, []);
+
+  const rename = useCallback(
+    async (
+      ref: LocalAssetRef,
+      label: string,
+      onCancelable?: MutationCancelable,
+    ) => {
+      const current = contextRef.current;
+      const library = current === null ? null : libraryFromContext(current);
+
+      if (current === null || library === null) {
+        return "My assets is not available right now.";
+      }
+
+      setNotice(null);
+      setCancelledNotice(null);
+
+      const outcome = await renameAssetFlow(library, ref, label, {onCancelable});
+
+      switch (outcome.kind) {
+        case "renamed":
+          return null;
+        case "invalid":
+          return outcome.message;
+        case "not-found":
+          // Nothing was written, so nothing was announced: refresh by hand.
+          setNotice(outcome.message);
+          current.bumpRefresh();
+
+          return null;
+        case "cancelled":
+          // A neutral notice, not an error: the user asked for it.
+          setCancelledNotice(outcome.message);
+
+          return null;
+        case "failed":
+          console.error("My assets rename failed:", outcome.error);
+
+          return outcome.message;
+      }
+    },
+    [],
+  );
 
   const requestDelete = useCallback(
     ({
@@ -89,17 +122,20 @@ export const useLocalAssetManage = (): LocalAssetManage => {
       }
 
       setNotice(null);
+      setCancelledNotice(null);
       current.openAssetDialog({
         kind: "delete",
         ref,
         label,
         category,
         sceneCount,
-        onConfirm: async () => {
-          const result = await deleteAssetFlow(library, ref);
+        onConfirm: async (onCancelable) => {
+          const result = await deleteAssetFlow(library, ref, {onCancelable});
 
           if (result === "not-found") {
             current.bumpRefresh();
+          } else if (result === "cancelled") {
+            setCancelledNotice(DELETE_CANCELLED_MESSAGE);
           }
         },
       });
@@ -107,5 +143,5 @@ export const useLocalAssetManage = (): LocalAssetManage => {
     [],
   );
 
-  return {notice, clearNotice, rename, requestDelete};
+  return {notice, cancelledNotice, clearNotice, rename, requestDelete};
 };

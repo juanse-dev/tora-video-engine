@@ -7,6 +7,7 @@ import type {
   AssetLibraryMessage,
   AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
+import type {MutationCancelable} from "./localAssetManageFlow.ts";
 import type {StoryLocalAssetState} from "./localAssetState.ts";
 
 /**
@@ -17,6 +18,11 @@ import type {StoryLocalAssetState} from "./localAssetState.ts";
  * - A mismatch dialog is the end of an import: App clears `assetImportInFlight`
  *   after `onReplace` settles and after `onCancel` runs, even if they throw.
  *   Callbacks do not need to clear it.
+ * - `onConfirm` gets `onCancelable`: it calls it with a function while the
+ *   delete waits for the exclusive library lock (the host then keeps Cancel
+ *   enabled and calls that function) and with `null` once the lock is granted
+ *   or the delete ends. A cancelled delete resolves like any other, so the
+ *   dialog closes; the callback shows its own "Delete cancelled." notice.
  * - The dialog closes after `onConfirm`/`onReplace` succeed and after
  *   `onCancel` (even if it throws), and only if it is still the open dialog.
  */
@@ -27,7 +33,7 @@ export type AssetDialog =
       label: string;
       category: LocalAssetCategory;
       sceneCount: number;
-      onConfirm: () => Promise<void>;
+      onConfirm: (onCancelable: MutationCancelable) => Promise<void>;
     }
   | {
       kind: "mismatch";
