@@ -14,13 +14,15 @@ Prove end to end, with measurements, that the mix the plan describes is the mix 
 
 | Scene | Duration | Audio | What it proves |
 | --- | --- | --- | --- |
-| — | — | `music`: 220 Hz 10 s **MP3** fixture, `volume: 0.6`, `fadeIn: 0.5`, `fadeOut: 1.0`, default `duck` | loop, fades, ducking |
+| — | — | `music`: 220 Hz 12 s **WAV** fixture (longer than the Story: no loop), `volume: 0.6`, `fadeIn: 0.5`, `fadeOut: 1.0`, default `duck` | fades, ducking |
 | 1 | 3 s | none | **positive control**: music only at a known level |
 | 2 | 3 s | `sfx`: 880 Hz 0.4 s fixture | sfx onset at 3.0 s |
 | 3 | `auto` | `voice`: 440 Hz 2.2 s fixture | auto = 81 frames; ducking during the voice |
-| 4 | 3 s | none | loop seam at ~9.73 s with no dropout; fade-out |
+| 4 | 3 s | none | fade-out |
 
-Total `T = 90 + 90 + 81 + 90 = 351` frames (11.7 s). The music is MP3 on purpose: a native loop would drop out at the seam (S-3), the crossfaded plan must not.
+Total `T = 90 + 90 + 81 + 90 = 351` frames (11.7 s). Pure tones make every other measurement exact, but they cannot verify a loop seam (D-4: crossfading two copies of one tone depends on their phase), so the loop has its own Story:
+
+`stories/audio-loop-reference.yaml`: one 7 s scene, no sfx/voice, `music`: the **2.0 s seeded low-passed noise MP3** fixture (`volume: 1`, no fades, `duck` irrelevant). MP3 on purpose: a native `<Audio loop>` drops out 19–38 ms at each seam (S-3); the crossfaded plan must not. Container duration ≈ 2.032 s → 61 frames, `X = 9`, stride 52 frames: seams at ≈ 1.73, 3.47, 5.20 s.
 
 ## Measurements (shared helper `tests/helpers/audioEnvelope.mjs`)
 
@@ -31,7 +33,7 @@ Decode the MP4's audio to 48 kHz mono float WAV with the repository ffmpeg; for 
 3. **Sfx onset**: 880 Hz is absent (< 5% of its own peak) in 2.8–2.9 s and present in 3.0–3.3 s.
 4. **Ducking**: during 6.3–8.0 s (voice) the 220 Hz magnitude is `0.35 A` ±10%; 440 Hz is present.
 5. **Auto duration**: the video track has exactly 351 frames; 440 Hz is absent after 8.3 s.
-6. **Loop seam** (MP3 container duration ≈ 10.032 s → 301 frames, so the second copy starts at frame 292 ≈ 9.73 s): using 20 ms windows over 9.5–10.5 s, no window has 220 Hz magnitude below `0.8 A` (no dropout; the crossfade bounds the dip at ~0.87 A).
+6. **Loop seam** (loop Story): broadband RMS in 20 ms windows with a 10 ms hop over 0.3–6.7 s stays within `[0.6, 1.6] ×` the median window RMS of the same span. A 19 ms zero gap (the native-loop dropout) pulls a window below 0.3× and fails; the check was validated in task 1 against a synthetic file with a 19 ms gap (must fail) and one without (must pass).
 7. **Fade-out**: 11.6–11.7 s is `< 0.3 A`.
 8. **Silent Story unchanged**: `stories/friday-deploy.yaml` still renders a video-only MP4 that passes the v0.3 golden.
 
@@ -39,12 +41,12 @@ Decode the MP4's audio to 48 kHz mono float WAV with the repository ffmpeg; for 
 
 ### Part A — automated
 
-1. [ ] `tests/helpers/audioEnvelope.mjs` with node:test unit tests on synthetic WAVs (known tones and levels, including a silent file that must fail assertion 1).
-2. [ ] Browser audio golden: `tests/browser/browser-render-audio-golden.spec.mjs` (system Chrome, `playwright.browser-render.config.mjs`): seed the fixtures into My audio, apply the reference Story, render, download, assert the AUDIO-005 metadata check and measurements 1–7; keep the downloaded MP4 as a CI artifact.
-3. [ ] CLI parity: `npm run video -- stories/audio-reference.yaml` with `TORA_LOCAL_ASSETS_ROOT` pointing at an `audio/` copy of the fixtures; same frame count; measurements 1–7; and per 100 ms window the browser and CLI envelopes differ by at most 5% of `A` per frequency after aligning by the best lag in `[-60, +60]` ms (D-15).
+1. [ ] `tests/helpers/audioEnvelope.mjs` with node:test unit tests on synthetic WAVs (known tones and levels, including a silent file that must fail assertion 1, and the seeded noise loop rendered by hand with and without a 19 ms gap for assertion 6).
+2. [ ] Browser audio golden: `tests/browser/browser-render-audio-golden.spec.mjs` (system Chrome, `playwright.browser-render.config.mjs`): seed the fixtures into My audio, render both reference Stories, download, assert the AUDIO-005 metadata check, measurements 1–5 and 7 on the main Story and 6 on the loop Story; keep the downloaded MP4 as a CI artifact.
+3. [ ] CLI parity: `npm run video -- stories/audio-reference.yaml` with `TORA_LOCAL_ASSETS_ROOT` pointing at an `audio/` copy of the fixtures; the same for the loop Story; same frame counts; measurements 1–7; and, on the main Story, per 100 ms window the browser and CLI envelopes differ by at most 5% of `A` per frequency after aligning by the best lag in `[-60, +60]` ms (D-15).
 4. [ ] CI: add both to `.github/workflows/ci.yml` next to the existing goldens; upload the audio MP4s as artifacts.
 5. [ ] GATE-001 extension (`tests/gate/audio-gate.spec.mjs`, network guard on; the guard also flags any request body containing audio magic bytes: `ID3`, MP3 frame sync, `RIFF…WAVE`, `ftyp`, `OggS`):
-   - **Phase A**: import the music MP3 and the voice WAV through My audio; apply the reference Story (sfx from the bundled `ding`, so a bundled file is exercised too); reload and relaunch the profile → My audio, Story and Player recover with no re-import; render and download; metadata check + measurements 1, 3, 4, 5; export YAML has only the expected refs.
+   - **Phase A**: import the 12 s music WAV and the 2.2 s voice MP3 through My audio (two containers); apply the reference Story (sfx from the bundled `ding`, so a bundled file is exercised too); reload and relaunch the profile → My audio, Story and Player recover with no re-import; render and download; metadata check + measurements 1, 3, 4, 5; export YAML has only the expected refs.
    - **Phase B** (after Deploy B, same profile): My audio is still there (IndexedDB version 2), the Story recovers, render with audio succeeds with the same checks.
    - Report rows added to `report.md` (G7) under a new `## v0.4 audio record` table: fixtures, render metadata, measurement results, phase B result.
 6. [ ] Docs: README status line and roadmap, `docs/audio/README.md` exit status, release notes draft.

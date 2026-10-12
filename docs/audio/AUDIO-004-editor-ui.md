@@ -29,7 +29,7 @@ Every audio field can be authored in the visual editor without touching YAML; th
 ### Audio timeline (under the Player)
 
 - Scene blocks proportional to `durationInFrames` with their number; a music lane and an effects/voice lane.
-- Music lane: the music waveform drawn per plan copy, with the gain envelope (fades × ducking × crossfades from the plan's `gainAt`, sampled once per frame column) drawn as a line over it.
+- Music lane: the music waveform drawn per plan copy, with the gain envelope (fades × ducking; the crossfade factors are not drawn, the music is one source) from the plan's `gainAt`, sampled once per frame column) drawn as a line over it.
 - Effects/voice lane: each sfx and voice track's waveform at its `fromFrame`, clipped to `durationInFrames`.
 - A playhead synced to the Player's current frame; click/tap seeks; keyboard: the timeline is one focusable element, `ArrowLeft`/`ArrowRight` seek to the previous/next scene start, `Home`/`End` to the start/end. `aria-label` announces the current scene and time.
 - Missing/pending audio shows a hatched block with the role label instead of a waveform.

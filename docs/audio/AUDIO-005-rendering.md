@@ -32,7 +32,7 @@ Depends on: AUDIO-002, AUDIO-003. Read [README](./README.md) and [ASSET-004](../
 
 - `renderStory` builds `audioDurations` with `buildAudioDurationMap(story, localDurations)`, where `localDurations` come from `inspectAudio` on the matched `local-assets/audio/` files (AINV-3), and passes it in `inputProps` together with the staged audio sources (`{kind: "static", path}` under `__local-assets/`).
 - Missing local audio → the same "missing local assets" error as images, listing audio refs with their roles (`music`, `scene 3 sfx`, `scene 3 voice`).
-- `renderMedia`: `muted: !storyHasAudio(story)`; with audio, `audioCodec: "aac"`, `audioBitrate: "128k"` (D-14). Without audio, the v0.3 call is unchanged.
+- `npm run video` does not call `renderMedia`: `scripts/renderStory.ts` runs the `@remotion/cli` child process with the arguments from `scripts/renderSupport.ts::buildRenderArgs`. That function gains an options parameter, `buildRenderArgs(outputPath, propsPath, publicDir?, {hasAudio})`. With `hasAudio: false` the argument list is **byte-for-byte the v0.3 list** (AINV-6; no `--muted`, no audio flags). With `hasAudio: true` it appends `--audio-codec=aac` and `--audio-bitrate=128k` (D-14; flags verified to exist in `@remotion/renderer` 4.0.529 options `audio-codec`, `audio-bitrate`). Durations reach the composition through the props file (`--props`), which now also contains `audioDurations` next to `story` and the staged sources; `calculateMetadata` (AUDIO-001) reads them.
 - The interrupt guard (#37) already removes the staging directory; audio files are staged into the same directory, so no new cleanup path exists. A test asserts it.
 
 ## Interfaces
@@ -50,12 +50,13 @@ export type BrowserRenderCapability = /* existing */ | {kind: "audio-unsupported
 1. [ ] Readiness: audio usages, audio budget, frame budget with resolved durations, missing-audio blocking.
 2. [ ] Capability with audio (AAC native or WASM, cached per `storyHasAudio`).
 3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
-4. [ ] CLI: durations, staging, missing-audio error, `renderMedia` audio options.
+4. [ ] CLI: durations, staging, missing-audio error, `buildRenderArgs` audio flags and props file contents.
 
 ## Tests
 
 - `tests/web-browser-render.test.mjs` (extend, injected fakes): `muted` and audio options follow `storyHasAudio`; capability probe skipped for silent Stories; WASM registration awaited before deciding; preflight failure (metadata **or** decode) aborts before OPFS cleanup and releases the lease; `AudioDecodeCache` decodes each source once per session, shares in-flight decodes, re-decodes after an invalidation, and abort stops waiting without poisoning the cache; missing-audio blocks; audio budget messages.
-- `tests/render-command.test.mjs` / `tests/cli-local-assets.test.mjs` (extend): audio durations from `local-assets/audio/`, `renderMedia` options with and without audio, missing-audio error text, interrupt cleanup covers staged audio.
+- `tests/render-command.test.mjs` / `tests/cli-local-assets.test.mjs` (extend): `buildRenderArgs` with `hasAudio: false` deep-equals the v0.3 list; with `hasAudio: true` it contains `--audio-codec=aac` and `--audio-bitrate=128k` exactly once; the props file contains `audioDurations` from `local-assets/audio/` (and bundled entries); missing-audio error text; interrupt cleanup covers staged audio.
+- `tests/cli-local-assets.e2e.mjs` (extend, real CLI): a Story with a bundled sfx renders an MP4 whose ffprobe shows one AAC 48 kHz stereo stream at ~128 kb/s (±10%) and 360 video frames; `stories/friday-deploy.yaml` still has no audio stream.
 - `tests/browser/browser-rendering.spec.mjs` (extend, system Chrome): a Story with a bundled sfx renders and downloads an MP4 with one AAC 48 kHz stereo track; a Story whose local voice was deleted cannot render; a local audio asset seeded (`tests/browser/helpers/seedAssetLibrary.mjs`, digest computed from the seeded bytes so integrity passes) with a file whose metadata parses but whose samples do not decode fails the preflight quickly with the `cannot be used for rendering` message instead of stalling; a silent Story still produces a video-only MP4.
 
 ## Verify

@@ -96,7 +96,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 
 ### `src/web/persistence.ts`
 
-`PERSISTENCE_VERSION_AUDIO = 3`. Writing: version 3 iff `storyHasAudio(story)`, else the v0.3 rule (2 iff local refs, else 1). Reading accepts 1, 2, 3; a version 1 or 2 envelope whose Story uses an audio feature is rejected like v0.3 rejects local refs in version 1 (`Stored project version N cannot contain audio.`).
+`PERSISTENCE_VERSION_AUDIO = 3`. Versions only ever go **up** for a durable project, extending today's `requiredPersistenceVersion(story, durableVersion)` (which already keeps a promoted v2 at v2 after the last local ref is removed): `requiredPersistenceVersion = max(durableVersion ?? 1, storyHasAudio(story) ? 3 : storyHasLocalAssetRefs(story) ? 2 : 1)`, evaluated under the existing writer lock. So a v2 project edited to bundled-only stays v2, and a v3 project whose last audio is removed stays v3; a never-promoted project is written at the lowest version its content needs (AINV-6). Reading accepts 1, 2, 3; a version 1 or 2 envelope whose Story uses an audio feature is rejected like v0.3 rejects local refs in version 1 (`Stored project version N cannot contain audio.`).
 
 ## Tasks
 
@@ -114,7 +114,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 - `tests/story-audio-schema.test.mjs`: every field's bounds (0, 1, 10, negative, NaN, >1, >10), strictness (unknown key in each audio object rejected), `auto` without voice rejected at the right path, `auto` with voice accepted, frame-total check ignores `auto`, `storyHasAudio` for each feature alone and for none.
 - `tests/timeline.test.mjs` (extend): `auto` with a known duration (`2.2 s` at 30 FPS → `ceil(2.7 × 30) = 81` frames, `durationSource: "voice"`), unknown → 90 frames `fallback`, fixed scenes unchanged, cumulative `from` correct across mixed scenes, `buildAudioDurationMap` adds bundled durations and skips null ones.
 - `tests/story-source.test.mjs` (extend): YAML round-trip for a Story with every audio field and with none; canonical output omits defaults.
-- `tests/persistence-v3.test.mjs`: write version 1/2/3 by feature, read all three, reject audio in version 1/2, v0.3 reader fixture treats version 3 as unsupported.
+- `tests/persistence-v3.test.mjs`: first promotions 1→2 (local ref), 1→3 (audio), 2→3 (audio added to a v2 project); monotonic cases v2 → bundled-only stays 2, v3 → no audio stays 3, v3 → no audio and no local refs stays 3; a fresh project with no durable version is written at 1/2/3 by content; read all three; reject audio in version 1/2; the v0.3 reader fixture treats version 3 as unsupported.
 - `tests/bundled-audio.test.mjs`: every catalog entry with a non-null `file` exists, has a LICENSES row, and the generator is deterministic (hash twice).
 - Existing suites unchanged and green (AINV-6), including the browser-render golden.
 
