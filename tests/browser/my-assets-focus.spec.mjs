@@ -38,7 +38,8 @@ test.beforeEach(async ({page, browserName}) => {
   // thread inside the app's start-up check for browser MP4 export
   // (canRenderMediaOnWeb probing VideoEncoder), so the app never renders.
   // Dialog focus does not depend on that check; without WebCodecs it settles
-  // at once as "unsupported". Safari itself is not affected by this build.
+  // at once as "unsupported". Whether real Safari is affected is unverified:
+  // this is a test-environment workaround, not evidence that Safari is fine.
   await page.addInitScript(() => {
     for (const name of [
       "VideoEncoder",
@@ -161,7 +162,13 @@ for (const closer of ["cancel", "escape"]) {
 
 test("the mismatch dialog leaves focus on the page body after Use it as replacement removed the missing card", async ({
   page,
+  browserName,
 }) => {
+  test.skip(
+    browserName === "webkit",
+    "Playwright's ephemeral WebKit contexts cannot store a Blob in IndexedDB, so the replacement cannot be saved; the same focus contract (opener removed, focus on body) is covered in WebKit by the delete tests.",
+  );
+
   const {input, dialog} = await openMismatchDialog(page);
 
   await dialog
