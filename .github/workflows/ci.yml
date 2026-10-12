@@ -83,8 +83,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        # Firefox and WebKit only run the focus-restore spec (#48).
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Verify Player resource buffering
         run: npm run test:browser
