@@ -4,7 +4,7 @@ import {defineConfig} from "@playwright/test";
 // differ (Safari and Firefox do not focus a button on click and restore focus
 // differently), so it also runs in Firefox and WebKit. Everything else stays
 // on the bundled Chromium only, which keeps CI time small.
-const CROSS_BROWSER_SPECS = ["my-assets-focus.spec.mjs", "zz-webkit-diagnostic.spec.mjs"];
+const CROSS_BROWSER_SPECS = ["my-assets-focus.spec.mjs"];
 
 export default defineConfig({
   testDir: "tests/browser",
