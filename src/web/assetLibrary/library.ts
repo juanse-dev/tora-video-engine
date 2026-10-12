@@ -104,9 +104,15 @@ export const normalizeLocalAssetLabel = (
 
 /** Rejection of a rename/delete whose wait for the library lock was cancelled; nothing was written. */
 export class LocalAssetMutationCancelledError extends Error {
+  cause?: unknown;
+
   constructor(options?: {cause?: unknown}) {
-    super("The change was cancelled before it started.", options);
+    super("The change was cancelled before it started.");
     this.name = "LocalAssetMutationCancelledError";
+
+    if (options?.cause !== undefined) {
+      this.cause = options.cause;
+    }
   }
 }
 
