@@ -12,11 +12,46 @@
 import {expect, test} from "@playwright/test";
 import {
   buildStoryYaml,
-  fixtureRecord,
   localAssetRef,
+  metadataOnlyRecord,
   readFixture,
+  syntheticDigest,
 } from "./helpers/seedAssetLibrary.mjs";
 import {applyYaml, openSeeded} from "./helpers/localAssetPage.mjs";
+
+// The seeded asset has a row and metadata but no stored image: the delete dialog
+// does not need one, and Playwright's WebKit cannot store a Blob in IndexedDB
+// in its ephemeral browser contexts, so seeding one would fail there.
+const SEEDED_META = {
+  mimeType: "image/png",
+  byteSize: 1000,
+  width: 10,
+  height: 10,
+};
+
+test.beforeEach(async ({page, browserName}) => {
+  if (browserName !== "webkit") {
+    return;
+  }
+
+  // Playwright's Linux WebKit exposes WebCodecs but freezes the page's main
+  // thread inside the app's start-up check for browser MP4 export
+  // (canRenderMediaOnWeb probing VideoEncoder), so the app never renders.
+  // Dialog focus does not depend on that check; without WebCodecs it settles
+  // at once as "unsupported". Safari itself is not affected by this build.
+  await page.addInitScript(() => {
+    for (const name of [
+      "VideoEncoder",
+      "VideoDecoder",
+      "AudioEncoder",
+      "AudioDecoder",
+      "VideoFrame",
+      "AudioData",
+    ]) {
+      delete window[name];
+    }
+  });
+});
 
 const cardFor = (page, digest) =>
   page.locator(`[data-local-asset-card="${localAssetRef("pose", digest)}"]`);
@@ -38,9 +73,11 @@ const fileUpload = (fixture) => ({
 
 /** Opens the delete dialog for the seeded pose from the keyboard. */
 const openDeleteDialog = async (page) => {
-  const pose = await readFixture("pose-magenta.png");
+  const pose = {digest: syntheticDigest(1)};
 
-  await openSeeded(page, [fixtureRecord("pose", pose, {label: "My cat"})]);
+  await openSeeded(page, [
+    metadataOnlyRecord("pose", 1, SEEDED_META, {label: "My cat"}),
+  ]);
 
   const deleteButton = cardFor(page, pose.digest).getByRole("button", {
     name: "Delete My cat",
