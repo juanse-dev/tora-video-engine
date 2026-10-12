@@ -71,7 +71,7 @@ Bundled: `staticFile(entry.file)` when `file` is non-null, else `missing`. Local
 
 ### `src/components/StoryAudio.tsx`
 
-Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames={track.durationInFrames} layout="none"><Audio src={…} volume={(f) => track.gainAt(track.fromFrame + f)} /></Sequence>`, with `Audio` from `@remotion/media`. `isAvailable` is `resolveAudioSrc(...).kind === "audio"`. Mounted in `ToraVideo` next to `StoryRenderer` (inside `LocalAssetSourcesProvider`). Renders nothing for a Story without audio.
+Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames={track.durationInFrames} layout="none"><Audio src={…} volume={(f) => track.gainAt(track.fromFrame + f)} /></Sequence>`, with `Audio` from `@remotion/media`. `isAvailable` is `resolveAudioSrc(...).kind === "audio"`. Mounted in `ToraVideo` next to `StoryRenderer` (inside `LocalAssetSourcesProvider`), and given the **same** timeline object `ToraVideo` compiled for `StoryRenderer` (AUDIO-001, one timeline per composition). Renders nothing for a Story without audio.
 
 ### Player (`src/web/components/Preview.tsx`)
 

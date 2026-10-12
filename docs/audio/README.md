@@ -47,6 +47,7 @@ Define each constant exactly once, in the file listed. Import it everywhere else
 | `AUDIO_TRUNCATION_TOLERANCE_SECONDS` | `0.25` | `src/localAssets/limits.ts` |
 | `AUTO_DURATION_PADDING_SECONDS` | `0.5` | `src/audio/constants.ts` |
 | `AUTO_DURATION_FALLBACK_SECONDS` | `3` | `src/audio/constants.ts` |
+| `AUTO_DURATION_MIN_FRAMES` | `ceil(AUTO_DURATION_PADDING_SECONDS × fps) + 1` (16 at 30 FPS) | `src/audio/constants.ts` (as a function of `fps`) |
 | `DEFAULT_AUDIO_VOLUME` | `1` | `src/audio/constants.ts` |
 | `DEFAULT_MUSIC_DUCK` | `0.35` | `src/audio/constants.ts` |
 | `DUCK_RAMP_SECONDS` | `0.15` | `src/audio/constants.ts` |
@@ -136,7 +137,7 @@ Story (pure schema) ──► compileTimeline(story, fps, audioDurations) ──
 
 ### Browser storage layout (IndexedDB version 2)
 
-Unchanged stores keep their v0.3 contents. New: `waveforms` (key: digest, value: `{digest, peaksPerSecond, peaks: Uint8Array}`). Audio rows live in the existing `assets` store under `local:audio:sha256:…` keys with metadata `{durationSeconds, sampleRate, channels, container, codec}`; payload bytes live in the existing payload store, verified by the D-8 integrity cache (its per-payload ceiling becomes 50 MiB).
+Unchanged stores (`assets`, `payloadMeta`, `blobs`, `thumbnails`) keep their v0.3 contents. New: `waveforms` (key: digest, value: `{digest, peaksPerSecond, peaks: Uint8Array}`). Audio rows live in `assets` under `local:audio:sha256:…` keys, shaped like image rows; per-digest audio metadata `{kind: "audio", mimeType, byteSize, container, codec, durationSeconds, sampleRate, channels}` lives in `payloadMeta` and the bytes in `blobs`, verified by the D-8 integrity cache (its per-payload ceiling becomes 50 MiB). See AUDIO-003.
 
 ## Execution order
 

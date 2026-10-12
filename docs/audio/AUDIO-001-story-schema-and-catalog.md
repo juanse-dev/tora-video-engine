@@ -12,10 +12,10 @@ A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The s
 
 - `duration` becomes `number | "auto"`. `"auto"` without `voice` is a schema error at `scenes[i].duration`: `duration: auto requires a voice`.
 - `volume`, `duck`: finite numbers in `[0, 1]`. `fadeIn`, `fadeOut`: finite numbers in `[0, MAX_FADE_SECONDS]`. Out-of-range values are schema errors.
-- The Story-level frame-total check in `StorySchema.superRefine` counts only numeric durations; `auto` scenes are checked later by the browser policy with resolved durations (AUDIO-005).
-- `compileTimeline(story, fps, audioDurations?)`: `audioDurations` is `AudioDurationMap = Readonly<Partial<Record<AudioRef, number>>>` (seconds). Each `TimelineScene` gains `durationSource: "fixed" | "voice" | "fallback"`. Without the map (or without the voice's entry) an `auto` scene uses `AUTO_DURATION_FALLBACK_SECONDS` and `durationSource: "fallback"`.
+- The Story-level frame-total check in `StorySchema.superRefine` counts only numeric durations; `auto` scenes are bounded by the browser policy (lower bound at acceptance) and by render readiness (exact durations), see AUDIO-005.
+- `compileTimeline(story, fps, audioDurations)`: `audioDurations` is `AudioDurationMap = Readonly<Partial<Record<AudioRef, number>>>` (seconds). Each `TimelineScene` gains `durationSource: "fixed" | "voice" | "fallback"`. Without the voice's entry in the map an `auto` scene uses `AUTO_DURATION_FALLBACK_SECONDS` and `durationSource: "fallback"`.
 - `storyHasAudio(story)` is true when any of `music`, a scene `sfx`, a scene `voice`, or a scene `duration: "auto"` is present. It drives persistence version 3 (D-11), the render `muted` flag (D-13) and the "no change" guarantee (AINV-6).
-- Bundled music entries exist in the catalog from the start with `file: null` until the owner supplies the files (task 6). A Story referencing a bundled id whose `file` is null is treated as a **missing** audio asset (AINV-5), never as a schema error.
+- Bundled music entries exist in the catalog from the start with `file: null` until the owner supplies the files (task 7). A Story referencing a bundled id whose `file` is null is treated as a **missing** audio asset (AINV-5), never as a schema error.
 
 ## Files
 
@@ -26,7 +26,8 @@ A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The s
 | `src/audio/constants.ts` | new: plan/output/waveform constants from the README table |
 | `src/audio/catalog.ts` | new: bundled audio catalog |
 | `src/story/schema.ts`, `src/story/types.ts` | audio schemas and types |
-| `src/story/timeline.ts`, `src/story/metadata.ts` | `audioDurations`, `durationSource` |
+| `src/story/timeline.ts`, `src/story/metadata.ts`, `src/renderPlan.ts` | required `audioDurations`, `durationSource` |
+| `src/StoryRenderer.tsx`, `src/web/previewConfig.ts`, `src/web/App.tsx`, `src/web/components/Preview.tsx` | consume the one shared timeline / map (see below) |
 | `src/story/serializeStory.ts` | canonical field order, omit unset optionals |
 | `src/Video.tsx`, `src/Root.tsx` | `audioDurations` prop → `calculateMetadata` |
 | `src/web/persistence.ts` | version 3 |
@@ -87,10 +88,12 @@ export type TimelineScene = StoryScene & {
   durationInFrames: number;
   durationSource: "fixed" | "voice" | "fallback";
 };
-export const compileTimeline: (story: Story, fps: number, audioDurations?: AudioDurationMap) => Timeline;
+export const compileTimeline: (story: Story, fps: number, audioDurations: AudioDurationMap) => Timeline;
 ```
 
-`auto` frames = `Math.ceil((seconds + AUTO_DURATION_PADDING_SECONDS) * fps)`; the existing safe-integer checks apply to the result. `getStoryMetadata(story, fps, audioDurations?)` forwards the map. `ToraVideoProps` gains `audioDurations?: AudioDurationMap`; `Root.tsx`'s `calculateMetadata` passes `props.audioDurations`.
+`auto` frames = `Math.ceil((seconds + AUTO_DURATION_PADDING_SECONDS) * fps)`; the existing safe-integer checks apply to the result.
+
+**One timeline per composition.** With `auto`, every consumer of the timeline must use the same map, or the scenes' visual `Sequence`s, the composition length and the audio plan disagree. So `audioDurations` is a **required** parameter (pass `{}` explicitly when there is no audio; the type checker then finds every caller): `compileTimeline`, `getStoryMetadata(story, fps, audioDurations)`, `buildStoryRenderPlan(story, fps, audioDurations)` and `getWebPlayerConfig(story, audioDurations)`. `ToraVideoProps` gains `audioDurations?: AudioDurationMap` (default `{}`); `ToraVideo` compiles the timeline **once** and passes it to both `StoryRenderer` (whose `buildStoryRenderPlan` then takes the timeline, not the Story) and `StoryAudio` (AUDIO-002). `Root.tsx`'s `calculateMetadata` passes `props.audioDurations ?? {}`. In the web app, `App.tsx` (its `previewConfig`) and `Preview` use the same map object the Player receives in `inputProps`. Today's callers: `src/Root.tsx`, `src/StoryRenderer.tsx`/`src/renderPlan.ts`, `src/web/previewConfig.ts` (from `App.tsx` and `Preview.tsx`), `src/web/browserPolicy.ts` (see AUDIO-005 for its bound).
 
 The bundled entries' durations are **not** injected implicitly by `compileTimeline`; callers build the full map with `buildAudioDurationMap(story, localDurations)` (in `src/audio/catalog.ts`), which adds every non-null bundled `durationSeconds` the Story references. This keeps the timeline a pure function of its inputs.
 
@@ -112,6 +115,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 
 - `tests/audio-refs.test.mjs`: grammar (valid/invalid refs, uppercase hex rejected, category prefix), `isBundledAudio`.
 - `tests/story-audio-schema.test.mjs`: every field's bounds (0, 1, 10, negative, NaN, >1, >10), strictness (unknown key in each audio object rejected), `auto` without voice rejected at the right path, `auto` with voice accepted, frame-total check ignores `auto`, `storyHasAudio` for each feature alone and for none.
+- `tests/render-plan.test.mjs` (new or extend): for a Story with a 2.2 s `auto` voice, the scene `Sequence` positions from `buildStoryRenderPlan`, `getStoryMetadata` and `getWebPlayerConfig` agree frame for frame when given the same map (81-frame scene, later scenes shifted accordingly).
 - `tests/timeline.test.mjs` (extend): `auto` with a known duration (`2.2 s` at 30 FPS → `ceil(2.7 × 30) = 81` frames, `durationSource: "voice"`), unknown → 90 frames `fallback`, fixed scenes unchanged, cumulative `from` correct across mixed scenes, `buildAudioDurationMap` adds bundled durations and skips null ones.
 - `tests/story-source.test.mjs` (extend): YAML round-trip for a Story with every audio field and with none; canonical output omits defaults.
 - `tests/persistence-v3.test.mjs`: first promotions 1→2 (local ref), 1→3 (audio), 2→3 (audio added to a v2 project); monotonic cases v2 → bundled-only stays 2, v3 → no audio stays 3, v3 → no audio and no local refs stays 3; a fresh project with no durable version is written at 1/2/3 by content; read all three; reject audio in version 1/2; the v0.3 reader fixture treats version 3 as unsupported.
