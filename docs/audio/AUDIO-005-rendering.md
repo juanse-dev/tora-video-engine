@@ -20,7 +20,11 @@ Depends on: AUDIO-002, AUDIO-003. Read [README](./README.md) and [ASSET-004](../
 ### Transaction
 
 - `prepareLocalAssets` (ASSET-004) prepares audio refs exactly like images: verified payload → object URL, held by the render lease until the post-render cleanup; a change between preparation and render returns `assets-changed`.
-- **Preflight** (AINV-8), inside the same preparation and before OPFS cleanup: for every audio source the plan will use (bundled and local), `inspectAudio` on the bytes the render will read (bundled: fetched once per page session and cached by id; local: the verified payload) must succeed and match the expected duration within 1 ms; for local refs this is the integrity check already performed, for bundled ones it is new. Failure → `{kind: "failure"}` with `Audio file <label> cannot be used for rendering.` and no render. `delayRenderTimeoutInMilliseconds` is set to `30_000` for renders with audio so a source that still stalls fails with a clear timeout instead of hanging.
+- **Preflight** (AINV-8), inside the same preparation and before OPFS cleanup, for every audio source the plan will use (bundled and local), on the exact bytes the render will read (bundled: fetched once per page session and cached by id; local: the verified payload):
+  1. `inspectAudio` succeeds and matches the expected duration within 1 ms (for local refs this is the integrity check already performed; for bundled ones it is new);
+  2. **a full decode in this page session**: `decodeAudioPeaks` (AUDIO-003) completes without error and its decoded length passes the truncation rule (D-9). Import-time decoding does not count: after a reload, bytes whose metadata still parses could fail to decode, and only a decode proves the renderer will not stall on them.
+
+  Results are cached per digest (local) or id (bundled) for the page session in a `AudioDecodeCache` that follows the integrity cache's rules (D-8 of ASSET-004 R14: one decode at a time page-wide, in-flight sharing per digest, invalidation by a library change wins over an in-flight result, abort only stops waiting). A Story's first render therefore pays at most one decode per distinct source (S-7: ~1 s for a 300 s MP3), later renders none. The preflight honours the render's abort signal. Failure → `{kind: "failure"}` with `Audio file <label> cannot be used for rendering.` and no render. `delayRenderTimeoutInMilliseconds` is set to `30_000` for renders with audio so a source that still stalls fails with a clear timeout instead of hanging.
 - `renderMediaOnWeb`: `muted: !storyHasAudio(story)`; with audio, `audioCodec: "aac"`, `audioBitrate: OUTPUT_AUDIO_BITRATE`; `inputProps` include `audioDurations` and the local sources (images + audio). Cancel keeps settling `idle` (v0.3.1).
 - Post-render metadata check (extends the existing download check): with audio, the file must have exactly one AAC track, 48 kHz, 2 channels, and an audio duration within `1 / fps` + 60 ms of the video track; the video track keeps the v0.3 checks (H.264, 1080×1920, 30 FPS, frame count = plan `T`). Without audio, the v0.3 check is unchanged (no audio track).
 
@@ -45,14 +49,14 @@ export type BrowserRenderCapability = /* existing */ | {kind: "audio-unsupported
 
 1. [ ] Readiness: audio usages, audio budget, frame budget with resolved durations, missing-audio blocking.
 2. [ ] Capability with audio (AAC native or WASM, cached per `storyHasAudio`).
-3. [ ] Preparation + preflight + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
+3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
 4. [ ] CLI: durations, staging, missing-audio error, `renderMedia` audio options.
 
 ## Tests
 
-- `tests/web-browser-render.test.mjs` (extend, injected fakes): `muted` and audio options follow `storyHasAudio`; capability probe skipped for silent Stories; WASM registration awaited before deciding; preflight failure aborts before OPFS cleanup and releases the lease; missing-audio blocks; audio budget messages.
+- `tests/web-browser-render.test.mjs` (extend, injected fakes): `muted` and audio options follow `storyHasAudio`; capability probe skipped for silent Stories; WASM registration awaited before deciding; preflight failure (metadata **or** decode) aborts before OPFS cleanup and releases the lease; `AudioDecodeCache` decodes each source once per session, shares in-flight decodes, re-decodes after an invalidation, and abort stops waiting without poisoning the cache; missing-audio blocks; audio budget messages.
 - `tests/render-command.test.mjs` / `tests/cli-local-assets.test.mjs` (extend): audio durations from `local-assets/audio/`, `renderMedia` options with and without audio, missing-audio error text, interrupt cleanup covers staged audio.
-- `tests/browser/browser-rendering.spec.mjs` (extend, system Chrome): a Story with a bundled sfx renders and downloads an MP4 with one AAC 48 kHz stereo track; a Story whose local voice was deleted cannot render; a silent Story still produces a video-only MP4.
+- `tests/browser/browser-rendering.spec.mjs` (extend, system Chrome): a Story with a bundled sfx renders and downloads an MP4 with one AAC 48 kHz stereo track; a Story whose local voice was deleted cannot render; a local audio asset seeded (`tests/browser/helpers/seedAssetLibrary.mjs`, digest computed from the seeded bytes so integrity passes) with a file whose metadata parses but whose samples do not decode fails the preflight quickly with the `cannot be used for rendering` message instead of stalling; a silent Story still produces a video-only MP4.
 
 ## Verify
 

@@ -29,7 +29,7 @@ Referenced from the specs as `AINV-n`. The v0.3 invariants `INV-1`…`INV-12` ([
 | AINV-5 | A missing, corrupt or not-yet-ready audio ref never falls back to another sound and never silences the render silently: its track is omitted in the preview, the editor shows it, and MP4 render is blocked (extends INV-5). |
 | AINV-6 | A Story that uses no audio produces exactly the v0.3 output: `muted: true`, a video-only MP4, persistence envelope version 1 or 2. |
 | AINV-7 | Every audio source is bounded **before** expensive work: bytes `> 0` and `≤ 50 MiB`; exactly one audio track and no video track; duration `> 0` and `≤ 300 s`; sample rate 8–96 kHz; 1 or 2 channels. |
-| AINV-8 | Every audio source a render uses was preflighted in the same page session (container, single audio track, no video track, decodable, plausible duration) before `renderMediaOnWeb` starts (S-9: a bad source otherwise hangs the render ~28 s on an opaque `delayRender` timeout). |
+| AINV-8 | Every audio source a render uses was preflighted in the same page session — metadata (container, single audio track, no video track, plausible duration) **and a full decode** of the exact bytes the render will read — before `renderMediaOnWeb` starts (S-9: a bad source otherwise hangs the render ~28 s on an opaque `delayRender` timeout). |
 | AINV-9 | Output audio is AAC-LC, 48 kHz, stereo, 128 kb/s, in the browser **and** the CLI. |
 
 ## Shared constants
@@ -52,6 +52,7 @@ Define each constant exactly once, in the file listed. Import it everywhere else
 | `DUCK_RAMP_SECONDS` | `0.15` | `src/audio/constants.ts` |
 | `DUCK_MERGE_GAP_SECONDS` | `0.3` | `src/audio/constants.ts` |
 | `MUSIC_CROSSFADE_SECONDS` | `0.3` | `src/audio/constants.ts` |
+| `MIN_LOOPING_MUSIC_SECONDS` | `1` | `src/audio/constants.ts` |
 | `MAX_FADE_SECONDS` | `10` | `src/audio/constants.ts` |
 | `OUTPUT_AUDIO_SAMPLE_RATE` | `48_000` | `src/audio/constants.ts` |
 | `OUTPUT_AUDIO_BITRATE` | `128_000` | `src/audio/constants.ts` |

@@ -37,7 +37,7 @@ Every audio field can be authored in the visual editor without touching YAML; th
 
 ### Warnings (inline, near the relevant control; `role="status"`)
 
-From `plan.issues` and `plan.maxSimultaneousGain`: `Voice is cut by 1.2 s.` (scene), `Fades shortened to fit the Story.` (music panel), `Audio not available: render blocked.` (the field whose ref is missing), `The mix may clip (peak gain 1.4).` (music panel). Budget failures come from AUDIO-005's readiness message.
+From `plan.issues` and `plan.maxSimultaneousGain`: `Voice is cut by 1.2 s.` (scene), `Fades shortened to fit the Story.` (music panel), `Audio not available: render blocked.` (the field whose ref is missing), `The mix may clip (peak gain 1.4).` (music panel), `This music is too short to loop (under 1 s); it plays once.` (music panel). Budget failures come from AUDIO-005's readiness message.
 
 ## Decisions specific to this spec
 

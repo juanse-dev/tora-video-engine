@@ -13,7 +13,7 @@ One pure function, `compileAudioPlan`, decides every sound in the video: where i
 All times below are in frames at the composition FPS; seconds are converted with `Math.round(seconds * fps)` unless stated. `T` = `timeline.durationInFrames`.
 
 - **Track sources.** A track is emitted only when its ref's duration is in `audioDurations` **and** the caller marks its source as available (`isAvailable(ref)`). Otherwise the plan records an issue `{kind: "missing-audio", ref, role, sceneIndex?}` and emits nothing for it (AINV-5).
-- **Music.** Let `D = round(musicSeconds * fps)`, `X = round(MUSIC_CROSSFADE_SECONDS * fps)`. If `D >= T`, one copy `[0, T)`. Otherwise copies start at `k * (D - X)` for `k = 0, 1, …` while the start is `< T`; copy `k` lasts `min(D, T - start)`. In each overlap of `X` frames the outgoing copy's gain falls linearly 1→0 and the incoming one's rises 0→1 (equal-gain linear crossfade). No `<Audio loop>` (D-4).
+- **Music.** Let `D = max(1, round(musicSeconds * fps))`. If `D >= T`, one copy `[0, T)`. If `musicSeconds < MIN_LOOPING_MUSIC_SECONDS`, one copy `[0, min(D, T))` (no loop) and the plan records `{kind: "music-too-short-to-loop"}`. Otherwise let `X = min(round(MUSIC_CROSSFADE_SECONDS * fps), floor(D / 2))`, so the stride `S = D - X >= ceil(D / 2) >= 1` is always positive and copies cannot pile up; copies start at `k * S` for `k = 0, 1, …` while the start is `< T`; copy `k` lasts `min(D, T - start)`. In each overlap of `X` frames the outgoing copy's gain falls linearly 1→0 and the incoming one's rises 0→1 (equal-gain linear crossfade); with `X = 0` copies abut. No `<Audio loop>` (D-4). With `MIN_LOOPING_MUSIC_SECONDS = 1` and `T <= 9_000`, a Story has at most `ceil(9_000 / 21) = 429` music copies, and `<Sequence>` mounts only the ones overlapping the current frame.
 - **Music envelope.** `gain(f) = volume × fade(f) × duckGain(f) × crossfade(f)`, where `fade` is a linear ramp over `fadeIn` from frame 0 and over `fadeOut` to frame `T`; if `fadeIn + fadeOut > T / fps`, both are scaled by `(T / fps) / (fadeIn + fadeOut)` and the plan records `{kind: "fades-scaled"}` (D-5).
 - **Sfx.** Starts at its scene's `from`; lasts `min(round(sfxSeconds * fps), T - from)` frames; constant gain `volume` (default 1).
 - **Voice.** Starts at its scene's `from`; lasts `min(round(voiceSeconds * fps), scene.durationInFrames)`; constant gain `volume`. If the voice is longer than a **fixed** scene, the plan records `{kind: "voice-cut", sceneIndex, seconds}` with the cut length in seconds (D-3).
@@ -38,7 +38,8 @@ export type AudioPlanTrack = {
 export type AudioPlanIssue =
   | {kind: "missing-audio"; ref: AudioRef; role: AudioRole; sceneIndex: number | null}
   | {kind: "voice-cut"; sceneIndex: number; seconds: number}
-  | {kind: "fades-scaled"};
+  | {kind: "fades-scaled"}
+  | {kind: "music-too-short-to-loop"};
 export type AudioPlan = {
   tracks: readonly AudioPlanTrack[];
   issues: readonly AudioPlanIssue[];
@@ -88,6 +89,8 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - no audio → empty plan;
   - music shorter than the Story → copies at `k × (300 − 9)` frames (`X = round(0.3 × 30) = 9`), last copy truncated at `T`, crossfade gains sum to 1 at every overlap frame;
   - music longer than the Story → one copy;
+  - music shorter than `MIN_LOOPING_MUSIC_SECONDS` (the 0.12 s `pop`) → one copy, no loop, `music-too-short-to-loop` issue, the function terminates;
+  - music of 1.0 s at 30 FPS → `X = min(9, 15) = 9`, stride 21; music of 0.5 s is below the minimum; a duration where `floor(D / 2) < round(0.3 × fps)` clamps `X` and every stride is `>= 1`;
   - fade-in/out values at their endpoints and midpoints; fades scaled + issue when too long;
   - sfx crossing into the next scene keeps playing; sfx past the Story end is truncated;
   - voice cut + `voice-cut` issue with the right seconds; no issue for `auto` scenes;
