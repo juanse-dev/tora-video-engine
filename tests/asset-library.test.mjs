@@ -18,6 +18,7 @@ import {
   deleteLocalAsset,
   listLocalAssetPage,
   loadThumbnailForDisplay,
+  LocalAssetMutationCancelledError,
   normalizeLocalAssetLabel,
   renameLocalAsset,
 } from "../src/web/assetLibrary/library.ts";
@@ -848,6 +849,152 @@ test("a throwing channel does not fail a successful mutation", async () => {
   };
 
   assert.equal((await renameLocalAsset(library, POSE, "Ok")).kind, "renamed");
+});
+
+/** Another holder of the exclusive library lock until the returned `release()`. */
+const holdExclusiveLock = (library) => {
+  let release = () => {};
+  const held = withAssetLibraryLock(
+    library.locks,
+    "exclusive",
+    () => new Promise((resolve) => (release = resolve)),
+  );
+
+  return {release: () => release(), held};
+};
+
+for (const [name, mutate] of [
+  [
+    "rename",
+    (library, ref, options) =>
+      renameLocalAsset(library, ref, "Renamed", options),
+  ],
+  [
+    "delete",
+    (library, ref, options) => deleteLocalAsset(library, ref, options),
+  ],
+]) {
+  test(`a ${name} waiting for the lock can be cancelled and then changes nothing (#46)`, async () => {
+    const library = makeLibrary();
+
+    await library.store.apply(importMutation(POSE));
+    library.store.applyCalls.length = 0;
+
+    const {release, held} = holdExclusiveLock(library);
+    const controller = new AbortController();
+    let acquired = 0;
+    const pending = mutate(library, POSE, {
+      signal: controller.signal,
+      onLockAcquired: () => {
+        acquired += 1;
+      },
+    });
+
+    await Promise.resolve();
+    controller.abort();
+    await assert.rejects(
+      pending,
+      (error) => error instanceof LocalAssetMutationCancelledError,
+    );
+    assert.equal(acquired, 0);
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+
+    release();
+    await held;
+    // The cancelled request does not run once the holder lets go.
+    await withAssetLibraryLock(library.locks, "exclusive", async () => {});
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+    assert.equal((await library.store.getAssetRow(POSE)).status, "present");
+    assert.equal((await library.store.getAssetRow(POSE)).value.label, "Hero");
+    assert.deepEqual(library.locks.held(constants.ASSET_LIBRARY_LOCK), {
+      exclusive: false,
+      shared: 0,
+    });
+  });
+
+  test(`a ${name} with an already-aborted signal is cancelled without queueing (#46)`, async () => {
+    const library = makeLibrary();
+
+    await library.store.apply(importMutation(POSE));
+    library.store.applyCalls.length = 0;
+
+    const controller = new AbortController();
+
+    controller.abort();
+    await assert.rejects(
+      mutate(library, POSE, {signal: controller.signal}),
+      (error) => error instanceof LocalAssetMutationCancelledError,
+    );
+    assert.equal(library.store.applyCalls.length, 0);
+    assert.deepEqual(library.posted, []);
+  });
+
+  test(`aborting a ${name} after the lock was granted has no effect, and onLockAcquired fires once (#46)`, async () => {
+    const library = makeLibrary();
+
+    await library.store.apply(importMutation(POSE));
+    library.store.applyCalls.length = 0;
+
+    const controller = new AbortController();
+    const order = [];
+    const realApply = library.store.apply.bind(library.store);
+
+    library.store.apply = async (mutation) => {
+      order.push("apply");
+      // Cancel arrives while the transaction runs: too late, it must finish.
+      controller.abort();
+
+      return realApply(mutation);
+    };
+
+    const result = await mutate(library, POSE, {
+      signal: controller.signal,
+      onLockAcquired: () => order.push("lock"),
+    });
+
+    assert.equal(result.ref, POSE);
+    assert.deepEqual(order, ["lock", "apply"]);
+    assert.equal(library.posted.length, 1);
+  });
+
+  test(`a ${name} that waits and is not cancelled completes once the lock is released (#46)`, async () => {
+    const library = makeLibrary();
+
+    await library.store.apply(importMutation(POSE));
+
+    const {release, held} = holdExclusiveLock(library);
+    const controller = new AbortController();
+    let acquired = 0;
+    const pending = mutate(library, POSE, {
+      signal: controller.signal,
+      onLockAcquired: () => {
+        acquired += 1;
+      },
+    });
+
+    await Promise.resolve();
+    assert.equal(acquired, 0);
+    release();
+    await held;
+    assert.equal((await pending).ref, POSE);
+    assert.equal(acquired, 1);
+  });
+}
+
+test("an AbortError from the store after the lock was granted is not a mutation cancel (#46)", async () => {
+  const library = makeLibrary();
+
+  await library.store.apply(importMutation(POSE));
+  library.store.failNextApply(new DOMException("tx aborted", "AbortError"));
+
+  await assert.rejects(
+    deleteLocalAsset(library, POSE, {signal: new AbortController().signal}),
+    (error) =>
+      !(error instanceof LocalAssetMutationCancelledError) &&
+      error.name === "AbortError",
+  );
 });
 
 /* ------------------------------------------------ thumbnail verification */

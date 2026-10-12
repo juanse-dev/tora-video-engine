@@ -102,16 +102,59 @@ export const normalizeLocalAssetLabel = (
   return {ok: true, label: trimmed};
 };
 
+/** Rejection of a rename/delete whose wait for the library lock was cancelled; nothing was written. */
+export class LocalAssetMutationCancelledError extends Error {
+  constructor(options?: {cause?: unknown}) {
+    super("The change was cancelled before it started.", options);
+    this.name = "LocalAssetMutationCancelledError";
+  }
+}
+
+export type LibraryMutationOptions = {
+  /**
+   * Cancels the change only while it is still waiting for the exclusive lock
+   * (it rejects with a LocalAssetMutationCancelledError and writes nothing).
+   * Once the lock is granted the transaction is short and atomic, so the
+   * signal is ignored and the change finishes.
+   */
+  signal?: AbortSignal;
+  /** Called once when the lock is granted, right before the transaction starts: cancelling is over. */
+  onLockAcquired?: () => void;
+};
+
 // `invalidatesPayload`: false for a label-only change. The message then names no
 // digests, so tabs keep their verified payloads (no re-hash) and only refresh.
 const mutateLibrary = async (
   library: AssetLibrary,
   mutation: AssetLibraryMutation,
   invalidatesPayload: boolean,
+  options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> => {
-  const result = await withAssetLibraryLock(library.locks, "exclusive", () =>
-    library.store.apply(mutation),
-  );
+  let lockAcquired = false;
+  let result: AssetLibraryMutationResult;
+
+  try {
+    result = await withAssetLibraryLock(
+      library.locks,
+      "exclusive",
+      () => {
+        lockAcquired = true;
+        options?.onLockAcquired?.();
+
+        return library.store.apply(mutation);
+      },
+      options?.signal === undefined ? undefined : {signal: options.signal},
+    );
+  } catch (error) {
+    // A rejection while the lock was never granted and the signal is aborted is
+    // our own cancel. After the grant an AbortError can only come from the
+    // store (an aborted transaction): that stays a storage error.
+    if (!lockAcquired && options?.signal?.aborted === true) {
+      throw new LocalAssetMutationCancelledError({cause: error});
+    }
+
+    throw error;
+  }
 
   if (result.kind !== "not-found") {
     const parsed = parseLocalAssetRef(mutation.ref);
@@ -130,11 +173,15 @@ const mutateLibrary = async (
   return result;
 };
 
-/** Normalizes the label (trim, non-empty, length); rejects with an Error if it is invalid. */
+/**
+ * Normalizes the label (trim, non-empty, length); rejects with an Error if it is invalid.
+ * `options` can cancel the wait for the lock (see LibraryMutationOptions).
+ */
 export const renameLocalAsset = (
   library: AssetLibrary,
   ref: LocalAssetRef,
   label: string,
+  options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> => {
   const normalized = normalizeLocalAssetLabel(label);
 
@@ -146,14 +193,17 @@ export const renameLocalAsset = (
     library,
     {kind: "rename", ref, label: normalized.label},
     false,
+    options,
   );
 };
 
+/** `options` can cancel the wait for the lock (see LibraryMutationOptions). */
 export const deleteLocalAsset = (
   library: AssetLibrary,
   ref: LocalAssetRef,
+  options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> =>
-  mutateLibrary(library, {kind: "delete", ref}, true);
+  mutateLibrary(library, {kind: "delete", ref}, true, options);
 
 /**
  * Record metadata does not bound what the Blob really encodes, so the bytes are
