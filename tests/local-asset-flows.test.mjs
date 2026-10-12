@@ -11,7 +11,9 @@ import {
   withImportLock,
 } from "../src/web/localAssetImportFlow.ts";
 import {
+  DELETE_CANCELLED_MESSAGE,
   DELETE_FAILED_MESSAGE,
+  RENAME_CANCELLED_MESSAGE,
   RENAME_FAILED_MESSAGE,
   RENAME_NOT_FOUND_MESSAGE,
   deleteAssetFlow,
@@ -379,6 +381,114 @@ describe("ASSET-003 rename and delete flows", () => {
         error instanceof Error && error.message === DELETE_FAILED_MESSAGE,
     );
   });
+});
+
+describe("ASSET-003 R15 rename and delete waiting for the library lock", () => {
+  const holdLock = (library) => {
+    let release = () => {};
+    const held = library.locks.request(
+      ASSET_LIBRARY_LOCK,
+      {mode: "exclusive"},
+      () => new Promise((resolve) => (release = resolve)),
+    );
+
+    return {release, held};
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+  const seed = async (library) => {
+    const result = await makeImport(library).run();
+
+    library.posted.length = 0;
+    library.store.applyCalls.length = 0;
+
+    return result.ref;
+  };
+  const cancelables = () => {
+    const calls = [];
+
+    return {
+      calls,
+      onCancelable: (cancel) => calls.push(cancel),
+      get cancel() {
+        return calls.filter((call) => call !== null).at(-1);
+      },
+    };
+  };
+
+  it("has the spec's notice copy", () => {
+    assert.equal(RENAME_CANCELLED_MESSAGE, "Rename cancelled.");
+    assert.equal(DELETE_CANCELLED_MESSAGE, "Delete cancelled.");
+  });
+
+  for (const kind of ["rename", "delete"]) {
+    const start = (library, ref, options) =>
+      kind === "rename"
+        ? renameAssetFlow(library, ref, "New name", options)
+        : deleteAssetFlow(library, ref, options);
+
+    it(`offers Cancel while a ${kind} waits; cancelling changes nothing, even after the lock is released`, async () => {
+      const library = makeLibrary();
+      const ref = await seed(library);
+      const {release, held} = holdLock(library);
+      const spy = cancelables();
+      const pending = start(library, ref, {onCancelable: spy.onCancelable});
+
+      await settle();
+      assert.equal(typeof spy.cancel, "function");
+      assert.equal(spy.calls.length, 1);
+
+      spy.cancel();
+
+      const outcome = await pending;
+
+      assert.deepEqual(
+        outcome,
+        kind === "rename"
+          ? {kind: "cancelled", message: RENAME_CANCELLED_MESSAGE}
+          : "cancelled",
+      );
+      assert.equal(spy.calls.at(-1), null); // Cancel is withdrawn
+      assert.equal(library.store.applyCalls.length, 0);
+      assert.deepEqual(library.posted, []);
+
+      release();
+      await held;
+      await settle();
+      assert.equal(library.store.applyCalls.length, 0);
+      assert.equal((await library.store.getAssetRow(ref)).status, "present");
+      assert.notEqual(
+        (await library.store.getAssetRow(ref)).value.label,
+        "New name",
+      );
+      assert.deepEqual(library.locks.held(ASSET_LIBRARY_LOCK), {
+        exclusive: false,
+        shared: 0,
+      });
+    });
+
+    it(`withdraws Cancel when the lock is granted and a late cancel() cannot stop the ${kind}`, async () => {
+      const library = makeLibrary();
+      const ref = await seed(library);
+      const {release, held} = holdLock(library);
+      const spy = cancelables();
+      const pending = start(library, ref, {onCancelable: spy.onCancelable});
+
+      await settle();
+
+      const staleCancel = spy.cancel;
+
+      release();
+      await held;
+
+      const outcome = await pending;
+
+      assert.equal(outcome === "deleted" || outcome.kind === "renamed", true);
+      assert.deepEqual(spy.calls.map((call) => call === null), [false, true]);
+      staleCancel();
+      assert.equal(library.store.applyCalls.length, 1);
+      assert.equal(library.posted.length, 1);
+    });
+  }
 });
 
 describe("ASSET-003 import matching file", () => {

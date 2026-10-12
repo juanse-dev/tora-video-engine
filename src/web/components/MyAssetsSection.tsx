@@ -18,6 +18,7 @@ import {
   LOCAL_ASSET_LOAD_ERROR,
   type LocalAssetPageEntry,
 } from "../localAssetPageController.ts";
+import type {MutationCancelable} from "../localAssetManageFlow.ts";
 import {useLocalAssetImport} from "../useLocalAssetImport.ts";
 import {useLocalAssetManage} from "../useLocalAssetManage.ts";
 import {useLocalAssetPage} from "../useLocalAssetPage.ts";
@@ -139,10 +140,10 @@ export const MyAssetsSection = ({
 
   const cardActions = (entry: LocalAssetPageEntry) => ({
     deleteDisabled: transitionPending,
-    onRename: (label: string) => {
+    onRename: (label: string, onCancelable: MutationCancelable) => {
       imports.clearOutcome();
 
-      return manage.rename(entry.ref, label);
+      return manage.rename(entry.ref, label, onCancelable);
     },
     onDelete: () => {
       imports.clearOutcome();
@@ -267,7 +268,9 @@ export const MyAssetsSection = ({
             </label>
           </div>
           <p className="my-assets-status" role="status">
-            {imports.statusText}
+            {imports.statusText !== ""
+              ? imports.statusText
+              : (manage.cancelledNotice ?? "")}
           </p>
           {imports.errorText === null ? null : (
             <p className="my-assets-status my-assets-error" role="alert">

@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from "react";
 import {shortAssetId} from "../../localAssets/sources.ts";
+import type {MutationCancelable} from "../localAssetManageFlow.ts";
 import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
 
 type LocalAssetCardProps = {
@@ -12,8 +13,15 @@ type LocalAssetCardProps = {
   /** An App transition panel is open, so a dialog cannot open now. */
   deleteDisabled?: boolean;
   onSelect: () => void;
-  /** Resolves to an inline error message, or null once the rename is done. */
-  onRename: (label: string) => Promise<string | null>;
+  /**
+   * Resolves to an inline error message, or null once the rename is done (or
+   * cancelled). It calls `onCancelable` with a function while the rename waits
+   * for the library lock, and with null once it can no longer be cancelled.
+   */
+  onRename: (
+    label: string,
+    onCancelable: MutationCancelable,
+  ) => Promise<string | null>;
   onDelete: () => void;
 };
 
@@ -21,7 +29,8 @@ type LocalAssetCardProps = {
  * One My assets card. The wrapper is not interactive; the selection button and
  * the actions row are siblings so no interactive element is ever nested.
  * Renaming swaps the selection button and the actions row for an input with
- * Save / Cancel.
+ * Save / Cancel. While a save waits for the library lock (another tab holds
+ * it) Cancel stays enabled and abandons the rename.
  */
 export const LocalAssetCard = ({
   entry,
@@ -37,6 +46,8 @@ export const LocalAssetCard = ({
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Set only while the save waits for the library lock: Cancel then aborts it.
+  const [cancelWait, setCancelWait] = useState<(() => void) | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const renameButtonRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
@@ -108,9 +119,13 @@ export const LocalAssetCard = ({
 
     setSaving(true);
 
-    const message = await onRename(draft);
+    // A function is wrapped: useState would call it as an updater.
+    const message = await onRename(draft, (cancel) =>
+      setCancelWait(() => cancel),
+    );
 
     setSaving(false);
+    setCancelWait(null);
 
     if (session !== editSessionRef.current) {
       return; // the edit this save belonged to is over
@@ -158,11 +173,18 @@ export const LocalAssetCard = ({
               {error}
             </small>
           )}
+          {cancelWait === null ? null : (
+            <small>Waiting for another tab to finish using My assets…</small>
+          )}
           <div className="local-asset-actions">
             <button type="button" onClick={() => void save()} disabled={saving}>
               Save
             </button>
-            <button type="button" onClick={stopEditing} disabled={saving}>
+            <button
+              type="button"
+              onClick={() => (cancelWait === null ? stopEditing() : cancelWait())}
+              disabled={saving && cancelWait === null}
+            >
               Cancel
             </button>
           </div>
