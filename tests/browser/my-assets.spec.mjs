@@ -862,6 +862,113 @@ test("during an import authoring is locked, and the ref lands on the scene selec
   await expect(select).toHaveAttribute("aria-pressed", "true");
 });
 
+/**
+ * Imports in the two categories share one authoring lock (assetImportInFlight)
+ * and the guard against a second import is the disabled fieldset, so while one
+ * import is in flight the other category's Import button does nothing (#47).
+ */
+const CROSS_CATEGORY_CASES = [
+  {
+    first: "pose",
+    second: "background",
+    firstFixture: "pose-magenta.png",
+    secondFixture: "background-cyan.jpg",
+  },
+  {
+    first: "background",
+    second: "pose",
+    firstFixture: "background-cyan.jpg",
+    secondFixture: "pose-magenta.png",
+  },
+];
+
+for (const {
+  first,
+  second,
+  firstFixture,
+  secondFixture,
+} of CROSS_CATEGORY_CASES) {
+  test(`while a ${first} import is in flight the ${second} import is blocked, only the ${first} lands, and a later ${second} import works`, async ({
+    page,
+  }) => {
+    await holdDigests(page);
+    await page.goto("/", {waitUntil: "domcontentloaded"});
+    await waitForOwner(page);
+
+    const firstUpload = await readFixture(firstFixture);
+    const secondUpload = await readFixture(secondFixture);
+    const firstRef = localAssetRef(first, firstUpload.digest);
+    const secondRef = localAssetRef(second, secondUpload.digest);
+    const importedText = (upload) =>
+      `Imported "${upload.name.replace(/\.[^.]+$/u, "")}".`;
+    const sceneField = (source, field) =>
+      new RegExp(String.raw`${field}: (\S+)`, "u").exec(source)?.[1];
+    const yamlBefore = await yamlSource(page);
+    const importButton = section(page, second).locator(".import-asset-button");
+
+    // Positive control: when idle, the same click does open a file chooser.
+    const [idleChooser] = await Promise.all([
+      page.waitForEvent("filechooser", {timeout: 5000}),
+      importButton.click(),
+    ]);
+
+    expect(idleChooser).toBeTruthy();
+
+    await startHeldImport(page, first, firstUpload);
+    await expect(statusLine(page, first)).toHaveText("Hashing…");
+    await expect(importInput(page, first)).toBeDisabled();
+    await expect(importInput(page, second)).toBeDisabled();
+
+    // A click on the other category's disabled import button is a no-op: it
+    // opens no file chooser, so no second import can start.
+    const chooser = page
+      .waitForEvent("filechooser", {timeout: 1000})
+      .then(
+        () => true,
+        () => false,
+      );
+
+    await importButton.click({force: true});
+    expect(await chooser).toBe(false);
+    await expect(statusLine(page, second)).toHaveText("");
+    expect(await page.evaluate(() => window.__heldDigests)).toBe(1);
+
+    await page.evaluate(() => window.__releaseDigest());
+    await expect(statusLine(page, first)).toHaveText(importedText(firstUpload));
+    await expect(cards(page, first)).toHaveCount(1);
+    await expect(cardFor(page, first, firstUpload.digest)).toContainText(
+      "Current",
+    );
+    await expect(cards(page, second)).toHaveCount(0);
+    await expect(statusLine(page, second)).toHaveText("");
+    await expect(page.locator(".app-shell")).toHaveAttribute(
+      "data-authoring-locked",
+      "false",
+    );
+
+    // Only the first category's field changed; the other one is untouched.
+    const afterFirst = await yamlSource(page);
+
+    expect(sceneField(afterFirst, first)).toBe(firstRef);
+    expect(sceneField(afterFirst, second)).toBe(sceneField(yamlBefore, second));
+    expect(afterFirst).not.toContain(secondRef);
+
+    // The lock was released, so the other category imports normally.
+    await expect(importInput(page, second)).toBeEnabled();
+    await importInput(page, second).setInputFiles(fixtureUpload(secondUpload));
+    await expect(statusLine(page, second)).toHaveText(
+      importedText(secondUpload),
+    );
+    await expect(cards(page, second)).toHaveCount(1);
+    await expect(cards(page, first)).toHaveCount(1);
+
+    const afterSecond = await yamlSource(page);
+
+    expect(sceneField(afterSecond, first)).toBe(firstRef);
+    expect(sceneField(afterSecond, second)).toBe(secondRef);
+  });
+}
+
 test("while the delete dialog is open the Story is frozen and the dialog still works", async ({
   page,
 }) => {
