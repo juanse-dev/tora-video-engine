@@ -167,10 +167,6 @@ test("the mismatch dialog leaves focus on the page body after Use it as replacem
   await dialog
     .getByRole("button", {name: "Use it as replacement for this scene"})
     .click();
-  await page.waitForTimeout(3000);
-  if ((await dialog.count()) > 0) {
-    throw new Error("DIAG dialog text: " + (await dialog.innerText()) + " | idb blob: " + (await page.evaluate(() => new Promise((res) => { const q = indexedDB.open("d-blob", 1); q.onupgradeneeded = () => q.result.createObjectStore("a"); q.onsuccess = () => { const tx = q.result.transaction("a", "readwrite"); tx.objectStore("a").put({b: new Blob([new Uint8Array([1])])}, "k"); tx.oncomplete = () => res("blob ok"); tx.onerror = tx.onabort = () => res("blob FAIL " + tx.error); }; }))));
-  }
   await expect(dialog).toHaveCount(0);
   await expect(input).toHaveCount(0);
   await expect(page.locator("body")).toBeFocused();
