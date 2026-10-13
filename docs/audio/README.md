@@ -148,10 +148,10 @@ Unchanged stores (`assets`, `payloadMeta`, `blobs`, `thumbnails`) keep their v0.
 | 2a | [AUDIO-002](./AUDIO-002-audio-plan-and-composition.md) | `compileAudioPlan`, `StoryAudio` composition, Player audio | AUDIO-001 |
 | 2b | [AUDIO-003](./AUDIO-003-audio-library-and-import.md) | `inspectAudio`, peaks, IndexedDB v2, My audio import/rename/delete/missing, CLI `local-assets/audio` | AUDIO-001 |
 | 3a | [AUDIO-004](./AUDIO-004-editor-ui.md) | Music panel, per-scene audio, My audio cards, audio timeline with waveforms, warnings | AUDIO-002, AUDIO-003 |
-| 3b | [AUDIO-005](./AUDIO-005-rendering.md) | Browser AAC render with preflight and readiness, CLI audio render | AUDIO-002, AUDIO-003 |
+| 3b | [AUDIO-005](./AUDIO-005-rendering.md) | Browser AAC render with preflight and readiness, CLI audio render | AUDIO-002, AUDIO-003, AUDIO-004 (bundled-audio store) |
 | 4 | [AUDIO-006](./AUDIO-006-verification-and-gate.md) | Audio goldens, CLI parity, GATE-001 extension, release | all |
 
-2a/2b and 3a/3b are independent and can run in parallel (separate worktrees).
+2a/2b are independent and can run in parallel (separate worktrees). 3b starts after 3a, because browser render readiness reads AUDIO-004's bundled-audio store; the CLI part of 3b (task 4) does not use it and may start in parallel with 3a.
 
 ## Working conventions
 

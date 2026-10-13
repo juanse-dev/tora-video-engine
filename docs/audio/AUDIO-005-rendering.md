@@ -2,7 +2,7 @@
 
 Status: not started
 
-Depends on: AUDIO-002, AUDIO-003. Read [README](./README.md) and [ASSET-004](../assets/ASSET-004-preview-and-browser-rendering.md) / [ASSET-005](../assets/ASSET-005-cli-local-assets.md) first.
+Depends on: AUDIO-002, AUDIO-003, and AUDIO-004 for the bundled-audio store (`src/web/audio/bundledAudio.ts`) that browser readiness and preparation read; the CLI tasks do not need it. Read [README](./README.md) and [ASSET-004](../assets/ASSET-004-preview-and-browser-rendering.md) / [ASSET-005](../assets/ASSET-005-cli-local-assets.md) first.
 
 ## Goal
 
