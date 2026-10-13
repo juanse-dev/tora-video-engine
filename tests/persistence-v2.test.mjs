@@ -74,7 +74,7 @@ describe("ASSET-001 persistence envelope v1/v2", () => {
     assert.equal(malformed.durableVersion, null);
 
     const unsupported = restorePersistedProject(
-      JSON.stringify({version: 3, story: bundledStory}),
+      JSON.stringify({version: 4, story: bundledStory}),
       fallback,
     );
     assert.equal(unsupported.durableVersion, null);
@@ -98,8 +98,8 @@ describe("ASSET-001 persistence envelope v1/v2", () => {
     }
   });
 
-  it("treats version 3 as unsupported-version recovery", () => {
-    const raw = JSON.stringify({version: 3, story: bundledStory});
+  it("treats version 4 as unsupported-version recovery", () => {
+    const raw = JSON.stringify({version: 4, story: bundledStory});
     const result = restorePersistedProject(raw, fallback);
 
     assert.equal(result.restored, false);
