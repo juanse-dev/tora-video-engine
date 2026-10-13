@@ -1391,3 +1391,85 @@ describe("issue #29 Tora-owned OPFS writer", () => {
     });
   });
 });
+
+describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
+  const autoScene = {
+    type: "intro",
+    pose: "formal",
+    background: "office",
+    text: "Auto",
+    duration: "auto",
+    voice: {src: "ding"},
+  };
+  const renderWith = async (story) => {
+    let seen = null;
+
+    await renderStoryMediaOnWeb(story, {
+      signal: new AbortController().signal,
+      component: () => null,
+      getDirectory: createFakeOpfs().getDirectory,
+      render: async (options) => {
+        seen = options;
+        await finalizeOutput(options);
+
+        return {getBlob: async () => new Blob(["v"]), internalState: {}};
+      },
+    });
+
+    return seen;
+  };
+
+  it("an auto Story renders at the compiled total, not the acceptance lower bound", async () => {
+    const story = {
+      title: "Auto",
+      scenes: [{...autoScene}, {...autoScene, text: "Two"}, {...exampleStory.scenes[0], duration: 2}],
+    };
+    const seen = await renderWith(story);
+
+    // 2 auto scenes at the 3 s fallback (90 frames each) + one 2 s scene.
+    assert.equal(seen.composition.durationInFrames, 90 + 90 + 60);
+    assert.ok(seen.composition.durationInFrames > 16 + 16 + 60);
+    assert.equal(
+      seen.inputProps.audioDurations,
+      seen.composition.defaultProps.audioDurations,
+    );
+    assert.notEqual(seen.inputProps.audioDurations, undefined);
+  });
+
+  it("a Story without audio keeps its duration and its props", async () => {
+    const seen = await renderWith(exampleStory);
+
+    assert.equal(seen.composition.durationInFrames, 360);
+    assert.deepEqual(Object.keys(seen.inputProps), ["story", "localAssetSources"]);
+    assert.deepEqual(Object.keys(seen.composition.defaultProps), [
+      "story",
+      "localAssetSources",
+    ]);
+  });
+
+  it("refuses an auto Story whose exact total exceeds the cap while its lower bound passes", async () => {
+    const story = {
+      title: "Long auto",
+      scenes: Array.from({length: 101}, (_, i) => ({...autoScene, text: `S${i}`})),
+    };
+    let rendered = false;
+    let directoryRequested = false;
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(story, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: async () => {
+          directoryRequested = true;
+          return createFakeOpfs().getDirectory();
+        },
+        render: async () => {
+          rendered = true;
+        },
+      }),
+      /Active Story failed the browser render policy recheck: Browser authoring supports at most 9,000 frames/,
+    );
+    assert.equal(rendered, false);
+    assert.equal(directoryRequested, false);
+  });
+});

@@ -5,9 +5,11 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
+import {storyAudioDurations, storyHasAudio} from "../audio/storyAudio.ts";
 import {collectStoryLocalAssetUsages} from "../localAssets/readiness.ts";
 import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {ToraVideoProps} from "../Video.tsx";
+import {getStoryMetadata} from "../story/metadata.ts";
 import type {Story} from "../story/types.ts";
 import {
   VIDEO_FPS,
@@ -16,6 +18,7 @@ import {
 } from "../videoConfig.ts";
 import {
   evaluateBrowserStoryPolicy,
+  MAX_BROWSER_TOTAL_FRAMES,
   type BrowserStoryPolicyDependencies,
 } from "./browserPolicy.ts";
 import type {LocalAssetRenderPreparation} from "./localAssetState.ts";
@@ -480,6 +483,34 @@ export const renderStoryMediaOnWeb = async (
     );
   }
 
+  // Acceptance uses the lower bound (policy.totalFrames); the render uses the
+  // exact compiled timeline, built from the same map the composition receives.
+  const audioDurations = storyAudioDurations(story);
+  const totalFrames = getStoryMetadata(
+    story,
+    VIDEO_FPS,
+    audioDurations,
+  ).durationInFrames;
+
+  if (totalFrames > MAX_BROWSER_TOTAL_FRAMES) {
+    const exceeded = evaluateBrowserRenderPolicy(story, {
+      deriveTotalFrames: () => totalFrames,
+    });
+
+    throw new Error(
+      `Active Story failed the browser render policy recheck: ${
+        exceeded.eligible ? "exceeds the browser frame limit." : exceeded.message
+      }`,
+    );
+  }
+
+  // A Story without audio keeps exactly the props it had before v0.4.
+  const props = {
+    story,
+    localAssetSources: options.localAssetSources,
+    ...(storyHasAudio(story) ? {audioDurations} : {}),
+  };
+
   // INV-5: a local ref must never reach the renderer without a resolved
   // source, or the composition would draw a placeholder into the MP4.
   const unresolved = collectStoryLocalAssetUsages(story).filter((usage) => {
@@ -516,14 +547,14 @@ export const renderStoryMediaOnWeb = async (
       composition: {
         id: "ToraVideo",
         component,
-        durationInFrames: policy.totalFrames,
+        durationInFrames: totalFrames,
         fps: VIDEO_FPS,
         width: VIDEO_WIDTH,
         height: VIDEO_HEIGHT,
         calculateMetadata: null,
-        defaultProps: {story, localAssetSources: options.localAssetSources},
+        defaultProps: props,
       },
-      inputProps: {story, localAssetSources: options.localAssetSources},
+      inputProps: props,
       container: "mp4",
       videoCodec: "h264",
       muted: true,
