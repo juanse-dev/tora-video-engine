@@ -78,14 +78,14 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
 
 ### Player (`src/web/components/Preview.tsx`)
 
-`initiallyMuted`, `showVolumeControls`, and `audioDurations` passed in `inputProps`. The Player's **outer** length must use the same map: `getWebPlayerConfig(story, audioDurations)` (`src/web/previewConfig.ts`) calls `getStoryMetadata(story, VIDEO_FPS, audioDurations)`, and `Preview` passes the exact map object it puts in `inputProps`, so the Player's `durationInFrames`, the inner timeline and `compileAudioPlan` can never disagree (otherwise a 2.2 s voice would play inside a Player still sized for the 3 s fallback, and a voice longer than 3 s would be cut by the Player). When an asset's availability changes, the map, the Player length and the plan change together in the same render. The Player's volume is stored in `localStorage` key `tora.playerVolume` (number in `[0, 1]`) inside try/catch and restored via the Player ref on mount; mute state is never restored as unmuted (D-12). The comment saying Stories are video-only is updated.
+`initiallyMuted` and `showVolumeControls` are set **only when `storyHasAudio(story)`**; a silent Story keeps v0.3's `showVolumeControls={false}` and no `initiallyMuted` (AINV-6). `audioDurations` is always passed in `inputProps`. The Player's **outer** length must use the same map: `getWebPlayerConfig(story, audioDurations)` (`src/web/previewConfig.ts`) calls `getStoryMetadata(story, VIDEO_FPS, audioDurations)`, and `Preview` passes the exact map object it puts in `inputProps`, so the Player's `durationInFrames`, the inner timeline and `compileAudioPlan` can never disagree (otherwise a 2.2 s voice would play inside a Player still sized for the 3 s fallback, and a voice longer than 3 s would be cut by the Player). When an asset's availability changes, the map, the Player length and the plan change together in the same render. The Player's volume is stored in `localStorage` key `tora.playerVolume` (number in `[0, 1]`) inside try/catch and restored via the Player ref on mount; mute state is never restored as unmuted (D-12). The comment saying Stories are video-only is updated.
 
 ## Tasks
 
 1. [ ] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
 2. [ ] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
 3. [ ] `resolveAudioSrc` + `StoryAudio` + `ToraVideo` wiring.
-4. [ ] Player: muted start, volume controls, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `buildAudioDurationMap(story, localDurations)` where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
+4. [ ] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `buildAudioDurationMap(story, localDurations)` where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
 
 ## Tests
 
@@ -107,7 +107,7 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - sub-frame sources: a 0.005 s sfx and a 0.005 s voice (fixed and `auto` scenes) give tracks of exactly 1 frame, ducking windows of 1 frame plus ramps, and no track ever has `durationInFrames < 1` (property check over random durations in `(0, 0.05]` s).
 - `tests/audio-sources.test.mjs`: bundled with/without file, local url/static/pending/absent.
 - `tests/web-preview.test.mjs` (extend): `getWebPlayerConfig(story, map)` gives 81 frames for a 2.2 s `auto` voice, the 90-frame fallback without the map entry, and `ceil((4.5 + 0.5) × 30) = 150` for a 4.5 s voice (not cut at the fallback); Preview passes the same map to `inputProps` and to the config; Player props include `initiallyMuted` and volume controls; volume persistence survives a throwing `localStorage`.
-- Browser (`tests/browser/audio-preview.spec.mjs`, Chromium): with a bundled-sfx Story, the Player starts muted, clicking unmute starts playback past frame 0, seeking works; with no audio the Player behaves as in v0.3.
+- Browser (`tests/browser/audio-preview.spec.mjs`, Chromium): with a bundled-sfx Story, the Player starts muted, clicking unmute starts playback past frame 0, seeking works; with no audio the Player behaves as in v0.3 and shows no volume button; adding a bundled sfx to that Story shows the volume button, muted.
 
 ## Verify
 

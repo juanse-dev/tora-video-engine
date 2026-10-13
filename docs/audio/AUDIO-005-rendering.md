@@ -48,7 +48,7 @@ export type BrowserRenderCapability = /* existing */ | {kind: "audio-unsupported
 
 ## Tasks
 
-1. [ ] Readiness: audio usages, audio budget, acceptance lower bound + exact frame budget at readiness, missing-audio blocking.
+1. [ ] Readiness: audio usages, audio budget, acceptance lower bound + exact frame budget at readiness, missing-audio blocking, and blocking any bundled id in AUDIO-004's `unusableBundledAudio` with `Audio file <id> cannot be used for rendering.` (no render or preflight is attempted for it).
 2. [ ] Capability with audio (AAC native or WASM, cached per `storyHasAudio`).
 3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
 4. [ ] CLI: durations, staging, missing-audio error, `buildRenderArgs` audio flags and props file contents.
