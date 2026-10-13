@@ -18,7 +18,7 @@ Every audio field can be authored in the visual editor without touching YAML; th
 ### Per scene (in each scene editor)
 
 - `Sound effect` and `Voice` selects with the same groups plus `None`; each with a `Volume` slider when set.
-- Duration: the existing number input plus a checkbox `Auto (from voice)`, enabled only when the scene has a voice. When checked, the number input is replaced by read-only text `auto · 4.3 s` (the timeline's resolved seconds, or `auto · voice not available` for a `fallback` scene). Unchecking restores the last numeric value (or the resolved seconds rounded to 0.1 s).
+- Duration: the existing number input plus a checkbox `Auto (from voice)`, enabled only when the scene has a voice. When checked, the number input is replaced by read-only text `auto · 4.3 s` (the timeline's resolved seconds, or `auto · voice not available` for a `fallback` scene). Unchecking restores the last numeric value (or the resolved seconds rounded to 0.1 s). Selecting `None` for Voice in an `auto` scene is **one atomic edit**: the same candidate Story clears the voice and sets the duration to that same restored number, so it validates; the checkbox ends unchecked and disabled and the number input is back. (A Story read from YAML with `auto` and no voice still fails the schema as before.)
 
 ### My audio cards (from AUDIO-003, extended)
 
@@ -55,11 +55,11 @@ From `plan.issues` and `plan.maxSimultaneousGain`: `Voice is cut by 1.2 s.` (sce
 
 ## Tests
 
-- `tests/web-editor.test.mjs` (extend): pure helpers for select options (bundled with `file: null` excluded), default-omission when writing fields, auto toggle state transitions, delete-count copy across roles.
+- `tests/web-editor.test.mjs` (extend): pure helpers for select options (bundled with `file: null` excluded), default-omission when writing fields, auto toggle state transitions (including Voice → `None` on an `auto` scene: one candidate, voice removed, duration = last numeric value or resolved seconds rounded to 0.1 s, schema-valid), delete-count copy across roles.
 - `tests/browser/audio-editor.spec.mjs` also covers bundled waveforms: a Story with `sfx: ding` draws a non-empty effects-lane waveform with no library import, and two scenes using `ding` cause one request for `/audio/sfx/ding.wav`; with `/audio/sfx/ding.wav` routed to undecodable bytes the block is hatched, the field shows `Audio not available: render blocked.` and Render MP4 becomes disabled with the readiness message as soon as the decode fails, with no other interaction and without starting a render; with the route aborted once (network error) the block is plain and a later display retries the fetch.
 - `tests/bundled-waveforms.test.mjs` (Node, injected fetch/decode): a terminal failure notifies subscribers once and changes the snapshot identity; a transient failure notifies nobody and leaves the snapshot identical; unsubscribe stops notifications.
 - `tests/audio-timeline.test.mjs`: pure layout helpers (block x/width from frames, playhead position, scene-start seek targets, envelope sampling per column).
-- `tests/browser/audio-editor.spec.mjs` (Chromium): set music/sfx/voice through the UI and check the exported YAML; `Auto (from voice)` disabled without a voice and showing `auto · 2.7 s` for the 2.2 s fixture; preview play/stop and the Player-pauses-preview rule; timeline click seeks the Player; arrow keys move between scene starts; each warning appears for its fixture Story; render lock disables every new control.
+- `tests/browser/audio-editor.spec.mjs` (Chromium): set music/sfx/voice through the UI and check the exported YAML; `Auto (from voice)` disabled without a voice and showing `auto · 2.7 s` for the 2.2 s fixture; on that auto scene, choosing Voice `None` leaves no pending draft, shows the number input with `2.7`, and the exported YAML has `duration: 2.7` and no `voice`; preview play/stop and the Player-pauses-preview rule; timeline click seeks the Player; arrow keys move between scene starts; each warning appears for its fixture Story; render lock disables every new control.
 
 ## Verify
 
