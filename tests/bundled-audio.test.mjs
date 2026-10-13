@@ -33,6 +33,18 @@ describe("bundled audio files", () => {
     });
   }
 
+  for (const id of ["whoosh", "boom", "ding", "pop"]) {
+    it(`${id}: sample peak is between -6 and -0.5 dBFS, without clipping`, () => {
+      const bytes = readFileSync(join("public", bundledAudioCatalog[id].file));
+      const start = bytes.indexOf("data") + 8;
+      let peak = 0;
+      for (let i = start; i + 1 < bytes.length; i += 2) peak = Math.max(peak, Math.abs(bytes.readInt16LE(i)));
+      const dbfs = 20 * Math.log10(peak / 32_768);
+      assert.ok(peak < 32_767, `${id} clips`);
+      assert.ok(dbfs >= -6 && dbfs <= -0.5, `${id} peak ${dbfs.toFixed(2)} dBFS`);
+    });
+  }
+
   it("the generator is deterministic and matches the committed files", () => {
     const out = mkdtempSync(join(tmpdir(), "tora-sfx-"));
     execFileSync(process.execPath, ["scripts/generateBundledAudio.mjs", out]);

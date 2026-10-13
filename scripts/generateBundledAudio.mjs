@@ -22,7 +22,9 @@ import {resolveFfmpegBinaries} from "../tests/helpers/ffmpeg.mjs";
 
 const SAMPLE_RATE = 48_000;
 const FRAME = 8; // samples per source frame: the envelope's time resolution (0.17 ms)
-const SINE_PEAK = 0.125; // peak amplitude of ffmpeg's `sine` source (measured)
+// ffmpeg's `sine` source peaks at 1/8 of full scale (measured); every partial is
+// lifted by SINE_LIFT to a unit-amplitude sine, so the gains below are literal.
+const SINE_LIFT = 8;
 
 /** mulberry32: integer-only PRNG, identical on every platform. */
 const prng = (seed) => {
@@ -37,11 +39,11 @@ const prng = (seed) => {
 
 const num = (value) => value.toFixed(4);
 
-/** `sine` source node: `[label]` receives `seconds` of `hz`, delayed by `delay` samples and scaled by `gain`. */
+/** `sine` source node: `[label]` receives `seconds` of `hz`, delayed by `delay` samples and lifted to a unit sine and scaled by `gain`. */
 const sine = (label, hz, seconds, {delay = 0, gain = 1} = {}) =>
   `sine=f=${num(hz)}:d=${seconds}:r=${SAMPLE_RATE}:samples_per_frame=${FRAME}` +
   (delay > 0 ? `,adelay=delays=${delay}S` : "") +
-  (gain !== 1 ? `,volume=${gain}` : "") +
+  `,aformat=sample_fmts=fltp,volume=${num(SINE_LIFT * gain)}` +
   `[${label}]`;
 
 /**
@@ -60,7 +62,7 @@ const noise = ({label, seed, count, lo, hi, tilt, seconds, rms}) => {
     weights.push(hz ** tilt);
     labels.push(`[${label}${i}]`);
   }
-  const power = weights.reduce((sum, w) => sum + (w * SINE_PEAK) ** 2 / 2, 0);
+  const power = weights.reduce((sum, w) => sum + w ** 2 / 2, 0);
   const scale = rms / Math.sqrt(power);
   return (
     `${parts.join(";")};` +
@@ -97,15 +99,15 @@ export const effects = {
   whoosh: {
     seconds: 0.6,
     graph:
-      `${noise({label: "n", seed: 7, count: 32, lo: 400, hi: 4000, tilt: 0, seconds: 0.6, rms: 0.15})};` +
+      `${noise({label: "n", seed: 7, count: 32, lo: 400, hi: 4000, tilt: 0, seconds: 0.6, rms: 0.2})};` +
       `[n]${volumeNode(linearEnvelope(1, 0.25, 0.3, 0.6))},${toStereo}[out]`,
   },
   // 55 Hz sine plus a 0.08 s brown-noise burst, decaying from 0.05 s.
   boom: {
     seconds: 0.8,
     graph:
-      `${sine("tone", 55, 0.8)};` +
-      `${noise({label: "b", seed: 11, count: 24, lo: 30, hi: 400, tilt: -0.5, seconds: 0.08, rms: 0.15})};` +
+      `${sine("tone", 55, 0.8, {gain: 0.35})};` +
+      `${noise({label: "b", seed: 11, count: 24, lo: 30, hi: 400, tilt: -0.5, seconds: 0.08, rms: 0.1})};` +
       "[b]apad=whole_dur=0.8[burst];" +
       "[tone][burst]amix=inputs=2:duration=longest:normalize=0," +
       `${volumeNode(decayEnvelope(1, 0, 0.05, 0.75, 100))},${toStereo}[out]`,
