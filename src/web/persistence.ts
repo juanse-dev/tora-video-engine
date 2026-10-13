@@ -1,6 +1,7 @@
 import {StorySchema, type Story} from "../story/schema.ts";
 import {serializeStorySource} from "../story/serializeStory.ts";
 import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
+import {storyHasAudio} from "../audio/storyAudio.ts";
 import {
   MAX_BROWSER_TITLE_CODE_UNITS,
   MAX_BROWSER_ACTIVE_SCENES,
@@ -14,9 +15,13 @@ export const PERSISTENCE_WRITER_LOCK =
   "tora-video-engine:persistence-writer";
 export const PERSISTENCE_VERSION = 1;
 export const PERSISTENCE_VERSION_LOCAL = 2;
+export const PERSISTENCE_VERSION_AUDIO = 3;
 export const MAX_PERSISTED_ENVELOPE_CODE_UNITS = 1_048_576;
 
-export type PersistenceVersion = 1 | 2;
+export type PersistenceVersion =
+  | typeof PERSISTENCE_VERSION
+  | typeof PERSISTENCE_VERSION_LOCAL
+  | typeof PERSISTENCE_VERSION_AUDIO;
 
 export type PersistedEnvelope = {
   version: PersistenceVersion;
@@ -162,7 +167,8 @@ export const restorePersistedProject = (
 
   if (
     envelope.version !== PERSISTENCE_VERSION &&
-    envelope.version !== PERSISTENCE_VERSION_LOCAL
+    envelope.version !== PERSISTENCE_VERSION_LOCAL &&
+    envelope.version !== PERSISTENCE_VERSION_AUDIO
   ) {
     return rawRecovery(
       fallback,
@@ -207,6 +213,18 @@ export const restorePersistedProject = (
     );
   }
 
+  if (
+    envelope.version !== PERSISTENCE_VERSION_AUDIO &&
+    storyHasAudio(parsedStory.data)
+  ) {
+    return rawRecovery(
+      fallback,
+      raw,
+      "schema-invalid",
+      `Stored project version ${envelope.version} cannot contain audio.`,
+    );
+  }
+
   const policy = dependencies.policy ?? evaluateBrowserStoryPolicy;
   const policyResult = policy(parsedStory.data);
 
@@ -239,16 +257,25 @@ export const restorePersistedProject = (
 
 /**
  * Bundled-only projects stay v1 so a v0.2 rollback still reads them. The first
- * write containing a local ref promotes to v2, and v2 never downgrades.
+ * write containing a local ref promotes to v2, the first containing audio
+ * (music, sfx, voice or an auto duration) promotes to v3, and a durable
+ * version never downgrades.
  */
 export const requiredPersistenceVersion = (
   story: Story,
   durableVersion: PersistenceVersion | null,
-): PersistenceVersion =>
-  (durableVersion ?? PERSISTENCE_VERSION) === PERSISTENCE_VERSION_LOCAL ||
-  storyHasLocalAssetRefs(story)
-    ? PERSISTENCE_VERSION_LOCAL
-    : PERSISTENCE_VERSION;
+): PersistenceVersion => {
+  const content = storyHasAudio(story)
+    ? PERSISTENCE_VERSION_AUDIO
+    : storyHasLocalAssetRefs(story)
+      ? PERSISTENCE_VERSION_LOCAL
+      : PERSISTENCE_VERSION;
+
+  return Math.max(
+    durableVersion ?? PERSISTENCE_VERSION,
+    content,
+  ) as PersistenceVersion;
+};
 
 export const serializePersistedEnvelope = (
   story: Story,

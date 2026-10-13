@@ -6,11 +6,11 @@ import {
   inventoryLocalAssets,
 } from "./localAssets.ts";
 import type {InventoryLine} from "./localAssets.ts";
-import type {LocalAssetCategory} from "../src/localAssets/refs.ts";
+import type {ImageAssetCategory} from "../src/localAssets/refs.ts";
 
 const formatLines = (
   root: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   lines: InventoryLine[],
 ): string[] => {
   const output: string[] = [];
@@ -40,7 +40,7 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  const sections: Array<[LocalAssetCategory, InventoryLine[]]> = [
+  const sections: Array<[ImageAssetCategory, InventoryLine[]]> = [
     ["pose", inventory.poses],
     ["background", inventory.backgrounds],
   ];

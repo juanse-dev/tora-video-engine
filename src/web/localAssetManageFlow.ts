@@ -1,4 +1,4 @@
-import type {LocalAssetRef} from "../localAssets/refs.ts";
+import type {LocalImageRef} from "../localAssets/refs.ts";
 import type {AssetLibraryContextValue} from "./assetLibraryContext.ts";
 import {
   deleteLocalAsset,
@@ -86,7 +86,7 @@ export type RenameOutcome =
  */
 export const renameAssetFlow = async (
   library: AssetLibrary,
-  ref: LocalAssetRef,
+  ref: LocalImageRef,
   label: string,
   options: {onCancelable?: MutationCancelable} = {},
 ): Promise<RenameOutcome> => {
@@ -123,7 +123,7 @@ export const renameAssetFlow = async (
  */
 export const deleteAssetFlow = async (
   library: AssetLibrary,
-  ref: LocalAssetRef,
+  ref: LocalImageRef,
   options: {onCancelable?: MutationCancelable} = {},
 ): Promise<"deleted" | "not-found" | "cancelled"> => {
   try {

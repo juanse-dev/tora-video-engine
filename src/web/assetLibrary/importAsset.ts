@@ -8,8 +8,8 @@ import {
 import type {PayloadMetadata} from "../../localAssets/readiness.ts";
 import {
   buildLocalAssetRef,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "../../localAssets/refs.ts";
 import {MAX_LOCAL_ASSET_LABEL_LENGTH} from "./constants.ts";
 import {
@@ -52,7 +52,7 @@ export class LocalAssetImportError extends Error {
 }
 
 export type PreparedLocalAssetImport = {
-  ref: LocalAssetRef;
+  ref: LocalImageRef;
   defaultLabel: string;
   originalFilename: string;
   payloadMeta: PayloadMetadata;
@@ -88,7 +88,7 @@ const decodeWithBrowser = (blob: Blob) => createImageBitmap(blob);
  */
 const buildDefaultLabel = (
   filename: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
 ): string => {
   const dot = filename.lastIndexOf(".");
   const stem = dot === -1 ? filename : filename.slice(0, dot);
@@ -114,7 +114,7 @@ const isSameOrSwappedSize = (
  */
 export const prepareLocalAssetImport = async (
   file: File,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   deps: PrepareLocalAssetImportDeps = {},
 ): Promise<PreparedLocalAssetImport> => {
   // 1. Bound the size before any bytes are read.
@@ -271,7 +271,7 @@ export const commitPreparedLocalAssetImport = async (
   prepared: PreparedLocalAssetImport,
   library: ImportLibrary,
   deps?: CommitPreparedLocalAssetImportDeps,
-): Promise<{ref: LocalAssetRef; created: boolean}> => {
+): Promise<{ref: LocalImageRef; created: boolean}> => {
   let result;
   let lockAcquired = false;
 
@@ -336,10 +336,10 @@ export const commitPreparedLocalAssetImport = async (
 /** prepareLocalAssetImport + onPhase("storing") + commitPreparedLocalAssetImport. */
 export const importLocalAsset = async (
   file: File,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   library: ImportLibrary,
   deps: PrepareLocalAssetImportDeps & {storage?: StorageManager} = {},
-): Promise<{ref: LocalAssetRef; created: boolean}> => {
+): Promise<{ref: LocalImageRef; created: boolean}> => {
   const prepared = await prepareLocalAssetImport(file, category, deps);
 
   deps.onPhase?.("storing");

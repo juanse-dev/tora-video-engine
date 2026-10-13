@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {importYamlFile, yamlSource} from "./helpers/localAssetFlows.mjs";
 
 const expectPreviewCaption = async (preview, text) => {
   await expect
@@ -252,4 +253,61 @@ test("asset catalog discovers and applies bundled visual assets", async ({
   await expect(
     page.locator('.preview-frame img[src*="backgrounds/server-room.png"]'),
   ).toBeVisible();
+});
+
+test("an automatic scene duration is shown as read-only text and survives visual edits", async ({
+  page,
+}) => {
+  const story = [
+    "title: Auto duration fixture",
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    '    text: "Numeric scene"',
+    "    duration: 2.5",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    '    text: "Auto scene"',
+    "    duration: auto",
+    "    voice:",
+    "      src: ding",
+    "",
+  ].join("\n");
+
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await importYamlFile(page, "auto-duration.yaml", story);
+
+  const items = page.locator(".scene-list-item");
+  const duration = page.getByLabel("Duration (seconds)");
+  const caption = page.getByLabel("Caption");
+
+  await expect(items).toHaveCount(2);
+
+  await items.nth(1).click();
+  await expect(caption).toHaveValue("Auto scene");
+  const autoDuration = page
+    .locator("label.field")
+    .filter({hasText: "Duration (seconds)"});
+  await expect(autoDuration.locator("output")).toHaveText("auto (from voice)");
+  await expect(page.getByRole("spinbutton")).toHaveCount(0);
+  await expect(duration).toHaveCount(1);
+  await expect(duration).not.toHaveAttribute("type", "number");
+
+  await caption.fill("Auto scene edited");
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-visual-state",
+    "clean",
+  );
+  await expect(autoDuration.locator("output")).toHaveText("auto (from voice)");
+  const source = await yamlSource(page);
+  expect(source).toContain("duration: auto");
+  expect(source).toContain("Auto scene edited");
+
+  await items.nth(0).click();
+  await expect(caption).toHaveValue("Numeric scene");
+  await expect(duration).toHaveAttribute("type", "number");
+  await expect(duration).toHaveValue("2.5");
+  await expect(page.getByRole("spinbutton")).toHaveCount(1);
 });

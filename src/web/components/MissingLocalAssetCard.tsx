@@ -1,6 +1,6 @@
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../../localAssets/refs.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
 import {describeMissingLocalAsset} from "../localAssetUi.ts";
@@ -9,8 +9,8 @@ export type MissingLocalAssetKind = "missing" | "corrupt" | "unavailable";
 
 type MissingLocalAssetCardProps = {
   /** Not named `ref`: React reserves that prop. */
-  assetRef: LocalAssetRef;
-  category: LocalAssetCategory;
+  assetRef: LocalImageRef;
+  category: ImageAssetCategory;
   kind: MissingLocalAssetKind;
   /** 1-based numbers of the scenes using the ref. */
   sceneNumbers: readonly number[];

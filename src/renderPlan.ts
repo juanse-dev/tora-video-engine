@@ -1,6 +1,6 @@
 import {scenePresets, type ScenePreset} from "./scenePresets.ts";
-import {compileTimeline} from "./story/timeline.ts";
-import type {Animation, Background, Pose, SceneType, Story} from "./story/types.ts";
+import type {Timeline} from "./story/timeline.ts";
+import type {Animation, Background, Pose, SceneType} from "./story/types.ts";
 
 export type SceneRenderPlan = {
   from: number;
@@ -18,12 +18,7 @@ export type StoryRenderPlan = {
   durationInFrames: number;
 };
 
-export const buildStoryRenderPlan = (
-  story: Story,
-  fps: number,
-): StoryRenderPlan => {
-  const timeline = compileTimeline(story, fps);
-
+export const buildStoryRenderPlan = (timeline: Timeline): StoryRenderPlan => {
   return {
     durationInFrames: timeline.durationInFrames,
     scenes: timeline.scenes.map((scene) => {

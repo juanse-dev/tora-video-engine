@@ -38,7 +38,7 @@ describe("loadStory", () => {
       ["intro", "dialogue", "chaos", "punchline"],
     );
 
-    const timeline = compileTimeline(story, 30);
+    const timeline = compileTimeline(story, 30, {});
     assert.equal(timeline.durationInFrames, 360);
   });
 

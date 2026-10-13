@@ -1,16 +1,16 @@
 import type {PayloadMetadata} from "../../localAssets/readiness.ts";
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../../localAssets/refs.ts";
 import type {AssetRow, Decoded, ThumbnailRecord} from "./records.ts";
 
-export type AssetPageCursor = {after?: LocalAssetRef; before?: LocalAssetRef};
+export type AssetPageCursor = {after?: LocalImageRef; before?: LocalImageRef};
 
 export type AssetLibraryMutation =
   | {
       kind: "import";
-      ref: LocalAssetRef;
+      ref: LocalImageRef;
       defaultLabel: string;
       originalFilename: string;
       createdAt: string;
@@ -18,14 +18,14 @@ export type AssetLibraryMutation =
       blob: Blob;
       thumbnail: ThumbnailRecord;
     }
-  | {kind: "rename"; ref: LocalAssetRef; label: string}
-  | {kind: "delete"; ref: LocalAssetRef};
+  | {kind: "rename"; ref: LocalImageRef; label: string}
+  | {kind: "delete"; ref: LocalImageRef};
 
 export type AssetLibraryMutationResult =
-  | {kind: "imported"; ref: LocalAssetRef; created: boolean} // created=false: existing row reused/repaired
-  | {kind: "renamed"; ref: LocalAssetRef}
-  | {kind: "deleted"; ref: LocalAssetRef; payloadRemoved: boolean}
-  | {kind: "not-found"; ref: LocalAssetRef}; // rename/delete of a row that no longer exists
+  | {kind: "imported"; ref: LocalImageRef; created: boolean} // created=false: existing row reused/repaired
+  | {kind: "renamed"; ref: LocalImageRef}
+  | {kind: "deleted"; ref: LocalImageRef; payloadRemoved: boolean}
+  | {kind: "not-found"; ref: LocalImageRef}; // rename/delete of a row that no longer exists
 
 export type LocalAssetLibraryErrorCode = "storage-full" | "storage-error";
 
@@ -54,7 +54,7 @@ export class LocalAssetLibraryError extends Error {
 }
 
 export interface AssetLibraryStore {
-  getAssetRow(ref: LocalAssetRef): Promise<Decoded<AssetRow>>;
+  getAssetRow(ref: LocalImageRef): Promise<Decoded<AssetRow>>;
   getPayloadMeta(digest: string): Promise<Decoded<PayloadMetadata>>;
   getBlob(digest: string): Promise<Decoded<Blob>>;
   getThumbnail(digest: string): Promise<Decoded<ThumbnailRecord>>;
@@ -66,11 +66,11 @@ export interface AssetLibraryStore {
    * whose key is `> after` (or from the start of the category).
    */
   listAssets(
-    category: LocalAssetCategory,
+    category: ImageAssetCategory,
     cursor: AssetPageCursor,
     limit: number,
-  ): Promise<Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}>>;
-  countAssets(category: LocalAssetCategory): Promise<number>;
+  ): Promise<Array<{ref: LocalImageRef; row: Decoded<AssetRow>}>>;
+  countAssets(category: ImageAssetCategory): Promise<number>;
   /** Applies one mutation in ONE read-write transaction over all four stores. */
   apply(mutation: AssetLibraryMutation): Promise<AssetLibraryMutationResult>;
   close(): void;

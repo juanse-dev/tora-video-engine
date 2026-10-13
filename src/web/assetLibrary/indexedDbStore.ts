@@ -2,8 +2,8 @@ import {
   buildLocalAssetRef,
   parseLocalAssetRef,
   localAssetRefPrefix,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "../../localAssets/refs.ts";
 import type {PayloadMetadata} from "../../localAssets/readiness.ts";
 import {
@@ -139,7 +139,7 @@ const openConnection = (
   ) as Promise<IDBDatabase>;
 
 const buildRange = (
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   cursor: AssetPageCursor,
 ): IDBKeyRange | null => {
   const prefix = localAssetRefPrefix(category);
@@ -167,8 +167,8 @@ const buildRange = (
 
 const isCanonicalKeyOf = (
   key: IDBValidKey,
-  category: LocalAssetCategory,
-): key is LocalAssetRef =>
+  category: ImageAssetCategory,
+): key is LocalImageRef =>
   typeof key === "string" && parseLocalAssetRef(key)?.category === category;
 
 const refParts = (ref: string) => {
@@ -410,9 +410,9 @@ export const openIndexedDbAssetStore = async (
 
       const backwards = cursor.before !== undefined;
       const rows = await transact("assets", "readonly", (transaction) =>
-        new Promise<Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}>>(
+        new Promise<Array<{ref: LocalImageRef; row: Decoded<AssetRow>}>>(
           (resolve, reject) => {
-            const found: Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}> =
+            const found: Array<{ref: LocalImageRef; row: Decoded<AssetRow>}> =
               [];
             const request = transaction
               .objectStore("assets")

@@ -1,6 +1,6 @@
 import {createContext, useContext, type ReactNode} from "react";
 import {staticFile} from "remotion";
-import type {LocalAssetCategory} from "../localAssets/refs.ts";
+import type {ImageAssetCategory} from "../localAssets/refs.ts";
 import {
   resolveVisualAssetSrc,
   type LocalAssetSourceMap,
@@ -26,7 +26,7 @@ export const LocalAssetSourcesProvider = ({
 
 /** Reads the context and calls resolveVisualAssetSrc(category, value, sources, staticFile). */
 export const useVisualAssetSrc = (
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   value: Pose | Background,
 ): VisualAssetResolution =>
   resolveVisualAssetSrc(

@@ -69,6 +69,11 @@ import {
   type PersistenceVersion,
   type ProtectedRecovery,
 } from "./persistence.ts";
+import {
+  AUDIO_RENDER_BLOCK_MESSAGE,
+  storyAudioDurations,
+  storyHasAudio,
+} from "../audio/storyAudio.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
 import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
@@ -300,7 +305,10 @@ export const App = () => {
     objectUrlPool,
     assetRefreshToken,
   );
-  const previewConfig = getWebPlayerConfig(activeStory);
+  const previewConfig = getWebPlayerConfig(
+    activeStory,
+    storyAudioDurations(activeStory),
+  );
 
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
@@ -349,6 +357,10 @@ export const App = () => {
     localAssets.state,
     assetLibrary ?? OPENING_ASSET_LIBRARY,
   );
+  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
+  const audioRenderBlock = storyHasAudio(activeStory)
+    ? AUDIO_RENDER_BLOCK_MESSAGE
+    : null;
   const renderNeedsUnloadWarning =
     renderAuthoringLocked || renderUi.phase === "cleanup-blocked";
 
@@ -947,6 +959,7 @@ export const App = () => {
       renderCapability?.kind !== "ready" ||
       renderLockStatus !== "available" ||
       renderInputBlocked ||
+      audioRenderBlock !== null ||
       localAssetRenderBlock !== null ||
       renderUi.phase === "cleanup-blocked"
     ) {
@@ -1835,6 +1848,7 @@ export const App = () => {
               renderCapability?.kind !== "ready" ||
               renderLockStatus !== "available" ||
               renderInputBlocked ||
+              audioRenderBlock !== null ||
               localAssetRenderBlock !== null ||
               renderUi.phase === "cleanup-blocked"
             }
@@ -1946,6 +1960,7 @@ export const App = () => {
         role="status"
         data-render-state={renderUi.phase}
         data-local-asset-block={localAssetRenderBlock ?? undefined}
+        data-audio-block={audioRenderBlock ?? undefined}
       >
         <strong>Browser MP4</strong>
         <span>
@@ -1955,7 +1970,11 @@ export const App = () => {
               ? renderCapability.message
               : renderInputBlocked
                 ? "Resolve or discard pending editor/import work before rendering the active Story."
-                : localAssetRenderBlock !== null &&
+                : audioRenderBlock !== null &&
+                    (renderUi.phase === "idle" ||
+                      renderUi.phase === "success")
+                  ? audioRenderBlock
+                  : localAssetRenderBlock !== null &&
                     (renderUi.phase === "idle" ||
                       renderUi.phase === "success")
                   ? localAssetRenderBlock

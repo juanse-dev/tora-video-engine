@@ -152,10 +152,10 @@ describe("story schema with local refs", () => {
 
 describe("ref helpers", () => {
   it("exposes the grammar", () => {
-    assert.deepEqual([...localAssetCategories], ["pose", "background"]);
+    assert.deepEqual([...localAssetCategories], ["pose", "background", "audio"]);
     assert.equal(
       LOCAL_ASSET_REF_PATTERN.source,
-      "^local:(pose|background):sha256:[0-9a-f]{64}$",
+      "^local:(pose|background|audio):sha256:[0-9a-f]{64}$",
     );
     assert.equal(SHA256_HEX_PATTERN.source, "^[0-9a-f]{64}$");
     assert.equal(localAssetRefPrefix("pose"), "local:pose:sha256:");

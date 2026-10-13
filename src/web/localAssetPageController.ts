@@ -1,6 +1,6 @@
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../localAssets/refs.ts";
 import {parseLocalAssetRef} from "../localAssets/refs.ts";
 import type {AssetPageCursor, AssetLibraryStore} from "./assetLibrary/store.ts";
@@ -35,7 +35,7 @@ export type LocalAssetPageSnapshot = {
   /** Set when the last load failed; the previous page (if any) is kept. */
   error: string | null;
   /** The ref that `pinned` describes, so a stale state is never shown for a newer ref. */
-  pinnedFor: LocalAssetRef | null;
+  pinnedFor: LocalImageRef | null;
   pinned: PinnedLocalAsset;
 };
 
@@ -79,7 +79,7 @@ export const createLocalAssetPageController = (options: {
     AssetLibraryStore,
     "listAssets" | "countAssets" | "getAssetRow" | "getThumbnail"
   >;
-  category: LocalAssetCategory;
+  category: ImageAssetCategory;
   loadThumbnail?: (digest: string) => Promise<ThumbnailResult>;
   createUrl?: (blob: Blob) => string;
   revokeUrl?: (url: string) => void;
@@ -102,8 +102,8 @@ export const createLocalAssetPageController = (options: {
   // Cursor state of the last page that was committed, restored when a load fails.
   let committedCursor: AssetPageCursor = {};
   let committedStack: AssetPageCursor[] = [];
-  let pinnedRef: LocalAssetRef | null = null;
-  let pinnedLoadedFor: LocalAssetRef | null = null;
+  let pinnedRef: LocalImageRef | null = null;
+  let pinnedLoadedFor: LocalImageRef | null = null;
   let generation = 0;
   let disposed = false;
 
@@ -133,7 +133,7 @@ export const createLocalAssetPageController = (options: {
   };
 
   const readPinned = async (
-    ref: LocalAssetRef,
+    ref: LocalImageRef,
   ): Promise<
     {kind: "missing"} | {kind: "present"; entry: LocalAssetEntry}
   > => {
@@ -305,7 +305,7 @@ export const createLocalAssetPageController = (options: {
     },
 
     /** Sets the pinned ref and (re)loads the current page. */
-    sync(ref: LocalAssetRef | null): Promise<void> {
+    sync(ref: LocalImageRef | null): Promise<void> {
       pinnedRef = ref;
 
       return load();

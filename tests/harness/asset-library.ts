@@ -10,8 +10,8 @@ import {inspectImageBytes} from "../../src/localAssets/imageInspection.ts";
 import {
   buildLocalAssetRef,
   parseLocalAssetRef,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "../../src/localAssets/refs.ts";
 import {
   ASSET_DB_NAME,
@@ -219,7 +219,7 @@ const buildThumbnail = async (kind: ThumbnailKind): Promise<ThumbnailRecord> => 
 };
 
 type SeedOptions = {
-  category: LocalAssetCategory;
+  category: ImageAssetCategory;
   width?: number;
   height?: number;
   color?: string;
@@ -232,7 +232,7 @@ type SeedOptions = {
 
 const buildImportMutation = async (
   options: SeedOptions,
-): Promise<{mutation: AssetLibraryMutation; ref: LocalAssetRef; digest: string}> => {
+): Promise<{mutation: AssetLibraryMutation; ref: LocalImageRef; digest: string}> => {
   const width = options.width ?? 16;
   const height = options.height ?? 16;
   const {bytes} = await makePng(width, height, options.color ?? "#cc3366");
@@ -359,7 +359,7 @@ const toraHarness = {
     }
   },
 
-  async inspectRef(ref: LocalAssetRef) {
+  async inspectRef(ref: LocalImageRef) {
     const store = requireLibrary().store;
     const parsed = parseLocalAssetRef(ref);
 
@@ -402,7 +402,7 @@ const toraHarness = {
     };
   },
 
-  async probeRead(ref: LocalAssetRef) {
+  async probeRead(ref: LocalImageRef) {
     try {
       await requireLibrary().store.getAssetRow(ref);
       return {ok: true as const};
@@ -411,16 +411,16 @@ const toraHarness = {
     }
   },
 
-  async rename(ref: LocalAssetRef, label: string) {
+  async rename(ref: LocalImageRef, label: string) {
     return renameLocalAsset(requireLibrary(), ref, label);
   },
 
-  async remove(ref: LocalAssetRef) {
+  async remove(ref: LocalImageRef) {
     return deleteLocalAsset(requireLibrary(), ref);
   },
 
   /** Starts a rename without waiting for it (the exclusive lock may be busy). */
-  startRename(ref: LocalAssetRef, label: string): void {
+  startRename(ref: LocalImageRef, label: string): void {
     pendingMutation = {state: "pending"};
     renameLocalAsset(requireLibrary(), ref, label).then(
       (result) => {
@@ -434,7 +434,7 @@ const toraHarness = {
 
   pendingMutation: (): unknown => pendingMutation,
 
-  async listPage(category: LocalAssetCategory, cursor: AssetPageCursor = {}) {
+  async listPage(category: ImageAssetCategory, cursor: AssetPageCursor = {}) {
     const page = await listLocalAssetPage(
       requireLibrary().store,
       category,
@@ -450,7 +450,7 @@ const toraHarness = {
   },
 
   async listStore(
-    category: LocalAssetCategory,
+    category: ImageAssetCategory,
     cursor: AssetPageCursor,
     limit: number,
   ) {
@@ -463,7 +463,7 @@ const toraHarness = {
     return rows.map(({ref, row}) => ({ref, status: row.status}));
   },
 
-  count: (category: LocalAssetCategory) =>
+  count: (category: ImageAssetCategory) =>
     countLocalAssets(requireLibrary().store, category),
 
   /* ---- the real import pipeline (default decode + thumbnail) ---- */
@@ -473,7 +473,7 @@ const toraHarness = {
    * runs the REAL `importLocalAsset` (default createImageBitmap decode and
    * OffscreenCanvas thumbnail, no injected fakes) against the open library.
    */
-  async importFixture(fixture: string, category: LocalAssetCategory) {
+  async importFixture(fixture: string, category: ImageAssetCategory) {
     const response = await fetch(`/tests/fixtures/local-assets/${fixture}`);
 
     if (!response.ok) {
@@ -499,7 +499,7 @@ const toraHarness = {
     };
   },
 
-  async displayThumbnail(ref: LocalAssetRef) {
+  async displayThumbnail(ref: LocalImageRef) {
     const parsed = parseLocalAssetRef(ref);
 
     if (parsed === null) {
@@ -516,7 +516,7 @@ const toraHarness = {
       : {ok: false as const};
   },
 
-  async verify(ref: LocalAssetRef) {
+  async verify(ref: LocalImageRef) {
     const parsed = parseLocalAssetRef(ref);
 
     if (parsed === null) {
@@ -530,7 +530,7 @@ const toraHarness = {
       : {ok: false as const, reason: result.reason, detail: result.detail};
   },
 
-  async renderCard(ref: LocalAssetRef) {
+  async renderCard(ref: LocalImageRef) {
     const parsed = parseLocalAssetRef(ref);
 
     if (parsed === null) {

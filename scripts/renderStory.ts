@@ -24,6 +24,10 @@ import {
   type RenderControl,
   RenderInterruptedError,
 } from "./interrupt.ts";
+import {
+  AUDIO_RENDER_BLOCK_MESSAGE,
+  storyHasAudio,
+} from "../src/audio/storyAudio.ts";
 import {storyHasLocalAssetRefs} from "../src/localAssets/readiness.ts";
 import {loadStory} from "../src/story/loadStory.ts";
 
@@ -100,6 +104,11 @@ export const renderStory = async (
   await rm(outputPath, {force: true});
 
   const story = await loadStory(storyPath);
+
+  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
+  if (storyHasAudio(story)) {
+    throw new Error(AUDIO_RENDER_BLOCK_MESSAGE);
+  }
 
   // Installed before the directory is created and removed only after it is
   // gone, so a signal at any point in between still ends in the cleanup below.

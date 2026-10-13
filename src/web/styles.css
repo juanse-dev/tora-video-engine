@@ -248,6 +248,15 @@ h1 {
   border-color: rgba(248, 113, 113, 0.75);
 }
 
+.field-readonly {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px 11px;
+  color: #f8fafc;
+  background: rgba(5, 8, 13, 0.72);
+  font-weight: 400;
+}
+
 .field-error {
   color: #fca5a5;
   font-weight: 600;

@@ -1391,3 +1391,145 @@ describe("issue #29 Tora-owned OPFS writer", () => {
     });
   });
 });
+
+describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
+  const autoScene = {
+    type: "intro",
+    pose: "formal",
+    background: "office",
+    text: "Auto",
+    duration: "auto",
+    voice: {src: `local:audio:sha256:${"d".repeat(64)}`}, // no known duration: the 3 s fallback
+  };
+  const renderWith = async (story) => {
+    let seen = null;
+
+    await renderStoryMediaOnWeb(story, {
+      signal: new AbortController().signal,
+      bypassAudioBlockForTest: true,
+      component: () => null,
+      getDirectory: createFakeOpfs().getDirectory,
+      render: async (options) => {
+        seen = options;
+        await finalizeOutput(options);
+
+        return {getBlob: async () => new Blob(["v"]), internalState: {}};
+      },
+    });
+
+    return seen;
+  };
+
+  it("an auto Story renders at the compiled total, not the acceptance lower bound", async () => {
+    const story = {
+      title: "Auto",
+      scenes: [{...autoScene}, {...autoScene, text: "Two"}, {...exampleStory.scenes[0], duration: 2}],
+    };
+    const seen = await renderWith(story);
+
+    // 2 auto scenes at the 3 s fallback (90 frames each) + one 2 s scene.
+    assert.equal(seen.composition.durationInFrames, 90 + 90 + 60);
+    assert.ok(seen.composition.durationInFrames > 16 + 16 + 60);
+    assert.equal(
+      seen.inputProps.audioDurations,
+      seen.composition.defaultProps.audioDurations,
+    );
+    assert.notEqual(seen.inputProps.audioDurations, undefined);
+  });
+
+  it("a Story without audio keeps its duration and its props", async () => {
+    const seen = await renderWith(exampleStory);
+
+    assert.equal(seen.composition.durationInFrames, 360);
+    assert.deepEqual(Object.keys(seen.inputProps), ["story", "localAssetSources"]);
+    assert.deepEqual(Object.keys(seen.composition.defaultProps), [
+      "story",
+      "localAssetSources",
+    ]);
+  });
+
+  it("refuses an auto Story whose exact total exceeds the cap while its lower bound passes", async () => {
+    const story = {
+      title: "Long auto",
+      scenes: Array.from({length: 101}, (_, i) => ({...autoScene, text: `S${i}`})),
+    };
+    let rendered = false;
+    let directoryRequested = false;
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(story, {
+        signal: new AbortController().signal,
+        bypassAudioBlockForTest: true,
+      component: () => null,
+        getDirectory: async () => {
+          directoryRequested = true;
+          return createFakeOpfs().getDirectory();
+        },
+        render: async () => {
+          rendered = true;
+        },
+      }),
+      /Active Story failed the browser render policy recheck: Browser authoring supports at most 9,000 frames/,
+    );
+    assert.equal(rendered, false);
+    assert.equal(directoryRequested, false);
+  });
+});
+
+describe("AUDIO-001 interim render block (removed by AUDIO-005)", () => {
+  const MESSAGE =
+    "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.";
+  const refuse = async (story) => {
+    const calls = [];
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(story, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: async () => {
+          calls.push("getDirectory");
+          return createFakeOpfs().getDirectory();
+        },
+        render: async () => {
+          calls.push("render");
+        },
+      }),
+      (error) => error.message === MESSAGE,
+    );
+
+    assert.deepEqual(calls, []);
+  };
+
+  it("refuses a Story with music, sfx, voice or an auto duration before any OPFS or render work", async () => {
+    const withMusic = structuredClone(exampleStory);
+    withMusic.music = {src: "calm-loop"};
+    const withSfx = structuredClone(exampleStory);
+    withSfx.scenes[0].sfx = {src: "ding"};
+    const withVoice = structuredClone(exampleStory);
+    withVoice.scenes[0].voice = {src: "ding"};
+    const withAuto = structuredClone(exampleStory);
+    withAuto.scenes[0].duration = "auto";
+
+    for (const story of [withMusic, withSfx, withVoice, withAuto]) {
+      await refuse(story);
+    }
+  });
+
+  it("still renders a Story without audio", async () => {
+    let rendered = false;
+
+    await renderStoryMediaOnWeb(exampleStory, {
+      signal: new AbortController().signal,
+      component: () => null,
+      getDirectory: createFakeOpfs().getDirectory,
+      render: async (options) => {
+        rendered = true;
+        await finalizeOutput(options);
+
+        return {getBlob: async () => new Blob(["v"]), internalState: {}};
+      },
+    });
+
+    assert.equal(rendered, true);
+  });
+});

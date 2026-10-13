@@ -28,6 +28,7 @@ import {
   getVisualYamlTransitionActions,
   moveVisualScene,
   storyToVisualDraft,
+  updateVisualScene,
   validateRawVisualCaption,
   validateRawVisualTitle,
   visualEditorOptions,
@@ -386,5 +387,76 @@ describe("WEB-003 visual draft transformations", () => {
       validateRawVisualCaption("a".repeat(MAX_VISUAL_CAPTION_CODE_UNITS + 1)),
       /not accepted/,
     );
+  });
+});
+
+describe("AUDIO-001 visual editor keeps audio", () => {
+  const voice = `local:audio:sha256:${"f".repeat(64)}`;
+  const audioStory = {
+    title: "Audio",
+    music: {src: "boom", volume: 0.6, fadeIn: 0.5, fadeOut: 1, duck: 0.3},
+    scenes: [
+      {type: "intro", pose: "formal", background: "office", text: "One", sfx: {src: "ding", volume: 0.9}, duration: 3},
+      {type: "dialogue", pose: "confused", background: "office", text: "Two", voice: {src: voice}, duration: "auto"},
+    ],
+  };
+
+  it("keeps every audio field and auto through a caption edit", () => {
+    const draft = updateVisualScene(storyToVisualDraft(audioStory), 0, {text: "One!"});
+    const result = evaluateVisualDraft(draft);
+    assert.equal(result.kind, "eligible");
+    assert.deepEqual(result.story, {...audioStory, scenes: [{...audioStory.scenes[0], text: "One!"}, audioStory.scenes[1]]});
+  });
+
+  it("keeps each scene's audio on its scene when scenes are reordered, removed or added", () => {
+    const draft = storyToVisualDraft(audioStory);
+    const moved = evaluateVisualDraft(moveVisualScene(draft, 1, 0));
+    assert.deepEqual(moved.story.scenes, [audioStory.scenes[1], audioStory.scenes[0]]);
+    const deleted = evaluateVisualDraft(deleteVisualScene(draft, 0));
+    assert.deepEqual(deleted.story.scenes, [audioStory.scenes[1]]);
+    const added = evaluateVisualDraft(addVisualScene(draft));
+    assert.deepEqual(added.story.scenes.slice(0, 2), audioStory.scenes);
+    assert.equal("sfx" in added.story.scenes[2], false);
+    assert.deepEqual(added.story.music, audioStory.music);
+  });
+
+  it("carries auto in the draft unchanged and maps only the exact trimmed string auto", () => {
+    const draft = storyToVisualDraft(audioStory);
+    assert.equal(draft.scenes[1].duration, "auto");
+    assert.equal(draft.scenes[0].duration, "3");
+
+    const padded = evaluateVisualDraft(updateVisualScene(draft, 1, {duration: " auto "}));
+    assert.equal(padded.kind, "eligible");
+    assert.equal(padded.story.scenes[1].duration, "auto");
+  });
+
+  it("keeps durationFromInput behavior for every non-auto input", () => {
+    const base = storyToVisualDraft(exampleStory);
+    const durationOf = (value) => {
+      const result = evaluateVisualDraft(updateVisualScene(base, 0, {duration: value}));
+      return result.kind === "eligible" ? result.story.scenes[0].duration : result.kind;
+    };
+    assert.equal(durationOf(" 3 "), 3);
+    assert.equal(durationOf("2.5"), 2.5);
+    assert.equal(durationOf(""), "schema-invalid");
+    assert.equal(durationOf("   "), "schema-invalid");
+    assert.equal(durationOf("abc"), "schema-invalid");
+    assert.equal(durationOf("AUTO"), "schema-invalid");
+  });
+
+  it("produces a draft and candidate identical to main for a Story without audio", () => {
+    const draft = storyToVisualDraft(exampleStory);
+    assert.deepEqual(Object.keys(draft), ["title", "scenes"]);
+    for (const scene of draft.scenes) {
+      assert.deepEqual(Object.keys(scene), ["type", "pose", "background", "animation", "text", "duration"]);
+    }
+    const result = evaluateVisualDraft(draft);
+    assert.equal(result.kind, "eligible");
+    assert.deepEqual(result.story, exampleStory);
+    assert.equal("music" in result.story, false);
+    for (const scene of result.story.scenes) {
+      assert.equal("sfx" in scene, false);
+      assert.equal("voice" in scene, false);
+    }
   });
 });

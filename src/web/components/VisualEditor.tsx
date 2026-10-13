@@ -298,20 +298,24 @@ export const VisualEditor = ({
 
             <label className="field">
               <span>Duration (seconds)</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                value={selected.duration}
-                onChange={(event) =>
-                  updateScene(selectedScene, {
-                    duration: event.target.value,
-                  })
-                }
-                aria-invalid={Boolean(
-                  errors[`scenes.${selectedScene}.duration`],
-                )}
-              />
+              {selected.duration === "auto" ? (
+                <output className="field-readonly">auto (from voice)</output>
+              ) : (
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={selected.duration}
+                  onChange={(event) =>
+                    updateScene(selectedScene, {
+                      duration: event.target.value,
+                    })
+                  }
+                  aria-invalid={Boolean(
+                    errors[`scenes.${selectedScene}.duration`],
+                  )}
+                />
+              )}
               {errors[`scenes.${selectedScene}.duration`] ? (
                 <small className="field-error">
                   {errors[`scenes.${selectedScene}.duration`]}

@@ -4,12 +4,12 @@ import {ToraVideo, type ToraVideoProps} from "./Video";
 import {exampleStory} from "./story/exampleStory";
 import {getStoryMetadata} from "./story/metadata";
 import {VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH} from "./videoConfig";
-const defaultMetadata = getStoryMetadata(exampleStory, VIDEO_FPS);
+const defaultMetadata = getStoryMetadata(exampleStory, VIDEO_FPS, {});
 
 const calculateMetadata: CalculateMetadataFunction<ToraVideoProps> = ({
   props,
 }) => {
-  return getStoryMetadata(props.story, VIDEO_FPS);
+  return getStoryMetadata(props.story, VIDEO_FPS, props.audioDurations ?? {});
 };
 
 export const RemotionRoot = () => {
