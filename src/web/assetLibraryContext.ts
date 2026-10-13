@@ -1,7 +1,7 @@
 import {createContext} from "react";
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../localAssets/refs.ts";
 import type {
   AssetLibraryMessage,
@@ -29,15 +29,15 @@ import type {StoryLocalAssetState} from "./localAssetState.ts";
 export type AssetDialog =
   | {
       kind: "delete";
-      ref: LocalAssetRef;
+      ref: LocalImageRef;
       label: string;
-      category: LocalAssetCategory;
+      category: ImageAssetCategory;
       sceneCount: number;
       onConfirm: (onCancelable: MutationCancelable) => Promise<void>;
     }
   | {
       kind: "mismatch";
-      candidateRef: LocalAssetRef;
+      candidateRef: LocalImageRef;
       onReplace: () => Promise<void>;
       onCancel: () => void;
     };

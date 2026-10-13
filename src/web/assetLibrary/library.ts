@@ -1,8 +1,8 @@
 import {inspectImageBytes} from "../../localAssets/imageInspection.ts";
 import {
   parseLocalAssetRef,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "../../localAssets/refs.ts";
 import {
   LOCAL_ASSET_PAGE_SIZE,
@@ -23,8 +23,8 @@ import type {
 } from "./store.ts";
 
 export type LocalAssetEntry = {
-  ref: LocalAssetRef;
-  category: LocalAssetCategory;
+  ref: LocalImageRef;
+  category: ImageAssetCategory;
   digest: string;
   row: Decoded<AssetRow>; // corrupt rows are listed so they can be repaired/deleted, never applied
 };
@@ -38,7 +38,7 @@ export type AssetLibrary = {
 // The opposite-direction flag is inferred from the cursor, so callers must handle an empty page.
 export const listLocalAssetPage = async (
   store: AssetLibraryStore,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   cursor: AssetPageCursor = {},
 ): Promise<{
   entries: LocalAssetEntry[];
@@ -80,7 +80,7 @@ export const listLocalAssetPage = async (
 
 export const countLocalAssets = (
   store: AssetLibraryStore,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
 ): Promise<number> => store.countAssets(category);
 
 export const normalizeLocalAssetLabel = (
@@ -185,7 +185,7 @@ const mutateLibrary = async (
  */
 export const renameLocalAsset = (
   library: AssetLibrary,
-  ref: LocalAssetRef,
+  ref: LocalImageRef,
   label: string,
   options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> => {
@@ -206,7 +206,7 @@ export const renameLocalAsset = (
 /** `options` can cancel the wait for the lock (see LibraryMutationOptions). */
 export const deleteLocalAsset = (
   library: AssetLibrary,
-  ref: LocalAssetRef,
+  ref: LocalImageRef,
   options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> =>
   mutateLibrary(library, {kind: "delete", ref}, true, options);

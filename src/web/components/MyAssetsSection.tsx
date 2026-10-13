@@ -1,8 +1,8 @@
 import {useContext} from "react";
 import {
   parseLocalAssetRef,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "../../localAssets/refs.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
 import {
@@ -29,7 +29,7 @@ import {
 } from "./MissingLocalAssetCard.tsx";
 
 type MyAssetsSectionProps = {
-  category: LocalAssetCategory;
+  category: ImageAssetCategory;
   /** The selected scene's pose or background value for this category. */
   selectedValue: string;
   /**
@@ -38,7 +38,7 @@ type MyAssetsSectionProps = {
    * warning's count come from these, so a pending draft is never under-counted.
    */
   scenes: readonly SceneAssetValues[];
-  onSelect: (ref: LocalAssetRef) => void;
+  onSelect: (ref: LocalImageRef) => void;
 };
 
 /**
@@ -51,8 +51,8 @@ const PendingCurrentCard = ({
   category,
   message,
 }: {
-  assetRef: LocalAssetRef;
-  category: LocalAssetCategory;
+  assetRef: LocalImageRef;
+  category: ImageAssetCategory;
   message: string;
 }) => (
   <div
@@ -70,18 +70,18 @@ const PendingCurrentCard = ({
   </div>
 );
 
-const categoryLabel = (category: LocalAssetCategory) =>
+const categoryLabel = (category: ImageAssetCategory) =>
   category === "pose" ? "pose" : "background";
 
 /** The selected value when it is a local ref of this category, else null. */
 const currentLocalRef = (
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   value: string,
-): LocalAssetRef | null => {
+): LocalImageRef | null => {
   const parsed = parseLocalAssetRef(value);
 
   return parsed !== null && parsed.category === category
-    ? (value as LocalAssetRef)
+    ? (value as LocalImageRef)
     : null;
 };
 
@@ -114,7 +114,7 @@ export const MyAssetsSection = ({
   const noun = categoryLabel(category);
   const renderMissing = (
     kind: MissingLocalAssetKind,
-    assetRef: LocalAssetRef,
+    assetRef: LocalImageRef,
     unavailableMessage = "",
   ) => (
     <MissingLocalAssetCard

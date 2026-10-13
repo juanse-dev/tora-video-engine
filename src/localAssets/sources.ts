@@ -5,7 +5,7 @@ import {
   toraPoseAssets,
 } from "../assets.ts";
 import type {Background, Pose} from "../story/types.ts";
-import type {LocalAssetCategory, LocalAssetRef} from "./refs.ts";
+import type {ImageAssetCategory, LocalImageRef} from "./refs.ts";
 import {isLocalAssetRef} from "./refs.ts";
 
 export const STAGED_LOCAL_ASSETS_DIR = "__local-assets";
@@ -20,24 +20,24 @@ export type LocalAssetSource =
   | {kind: "pending"}; // browser preview: still resolving (never passed to a render)
 
 export type LocalAssetSourceMap = Readonly<
-  Partial<Record<LocalAssetRef, LocalAssetSource>>
+  Partial<Record<LocalImageRef, LocalAssetSource>>
 >;
 
 /** "abcd…7890": first 4 and last 4 hex chars of the digest. */
-export const shortAssetId = (ref: LocalAssetRef): string =>
+export const shortAssetId = (ref: LocalImageRef): string =>
   `${ref.slice(ref.length - 64, ref.length - 60)}…${ref.slice(ref.length - 4)}`;
 
 export type VisualAssetResolution =
   | {kind: "image"; src: string}
-  | {kind: "pending"; category: LocalAssetCategory; ref: LocalAssetRef}
-  | {kind: "missing"; category: LocalAssetCategory; ref: LocalAssetRef};
+  | {kind: "pending"; category: ImageAssetCategory; ref: LocalImageRef}
+  | {kind: "missing"; category: ImageAssetCategory; ref: LocalImageRef};
 
 /**
  * Pure resolution of a Story pose/background value to something drawable.
  * Never falls back to another image for a local ref (INV-5).
  */
 export const resolveVisualAssetSrc = (
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   value: Pose | Background,
   sources: LocalAssetSourceMap | undefined,
   toStaticUrl: (path: string) => string,
@@ -50,7 +50,7 @@ export const resolveVisualAssetSrc = (
     return {kind: "image", src: toStaticUrl(backgroundAssets[value])};
   }
 
-  const ref = value as LocalAssetRef;
+  const ref = value as LocalImageRef;
 
   if (!isLocalAssetRef(ref) || !ref.startsWith(`local:${category}:`)) {
     return {kind: "missing", category, ref};

@@ -1,7 +1,7 @@
 import {useCallback, useContext, useRef, useState} from "react";
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../localAssets/refs.ts";
 import {AssetLibraryContext} from "./assetLibraryContext.ts";
 import {
@@ -28,7 +28,7 @@ export type LocalAssetManage = {
    * rename waits for the library lock (see MutationCancelable).
    */
   rename: (
-    ref: LocalAssetRef,
+    ref: LocalImageRef,
     label: string,
     onCancelable?: MutationCancelable,
   ) => Promise<string | null>;
@@ -38,9 +38,9 @@ export type LocalAssetManage = {
    * it is fixed now because the Story is frozen while the dialog is open.
    */
   requestDelete: (asset: {
-    ref: LocalAssetRef;
+    ref: LocalImageRef;
     label: string;
-    category: LocalAssetCategory;
+    category: ImageAssetCategory;
     sceneCount: number;
   }) => void;
 };
@@ -61,7 +61,7 @@ export const useLocalAssetManage = (): LocalAssetManage => {
 
   const rename = useCallback(
     async (
-      ref: LocalAssetRef,
+      ref: LocalImageRef,
       label: string,
       onCancelable?: MutationCancelable,
     ) => {
@@ -109,9 +109,9 @@ export const useLocalAssetManage = (): LocalAssetManage => {
       category,
       sceneCount,
     }: {
-      ref: LocalAssetRef;
+      ref: LocalImageRef;
       label: string;
-      category: LocalAssetCategory;
+      category: ImageAssetCategory;
       sceneCount: number;
     }) => {
       const current = contextRef.current;

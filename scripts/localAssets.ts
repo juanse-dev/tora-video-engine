@@ -17,8 +17,8 @@ import {STAGED_LOCAL_ASSETS_DIR} from "../src/localAssets/sources.ts";
 import type {LocalAssetSourceMap} from "../src/localAssets/sources.ts";
 import type {Story} from "../src/story/schema.ts";
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../src/localAssets/refs.ts";
 
 export const LOCAL_ASSETS_ROOT = "local-assets";
@@ -32,7 +32,7 @@ export type CandidateResult =
   | {
       relativePath: string;
       ok: true;
-      ref: LocalAssetRef;
+      ref: LocalImageRef;
       digest: string;
       image: InspectedImage;
       bytes: Uint8Array;
@@ -91,7 +91,7 @@ type Entry = {relativePath: string; stats: Stats};
 
 const categoryDirectory = (
   root: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
 ): string => join(root, categoryFolder[category]);
 
 /**
@@ -101,7 +101,7 @@ const categoryDirectory = (
  */
 export const categoryFolderExists = async (
   root: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   deps: ScanDeps = {},
 ): Promise<boolean> => {
   const statImpl = deps.stat ?? stat;
@@ -172,7 +172,7 @@ const sameIdentity = (
 const inspectEntry = async (
   directory: string,
   entry: Entry,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   deps: ScanDeps,
 ): Promise<CandidateResult> => {
   const {relativePath, stats} = entry;
@@ -230,7 +230,7 @@ const inspectEntry = async (
  */
 export async function* scanCategory(
   root: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   deps: ScanDeps = {},
 ): AsyncGenerator<CandidateResult> {
   if (!(await categoryFolderExists(root, category, deps))) {
@@ -252,7 +252,7 @@ export async function* scanCategory(
 }
 
 export type InventoryLine =
-  | {relativePath: string; ref: LocalAssetRef}
+  | {relativePath: string; ref: LocalImageRef}
   | {relativePath: string; rejected: string}; // describeImageRejection or scan reason
 
 const describeScanFailure = (
@@ -270,7 +270,7 @@ const describeScanFailure = (
 
 const inventoryCategory = async (
   root: string,
-  category: LocalAssetCategory,
+  category: ImageAssetCategory,
   deps: ScanDeps,
 ): Promise<InventoryLine[]> => {
   const lines: InventoryLine[] = [];
@@ -399,12 +399,12 @@ export const stageLocalAssetsForStory = async (
   options: {
     root: string;
     publicDir: string;
-    onStaged?: (ref: LocalAssetRef, stagedPath: string) => Promise<void> | void;
+    onStaged?: (ref: LocalImageRef, stagedPath: string) => Promise<void> | void;
   },
   deps: ScanDeps = {},
 ): Promise<StagedLocalAssets> => {
   const usages = collectStoryLocalAssetUsages(story);
-  const sources: Partial<Record<LocalAssetRef, LocalAssetSourceMap[LocalAssetRef]>> =
+  const sources: Partial<Record<LocalImageRef, LocalAssetSourceMap[LocalImageRef]>> =
     {};
   const missing: typeof usages = [];
 

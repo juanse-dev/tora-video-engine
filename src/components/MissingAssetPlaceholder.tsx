@@ -1,9 +1,9 @@
-import type {LocalAssetCategory, LocalAssetRef} from "../localAssets/refs.ts";
+import type {ImageAssetCategory, LocalImageRef} from "../localAssets/refs.ts";
 import {shortAssetId} from "../localAssets/sources.ts";
 
 type MissingAssetPlaceholderProps = {
-  category: LocalAssetCategory;
-  assetRef: LocalAssetRef;
+  category: ImageAssetCategory;
+  assetRef: LocalImageRef;
   variant: "missing" | "pending";
 };
 

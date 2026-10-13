@@ -5,14 +5,15 @@ import {
   MAX_BROWSER_STORY_LOCAL_ASSET_REFS,
 } from "./limits.ts";
 import {
+  isImageAssetCategory,
   parseLocalAssetRef,
-  type LocalAssetCategory,
-  type LocalAssetRef,
+  type ImageAssetCategory,
+  type LocalImageRef,
 } from "./refs.ts";
 
 export type LocalAssetUsage = {
-  ref: LocalAssetRef;
-  category: LocalAssetCategory;
+  ref: LocalImageRef;
+  category: ImageAssetCategory;
   digest: string;
   sceneIndexes: number[]; // 0-based, ascending, a scene appears once per ref
 };
@@ -25,7 +26,7 @@ export const collectStoryLocalAssetUsages = (story: Story): LocalAssetUsage[] =>
     for (const value of [scene.pose, scene.background]) {
       const parsed = parseLocalAssetRef(value);
 
-      if (parsed === null) {
+      if (parsed === null || !isImageAssetCategory(parsed.category)) {
         continue;
       }
 
@@ -33,7 +34,7 @@ export const collectStoryLocalAssetUsages = (story: Story): LocalAssetUsage[] =>
 
       if (existing === undefined) {
         usagesByRef.set(value, {
-          ref: value as LocalAssetRef,
+          ref: value as LocalImageRef,
           category: parsed.category,
           digest: parsed.digest,
           sceneIndexes: [sceneIndex],

@@ -1,7 +1,7 @@
 import {useCallback, useContext, useEffect, useRef, useState} from "react";
 import type {
-  LocalAssetCategory,
-  LocalAssetRef,
+  ImageAssetCategory,
+  LocalImageRef,
 } from "../localAssets/refs.ts";
 import {AssetLibraryContext} from "./assetLibraryContext.ts";
 import {
@@ -22,8 +22,8 @@ export type {LocalAssetPageEntry, PinnedLocalAsset};
  * the visible page.
  */
 export const useLocalAssetPage = (
-  category: LocalAssetCategory,
-  pinnedRef: LocalAssetRef | null = null,
+  category: ImageAssetCategory,
+  pinnedRef: LocalImageRef | null = null,
 ): LocalAssetPageSnapshot & {next(): void; previous(): void} => {
   const context = useContext(AssetLibraryContext);
   const store = context?.status.kind === "ready" ? context.status.store : null;

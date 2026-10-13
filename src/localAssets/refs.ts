@@ -1,12 +1,16 @@
-export const localAssetCategories = ["pose", "background"] as const;
+export const localAssetCategories = ["pose", "background", "audio"] as const;
 export type LocalAssetCategory = (typeof localAssetCategories)[number];
+export const imageAssetCategories = ["pose", "background"] as const;
+export type ImageAssetCategory = (typeof imageAssetCategories)[number];
 
 export type LocalPoseRef = `local:pose:sha256:${string}`;
 export type LocalBackgroundRef = `local:background:sha256:${string}`;
-export type LocalAssetRef = LocalPoseRef | LocalBackgroundRef;
+export type LocalAudioRef = `local:audio:sha256:${string}`;
+export type LocalImageRef = LocalPoseRef | LocalBackgroundRef;
+export type LocalAssetRef = LocalImageRef | LocalAudioRef;
 
 export const LOCAL_ASSET_REF_PATTERN =
-  /^local:(pose|background):sha256:[0-9a-f]{64}$/u;
+  /^local:(pose|background|audio):sha256:[0-9a-f]{64}$/u;
 export const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
 
 export const isLocalAssetRef = (value: string): value is LocalAssetRef =>
@@ -19,6 +23,9 @@ export const isLocalBackgroundRef = (
   value: string,
 ): value is LocalBackgroundRef =>
   isLocalAssetRef(value) && value.startsWith("local:background:");
+
+export const isLocalAudioRef = (value: string): value is LocalAudioRef =>
+  isLocalAssetRef(value) && value.startsWith("local:audio:");
 
 /** Returns null for anything that is not an exact canonical local ref. */
 export const parseLocalAssetRef = (
@@ -40,15 +47,29 @@ const isLocalAssetCategory = (value: unknown): value is LocalAssetCategory =>
   typeof value === "string" &&
   (localAssetCategories as readonly string[]).includes(value);
 
+export const isImageAssetCategory = (
+  value: unknown,
+): value is ImageAssetCategory =>
+  typeof value === "string" &&
+  (imageAssetCategories as readonly string[]).includes(value);
+
 /** Primary-key prefix for one category, e.g. "local:pose:sha256:". */
 export const localAssetRefPrefix = (category: LocalAssetCategory): string =>
   `local:${category}:sha256:`;
 
 /** Throws if digest is not 64 lowercase hex. */
-export const buildLocalAssetRef = (
+export function buildLocalAssetRef(
+  category: ImageAssetCategory,
+  digest: string,
+): LocalImageRef;
+export function buildLocalAssetRef(
   category: LocalAssetCategory,
   digest: string,
-): LocalAssetRef => {
+): LocalAssetRef;
+export function buildLocalAssetRef(
+  category: LocalAssetCategory,
+  digest: string,
+): LocalAssetRef {
   if (!isLocalAssetCategory(category)) {
     throw new Error(`Unknown local asset category: ${String(category)}`);
   }
@@ -58,4 +79,4 @@ export const buildLocalAssetRef = (
   }
 
   return `${localAssetRefPrefix(category)}${digest}` as LocalAssetRef;
-};
+}
