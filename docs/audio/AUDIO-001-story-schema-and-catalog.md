@@ -1,6 +1,6 @@
 # AUDIO-001 — Story schema, timeline, persistence v3 and bundled catalog
 
-Status: not started
+Status: implemented (task 7 waits for the owner's music)
 
 Depends on: v0.3.3. Read [README](./README.md) first (invariants, constants, grammar, decisions).
 
@@ -107,12 +107,12 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 
 ## Tasks
 
-1. [ ] Refs, limits, constants, `src/audio/catalog.ts` with all six ids (music `file: null`), `isBundledAudio`, `buildAudioDurationMap`.
-2. [ ] Schema + types: `AudioRefSchema`, `AudioClipSchema`, `MusicSchema`, scene `sfx`/`voice`, `duration: "auto"` + its voice rule, Story `music`; frame-total check skips `auto`. `storyHasAudio`.
-3. [ ] Timeline + metadata + `ToraVideoProps.audioDurations` + `calculateMetadata`.
-4. [ ] Canonical YAML (`serializeStory.ts`): field order `type, pose, background, animation, text, sfx, voice, duration` per scene and `title, music, scenes` per Story; audio objects `src, volume, fadeIn, fadeOut, duck`; unset optionals omitted. YAML parse → serialize → parse is identity for every fixture.
-5. [ ] Persistence version 3 (write rule, read rule, the version-mismatch rejection). Test: a v0.3 build's reader (the `PERSISTENCE_VERSION_LOCAL` code path as it is on `main` before this task, kept as a fixture function in the test) treats a version 3 envelope as `unsupported-version` and the app keeps it as a protected recovery snapshot (WEB-005 rule 14).
-6. [ ] `scripts/generateBundledAudio.mjs` (repository ffmpeg via `tests/helpers/ffmpeg.mjs`'s lookup): `whoosh` (0.6 s band-passed noise sweep), `boom` (0.8 s 55 Hz sine + noise burst with exponential decay), `ding` (1.2 s 880 Hz + 1760 Hz partials, exponential decay), `pop` (0.12 s 1.2 kHz click with fast decay); 48 kHz stereo 16-bit WAV in `public/audio/sfx/`; deterministic (same bytes on every run, checked by a test that hashes them). Fill `durationSeconds` from `inspectAudio` once AUDIO-003 task 1 exists — until then from ffprobe, and AUDIO-003 adds the cross-check test. `public/audio/LICENSES.md`: one row per file (id, file, source = "synthesized by scripts/generateBundledAudio.mjs", author = project, license = CC0-1.0).
+1. [x] Refs, limits, constants, `src/audio/catalog.ts` with all six ids (music `file: null`), `isBundledAudio`, `buildAudioDurationMap`.
+2. [x] Schema + types: `AudioRefSchema`, `AudioClipSchema`, `MusicSchema`, scene `sfx`/`voice`, `duration: "auto"` + its voice rule, Story `music`; frame-total check skips `auto`. `storyHasAudio`.
+3. [x] Timeline + metadata + `ToraVideoProps.audioDurations` + `calculateMetadata`.
+4. [x] Canonical YAML (`serializeStory.ts`): field order `type, pose, background, animation, text, sfx, voice, duration` per scene and `title, music, scenes` per Story; audio objects `src, volume, fadeIn, fadeOut, duck`; unset optionals omitted. YAML parse → serialize → parse is identity for every fixture.
+5. [x] Persistence version 3 (write rule, read rule, the version-mismatch rejection). Test: a v0.3 build's reader (the `PERSISTENCE_VERSION_LOCAL` code path as it is on `main` before this task, kept as a fixture function in the test) treats a version 3 envelope as `unsupported-version` and the app keeps it as a protected recovery snapshot (WEB-005 rule 14).
+6. [x] `scripts/generateBundledAudio.mjs` (repository ffmpeg via `tests/helpers/ffmpeg.mjs`'s lookup): `whoosh` (0.6 s band-passed noise sweep), `boom` (0.8 s 55 Hz sine + noise burst with exponential decay), `ding` (1.2 s 880 Hz + 1760 Hz partials, exponential decay), `pop` (0.12 s 1.2 kHz click with fast decay); 48 kHz stereo 16-bit WAV in `public/audio/sfx/`; deterministic (same bytes on every run, checked by a test that hashes them). Fill `durationSeconds` from `inspectAudio` once AUDIO-003 task 1 exists — until then from ffprobe, and AUDIO-003 adds the cross-check test. `public/audio/LICENSES.md`: one row per file (id, file, source = "synthesized by scripts/generateBundledAudio.mjs", author = project, license = CC0-1.0).
 7. [ ] **Owner-supplied music (blocks AUDIO-006, not the other specs).** When the owner provides two CC0 tracks, add them as `public/audio/music/calm-loop.<ext>` and `upbeat-loop.<ext>` (original bytes, MP3/OGG/WAV/M4A, each ≤ 5 MB), set `file` and `durationSeconds`, and add their LICENSES rows (source URL, author, CC0-1.0). Until then the music ids are "missing" (see Decisions).
 
 ## Tests
