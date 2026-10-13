@@ -5,7 +5,11 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
-import {storyAudioDurations, storyHasAudio} from "../audio/storyAudio.ts";
+import {
+  AUDIO_RENDER_BLOCK_MESSAGE,
+  storyAudioDurations,
+  storyHasAudio,
+} from "../audio/storyAudio.ts";
 import {collectStoryLocalAssetUsages} from "../localAssets/readiness.ts";
 import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {ToraVideoProps} from "../Video.tsx";
@@ -473,8 +477,15 @@ export const renderStoryMediaOnWeb = async (
     localAssetSources?: LocalAssetSourceMap;
     component?: ComponentType<ToraVideoProps>;
     getDirectory?: () => Promise<RenderDirectory>;
+    /** TEMPORARY (AUDIO-001), tests only: keeps the exact-timeline path of AUDIO-005 testable. */
+    bypassAudioBlockForTest?: boolean;
   },
 ): Promise<RenderMediaOnWebResult> => {
+  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
+  if (storyHasAudio(story) && options.bypassAudioBlockForTest !== true) {
+    throw new Error(AUDIO_RENDER_BLOCK_MESSAGE);
+  }
+
   const policy = evaluateBrowserRenderPolicy(story);
 
   if (!policy.eligible) {

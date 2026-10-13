@@ -1326,6 +1326,29 @@ describe("renderStory staging", () => {
     await rm(outputPath, {force: true});
   });
 
+  it("refuses a Story with audio before writing props or starting Remotion (AUDIO-001 interim block)", async () => {
+    const {storyPath, tempBase} = await setup(
+      `${storyYaml("formal")}music:\n  src: calm-loop\n`,
+    );
+    let started = false;
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          started = true;
+        },
+      }),
+      {
+        message:
+          "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.",
+      },
+    );
+
+    assert.equal(started, false);
+    assert.deepEqual(await readdir(tempBase), []);
+  });
+
   it("stages local assets into a temporary public dir and cleans it up", async () => {
     const pose = await fixture("pose-magenta.png");
     const root = await makeRoot();

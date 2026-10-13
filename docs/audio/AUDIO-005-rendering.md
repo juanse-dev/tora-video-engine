@@ -54,6 +54,7 @@ export type BrowserRenderCapability = /* existing */ | {kind: "audio-unsupported
 2. [ ] Capability with audio (AAC native or WASM, cached per `storyHasAudio`).
 3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
 4. [ ] CLI: durations, staging, missing-audio error, `buildRenderArgs` audio flags and props file contents.
+5. [ ] Remove the AUDIO-001 interim render block: the `AUDIO_RENDER_BLOCK_MESSAGE` ("This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.") refusal in `renderStoryMediaOnWeb` (with its `bypassAudioBlockForTest` option), `scripts/renderStory.ts` and App.tsx's Render MP4 disabled reason (`audioRenderBlock`, `data-audio-block`), the constant in `src/audio/storyAudio.ts`, and the tests that assert it.
 
 ## Tests
 

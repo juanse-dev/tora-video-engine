@@ -1406,6 +1406,7 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
 
     await renderStoryMediaOnWeb(story, {
       signal: new AbortController().signal,
+      bypassAudioBlockForTest: true,
       component: () => null,
       getDirectory: createFakeOpfs().getDirectory,
       render: async (options) => {
@@ -1458,7 +1459,8 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
     await assert.rejects(
       renderStoryMediaOnWeb(story, {
         signal: new AbortController().signal,
-        component: () => null,
+        bypassAudioBlockForTest: true,
+      component: () => null,
         getDirectory: async () => {
           directoryRequested = true;
           return createFakeOpfs().getDirectory();
@@ -1471,5 +1473,63 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
     );
     assert.equal(rendered, false);
     assert.equal(directoryRequested, false);
+  });
+});
+
+describe("AUDIO-001 interim render block (removed by AUDIO-005)", () => {
+  const MESSAGE =
+    "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.";
+  const refuse = async (story) => {
+    const calls = [];
+
+    await assert.rejects(
+      renderStoryMediaOnWeb(story, {
+        signal: new AbortController().signal,
+        component: () => null,
+        getDirectory: async () => {
+          calls.push("getDirectory");
+          return createFakeOpfs().getDirectory();
+        },
+        render: async () => {
+          calls.push("render");
+        },
+      }),
+      (error) => error.message === MESSAGE,
+    );
+
+    assert.deepEqual(calls, []);
+  };
+
+  it("refuses a Story with music, sfx, voice or an auto duration before any OPFS or render work", async () => {
+    const withMusic = structuredClone(exampleStory);
+    withMusic.music = {src: "calm-loop"};
+    const withSfx = structuredClone(exampleStory);
+    withSfx.scenes[0].sfx = {src: "ding"};
+    const withVoice = structuredClone(exampleStory);
+    withVoice.scenes[0].voice = {src: "ding"};
+    const withAuto = structuredClone(exampleStory);
+    withAuto.scenes[0].duration = "auto";
+
+    for (const story of [withMusic, withSfx, withVoice, withAuto]) {
+      await refuse(story);
+    }
+  });
+
+  it("still renders a Story without audio", async () => {
+    let rendered = false;
+
+    await renderStoryMediaOnWeb(exampleStory, {
+      signal: new AbortController().signal,
+      component: () => null,
+      getDirectory: createFakeOpfs().getDirectory,
+      render: async (options) => {
+        rendered = true;
+        await finalizeOutput(options);
+
+        return {getBlob: async () => new Blob(["v"]), internalState: {}};
+      },
+    });
+
+    assert.equal(rendered, true);
   });
 });
