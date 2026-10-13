@@ -138,7 +138,7 @@ Story (pure schema) ──► compileTimeline(story, fps, audioDurations) ──
 
 ### Browser storage layout (IndexedDB version 2)
 
-Unchanged stores (`assets`, `payloadMeta`, `blobs`, `thumbnails`) keep their v0.3 contents. New: `waveforms` (key: digest, value: `{digest, peaksPerSecond, peaks: Uint8Array}`). Audio rows live in `assets` under `local:audio:sha256:…` keys, shaped like image rows; per-digest audio metadata `{kind: "audio", mimeType, byteSize, container, codec, durationSeconds, sampleRate, channels}` lives in `payloadMeta` and the bytes in `blobs`, verified by the D-8 integrity cache (its per-payload ceiling becomes 50 MiB). See AUDIO-003.
+Unchanged stores (`assets`, `payloadMeta`, `blobs`, `thumbnails`) keep their v0.3 contents. New: `waveforms` (key: digest, value: `{peaksPerSecond, peaks: Uint8Array}`; the key is the only identity, INV-11). Audio rows live in `assets` under `local:audio:sha256:…` keys, shaped like image rows; per-digest audio metadata `{kind: "audio", mimeType, byteSize, container, codec, durationSeconds, sampleRate, channels}` lives in `payloadMeta` and the bytes in `blobs`, verified by the D-8 integrity cache (its per-payload ceiling becomes 50 MiB). See AUDIO-003.
 
 ## Execution order
 
