@@ -81,7 +81,7 @@ Resolution, for both kinds of ref: an entry `url` → `src = url`; `static` → 
 
 Who uses which policy, so that no unverified bundled file is ever mounted by a product path:
 
-- **Player** (`Preview`): `"explicit"`. Its map gets one entry per bundled id the Story references, from AUDIO-004's bundled-audio check: `pending` while the check runs or after a transient fetch error, `{kind: "url", url}` (an object URL of the very Blob that passed inspect + decode + truncation rule) on success, `unavailable` on a terminal failure. Until AUDIO-004 lands, the AUDIO-002 Player uses `"static-fallback"` (an interim, unreleased state; AUDIO-004 task 3 switches it and removes the fallback from the Player).
+- **Player** (`Preview`): `"explicit"`. Its map gets one entry per bundled id the Story references, from AUDIO-004's bundled-audio store: `pending` while the check runs, retries or waits for a manual retry, `{kind: "url", url}` (the object URL of the very Blob that passed inspect + decode + truncation rule) on success, `unavailable` on a terminal failure. Until AUDIO-004 lands, the AUDIO-002 Player uses `"static-fallback"` (an interim, unreleased state; AUDIO-004 task 3 switches it and removes the fallback from the Player).
 - **Browser render** (AUDIO-005): `"explicit"`, with an object URL of the preflighted bytes for every bundled id.
 - **CLI** (AUDIO-005): `"explicit"`, with the staged copy (`static`) for every bundled id.
 - **Remotion Studio** (`npm run dev`, default props only): `"static-fallback"`.
