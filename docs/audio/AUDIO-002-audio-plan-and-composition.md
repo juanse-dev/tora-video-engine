@@ -62,15 +62,30 @@ A Story without audio yields `{tracks: [], issues: [], maxSimultaneousGain: 0, m
 
 ### `src/audio/sources.ts`
 
+One audio source contract, separate from the image one. `LocalAssetSource` and `LocalAssetSourceMap` (`src/localAssets/sources.ts`) stay exactly as in v0.3, so the visual resolvers keep accepting only `url | static | pending`.
+
 ```ts
+export type AudioSource = LocalAssetSource | {kind: "unavailable"};
+export type AudioSourceMap = Readonly<Partial<Record<LocalAssetRef | BundledAudio, AudioSource>>>;
+/** "explicit": a bundled id without an entry is pending. "static-fallback": it resolves to staticFile(entry.file). */
+export type BundledAudioPolicy = "explicit" | "static-fallback";
 export type AudioSourceResolution =
-  | {kind: "audio"; src: string}            // staticFile(...) for bundled, blob:/static path for local
+  | {kind: "audio"; src: string}
   | {kind: "pending"; ref: AudioRef}
   | {kind: "missing"; ref: AudioRef};
-export const resolveAudioSrc: (ref: AudioRef, localSources: LocalAssetSourceMap | undefined) => AudioSourceResolution;
+export const resolveAudioSrc: (ref: AudioRef, sources: AudioSourceMap | undefined, policy: BundledAudioPolicy) => AudioSourceResolution;
 ```
 
-Bundled: an entry for the id in the source map wins: a `url`/`static` entry is the source (the browser render puts an object URL of the preflighted bytes there, the CLI a staged copy, AUDIO-005), and an `{kind: "unavailable"}` entry resolves to `missing` (the Player puts one there for each bundled id AUDIO-004 found terminally unusable); otherwise `staticFile(entry.file)` when `file` is non-null (Player preview, CLI), else `missing`. The map type becomes `AudioSourceMap = Readonly<Partial<Record<LocalAssetRef | BundledAudio, LocalAssetSource>>>` and travels through the same provider as the image sources; `AudioSourceMap` values are `LocalAssetSource | {kind: "unavailable"}`. Since `isAvailable` comes from this resolver, an unusable bundled id gets no track and a `missing-audio` issue in the Player's plan, exactly like a missing local file (AINV-5). The render paths never write `unavailable` entries: they rely on their own preflight. Local: same `LocalAssetSource` map as images (`url` → `src`, `static` → `staticFile(path)`, `pending` → pending, absent → missing). Never falls back (AINV-5).
+Resolution, for both kinds of ref: an entry `url` → `src = url`; `static` → `staticFile(path)`; `pending` → pending; `unavailable` → missing. With no entry: a local ref is missing; a bundled id is **pending** under `"explicit"`, and under `"static-fallback"` is `staticFile(entry.file)` when `file` is non-null, else missing. Never falls back to another sound (AINV-5).
+
+Who uses which policy, so that no unverified bundled file is ever mounted by a product path:
+
+- **Player** (`Preview`): `"explicit"`. Its map gets one entry per bundled id the Story references, from AUDIO-004's bundled-audio check: `pending` while the check runs or after a transient fetch error, `{kind: "url", url}` (an object URL of the very Blob that passed inspect + decode + truncation rule) on success, `unavailable` on a terminal failure. Until AUDIO-004 lands, the AUDIO-002 Player uses `"static-fallback"` (an interim, unreleased state; AUDIO-004 task 3 switches it and removes the fallback from the Player).
+- **Browser render** (AUDIO-005): `"explicit"`, with an object URL of the preflighted bytes for every bundled id.
+- **CLI** (AUDIO-005): `"explicit"`, with the staged copy (`static`) for every bundled id.
+- **Remotion Studio** (`npm run dev`, default props only): `"static-fallback"`.
+
+Transport: `ToraVideoProps` gains `audioSources?: AudioSourceMap` and `bundledAudioPolicy?: BundledAudioPolicy` (default `"static-fallback"`, used only by Studio); the image `localAssetSources` prop is unchanged. A new `AudioSourcesProvider` (`src/components/audioSources.tsx`) carries `{sources, policy}` to `StoryAudio`; the image `LocalAssetSourcesProvider` is untouched. `isAvailable` (for `compileAudioPlan`) is `resolveAudioSrc(ref, sources, policy).kind === "audio"`, so pending and unavailable refs get no track (unavailable also yields `missing-audio`) while the other tracks still play.
 
 ### `src/components/StoryAudio.tsx`
 
@@ -84,7 +99,7 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
 
 1. [ ] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
 2. [ ] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
-3. [ ] `resolveAudioSrc` + `StoryAudio` + `ToraVideo` wiring.
+3. [ ] `AudioSource`/`AudioSourceMap`/`BundledAudioPolicy`, `resolveAudioSrc`, `AudioSourcesProvider`, `StoryAudio` + `ToraVideo` wiring.
 4. [ ] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `storyAudioDurations(story, localDurations)` (AUDIO-001) where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
 
 ## Tests
@@ -105,7 +120,8 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - `maxSimultaneousGain` for overlapping sfx + voice + ducked music; for a music-only Story at `volume: 1` that loops it is `√2` (±1e-9, at the crossfade centre), and 1 when the music does not loop;
   - track keys are stable across calls;
   - sub-frame sources: a 0.005 s sfx and a 0.005 s voice (fixed and `auto` scenes) give tracks of exactly 1 frame, ducking windows of 1 frame plus ramps, and no track ever has `durationInFrames < 1` (property check over random durations in `(0, 0.05]` s).
-- `tests/audio-sources.test.mjs`: bundled with/without file, bundled with a `url`/`static` override, bundled with an `unavailable` entry → `missing` (and `compileAudioPlan` then has no track for it and one `missing-audio` issue while the other tracks remain), local url/static/pending/absent.
+- `tests/audio-sources.test.mjs`: every entry kind × {local, bundled} × both policies (bundled without entry: pending under `"explicit"`, `staticFile` or missing under `"static-fallback"`); an `unavailable` bundled entry → missing, and `compileAudioPlan` then has no track for it and one `missing-audio` issue while the other tracks remain; a `pending` bundled entry → no track and no issue.
+- `tests/types/audio-sources.typecheck.ts` (compiled by `tsc` in `npm run lint`): an `AudioSourceMap` accepts `{ding: {kind: "unavailable"}}` (Player) and `{ding: {kind: "static", path: "__local-assets/ding.wav"}}` (CLI staged override); `// @ts-expect-error` on assigning `{kind: "unavailable"}` to a `LocalAssetSourceMap` entry; `ToraVideoProps` accepts `audioSources` + `bundledAudioPolicy`.
 - `tests/web-preview.test.mjs` (extend): `getWebPlayerConfig(story, map)` gives 81 frames for a 2.2 s `auto` voice, the 90-frame fallback without the map entry, and `ceil((4.5 + 0.5) × 30) = 150` for a 4.5 s voice (not cut at the fallback); Preview passes the same map to `inputProps` and to the config; Player props include `initiallyMuted` and volume controls; volume persistence survives a throwing `localStorage`.
 - Browser (`tests/browser/audio-preview.spec.mjs`, Chromium): with a bundled-sfx Story, the Player starts muted, clicking unmute starts playback past frame 0, seeking works; with no audio the Player behaves as in v0.3 and shows no volume button; adding a bundled sfx to that Story while the Player is mounted (and playing) shows the volume button and `player.isMuted()` is true, with the current frame preserved; removing it and adding it again mutes again even if the user had unmuted in between. Adversarial case: with the Player playing and unmuted, go audio → no audio → audio while an init script records every `HTMLMediaElement.prototype.play` call, every `AudioBufferSourceNode.start`/`AudioScheduledSourceNode.start` call and the Player's `mutechange` events with timestamps; assert that every audio start after the transition happens while `player.isMuted()` is true and after the `mutechange` to muted, and that no audible start happens until the test clicks unmute. Unit (`tests/web-preview.test.mjs`, fake Player ref): the order log is `mute` → `StoryAudio` receives `audioArmed: true`, never the reverse.
 
