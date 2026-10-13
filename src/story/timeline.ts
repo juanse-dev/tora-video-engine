@@ -19,6 +19,10 @@ export const compileTimeline = (story: Story, fps: number): Timeline => {
   let from = 0;
 
   const scenes = story.scenes.map((scene, index) => {
+    if (scene.duration === "auto") {
+      throw new Error("duration: auto is compiled in a later task");
+    }
+
     const durationInFrames = durationToFrames(scene.duration, fps);
 
     if (!isValidFrameCount(durationInFrames)) {

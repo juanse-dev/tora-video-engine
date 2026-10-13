@@ -1,8 +1,10 @@
 export type {
   Animation,
+  AudioClip,
   Background,
   BundledBackground,
   BundledPose,
+  Music,
   Pose,
   SceneType,
   Story,
@@ -14,3 +16,4 @@ export type {
   LocalBackgroundRef,
   LocalPoseRef,
 } from "../localAssets/refs.ts";
+export type {AudioRef} from "../audio/catalog.ts";
