@@ -49,7 +49,7 @@ export const decodeAudioPeaks: (blob: Blob, metadata: AudioMetadata, deps?: {sig
 - `records.ts`: the audio `payloadMeta` decoder (strict, INV-11 identity checks, a `local:audio:` row must point at audio metadata and an image row at image metadata), `WaveformRecord` decoder (`peaks.length <= MAX_WAVEFORM_PEAKS`, values are bytes).
 - `store.ts` / `indexedDbStore.ts`: `waveforms` store; an audio import commits row + `payloadMeta` + blob + waveform in **one** transaction; deleting the last ref to a digest removes all of them, as for images.
 - `importAsset.ts` / `localAssetImportFlow.ts`: an `audio` branch (inspect → decode peaks → hash → commit) that reuses the lock wait/cancel (`signal`, `onLockAcquired`, #39) and the mismatch / matching-file flows.
-- Library read API: `readAudioMetadata(ref)`, `readWaveform(digest)`; the page's local durations map for `buildAudioDurationMap` comes from the listed audio rows' `durationSeconds`.
+- Library read API: `readAudioMetadata(ref)`, `readWaveform(digest)`; the page's local durations map for `buildAudioDurationMap` is built from the **Story's** refs, never from the visible library page (My assets loads `LOCAL_ASSET_PAGE_SIZE` rows at a time): `readAudioDurations(refs: Iterable<LocalAudioRef>): Promise<AudioDurationMap>` calls `readAudioMetadata` for every local ref in `storyAudioRefs(story)` and omits refs that are absent (they stay `missing`). The page recomputes it when the Story's set of local audio refs changes or a library mutation (import, delete, Import matching file) commits.
 
 ## Tasks
 
@@ -63,6 +63,7 @@ export const decodeAudioPeaks: (blob: Blob, metadata: AudioMetadata, deps?: {sig
 ## Tests
 
 - `tests/audio-inspection.test.mjs` (Node): every accepted fixture's metadata; every rejection with its exact message; Blob and Uint8Array inputs give the same result.
+- `tests/asset-library.test.mjs` (extend): `readAudioDurations` returns the duration of a ref that is not on the first library page (seed `LOCAL_ASSET_PAGE_SIZE + 1` audio rows and reference the last one) and omits an absent ref.
 - `tests/asset-library.test.mjs`, `tests/asset-integrity.test.mjs` (extend): audio row/waveform decoding, one-transaction commit and delete, digest-only identity, integrity mismatch on altered bytes or altered metadata.
 - `tests/harness/asset-library-indexeddb.spec.mjs` (extend): version 1 → 2 upgrade keeps v0.3 pose/background rows and payloads; a version 1 connection in a second page blocks the upgrade until it closes; `decodeAudioPeaks` on the fixtures (peaks length, a 220 Hz tone at full scale gives peaks near 255, the truncated MP3 is rejected).
 - `tests/browser/my-audio.spec.mjs`: import each accepted format → card with duration; duplicate → "already in My audio"; each rejection fixture → message, nothing stored; rename/delete/missing/Import matching file mirror the image tests; delete counts scenes using the ref in any audio role.

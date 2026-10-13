@@ -29,10 +29,11 @@ Every audio field can be authored in the visual editor without touching YAML; th
 ### Audio timeline (under the Player)
 
 - Scene blocks proportional to `durationInFrames` with their number; a music lane and an effects/voice lane.
-- Music lane: the music waveform drawn per plan copy, with the gain envelope from `plan.musicEnvelopeAt` (fades × ducking, without crossfade factors; the UI never recomputes mixing) from the plan's `gainAt`, sampled once per frame column) drawn as a line over it.
+- Music lane: the music waveform drawn per plan copy, with the gain envelope from `plan.musicEnvelopeAt` (fades × ducking, without crossfade factors; the UI never recomputes mixing), sampled once per frame column and drawn as a line over it.
 - Effects/voice lane: each sfx and voice track's waveform at its `fromFrame`, clipped to `durationInFrames`.
 - A playhead synced to the Player's current frame; click/tap seeks; keyboard: the timeline is one focusable element, `ArrowLeft`/`ArrowRight` seek to the previous/next scene start, `Home`/`End` to the start/end. `aria-label` announces the current scene and time.
-- Missing/pending audio shows a hatched block with the role label instead of a waveform.
+- Waveform sources: local audio uses the stored peaks (`readWaveform(digest)`, AUDIO-003). Bundled audio has no digest or stored record, so its peaks come from `bundledWaveform(id)` in `src/web/audio/bundledWaveforms.ts`: it fetches `staticFile(entry.file)`, runs `inspectAudio` and AUDIO-003's `decodeAudioPeaks` on the bytes, and memoizes the promise per id for the page session (the files are fixed per build; nothing is persisted). Only ids the Story or an open select actually shows are decoded.
+- Missing audio shows a hatched block with the role label instead of a waveform. Audio that exists but whose peaks are still loading, or whose bundled decode failed, shows a plain block of the right length with the role label (no hatching: it is not missing and does not block rendering); a failed bundled decode is not retried in that session.
 - Rendering cost: draw on one `<canvas>` per lane, redraw on Story/plan change and on resize, never per Player frame (only the playhead moves, as a positioned element).
 
 ### Warnings (inline, near the relevant control; `role="status"`)
@@ -49,12 +50,13 @@ From `plan.issues` and `plan.maxSimultaneousGain`: `Voice is cut by 1.2 s.` (sce
 
 1. [ ] Music panel + per-scene sfx/voice selects and volumes + `Auto (from voice)`.
 2. [ ] My audio cards: waveform thumbnail, preview playback with the single-preview rule, multi-role delete counts.
-3. [ ] Audio timeline (lanes, waveforms, envelope, playhead, seek, keyboard).
+3. [ ] Audio timeline (lanes, waveforms from stored peaks and `bundledWaveform`, envelope, playhead, seek, keyboard).
 4. [ ] Plan warnings in the editor.
 
 ## Tests
 
 - `tests/web-editor.test.mjs` (extend): pure helpers for select options (bundled with `file: null` excluded), default-omission when writing fields, auto toggle state transitions, delete-count copy across roles.
+- `tests/browser/audio-editor.spec.mjs` also covers bundled waveforms: a Story with `sfx: ding` draws a non-empty effects-lane waveform with no library import, and two scenes using `ding` cause one request for `/audio/sfx/ding.wav`.
 - `tests/audio-timeline.test.mjs`: pure layout helpers (block x/width from frames, playhead position, scene-start seek targets, envelope sampling per column).
 - `tests/browser/audio-editor.spec.mjs` (Chromium): set music/sfx/voice through the UI and check the exported YAML; `Auto (from voice)` disabled without a voice and showing `auto · 2.7 s` for the 2.2 s fixture; preview play/stop and the Player-pauses-preview rule; timeline click seeks the Player; arrow keys move between scene starts; each warning appears for its fixture Story; render lock disables every new control.
 
