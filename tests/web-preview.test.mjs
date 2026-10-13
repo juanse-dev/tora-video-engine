@@ -45,17 +45,23 @@ describe("WEB-002 player metadata", () => {
     audioStory.music = {src: "calm-loop"};
     audioStory.scenes[0].sfx = {src: "whoosh"};
     audioStory.scenes[1].duration = "auto";
+    audioStory.scenes[1].voice = {src: "ding"};
 
     const audioConfig = getWebPlayerConfig(
       audioStory,
       storyAudioDurations(audioStory),
     );
+    const fallbackConfig = getWebPlayerConfig(audioStory, {});
+    const otherScenesFrames =
+      360 - exampleStory.scenes[1].duration * 30;
 
-    // Bundled durations are unknown for now, so the auto scene uses the 3 s fallback.
-    assert.equal(
+    // The bundled ding is 1.2 s: the auto scene lasts ceil((1.2 + 0.5) * 30) = 51 frames.
+    assert.equal(audioConfig.durationInFrames, otherScenesFrames + 51);
+    // Without the map the auto scene falls back to 3 s = 90 frames.
+    assert.equal(fallbackConfig.durationInFrames, otherScenesFrames + 90);
+    assert.notEqual(
       audioConfig.durationInFrames,
-      getWebPlayerConfig(audioStory, {}).durationInFrames,
+      fallbackConfig.durationInFrames,
     );
-    assert.equal(audioConfig.durationInFrames, 360 - exampleStory.scenes[1].duration * 30 + 90);
   });
 });
