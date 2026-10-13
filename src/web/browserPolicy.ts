@@ -1,5 +1,5 @@
 import {serializeStorySource} from "../story/serializeStory.ts";
-import {getStoryMetadata} from "../story/metadata.ts";
+import {minimumStoryFrames} from "../story/timeline.ts";
 import type {Story} from "../story/types.ts";
 import {VIDEO_FPS} from "../videoConfig.ts";
 
@@ -36,7 +36,7 @@ export type BrowserStoryPolicyDependencies = {
 };
 
 const defaultDeriveTotalFrames = (story: Story): number =>
-  getStoryMetadata(story, VIDEO_FPS).durationInFrames;
+  minimumStoryFrames(story, VIDEO_FPS);
 
 const defaultUtf8ByteLength = (source: string): number =>
   new TextEncoder().encode(source).byteLength;

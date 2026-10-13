@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {getStoryMetadata} from "../src/story/metadata.ts";
-import {compileTimeline} from "../src/story/timeline.ts";
+import {compileTimeline, minimumStoryFrames} from "../src/story/timeline.ts";
 
 const makeScene = (overrides = {}) => ({
   type: "intro",
@@ -22,6 +22,7 @@ describe("compileTimeline", () => {
     const timeline = compileTimeline(
       makeStory([makeScene({duration: 2})]),
       30,
+      {},
     );
 
     assert.equal(timeline.scenes.length, 1);
@@ -38,6 +39,7 @@ describe("compileTimeline", () => {
         makeScene({duration: 4}),
       ]),
       30,
+      {},
     );
 
     assert.deepEqual(
@@ -55,6 +57,7 @@ describe("compileTimeline", () => {
     const timeline = compileTimeline(
       makeStory([makeScene({duration: 1.25})]),
       30,
+      {},
     );
 
     assert.equal(timeline.scenes[0].durationInFrames, 38);
@@ -67,6 +70,7 @@ describe("compileTimeline", () => {
         compileTimeline(
           makeStory([makeScene({duration: 0.001, text: "Too short"})]),
           30,
+          {},
         ),
       /must compile to a finite safe frame count of at least 1/,
     );
@@ -78,6 +82,7 @@ describe("compileTimeline", () => {
         compileTimeline(
           makeStory([makeScene({duration: 1e308, text: "Too long"})]),
           30,
+          {},
         ),
       /must compile to a finite safe frame count of at least 1/,
     );
@@ -93,6 +98,7 @@ describe("compileTimeline", () => {
             makeScene({duration: 0.03, text: "Overflow"}),
           ]),
           30,
+          {},
         ),
       /cumulative timeline to exceed the safe integer frame range/,
     );
@@ -105,6 +111,7 @@ describe("compileTimeline", () => {
         makeScene({duration: 1}),
       ]),
       30,
+      {},
     );
 
     const changed = compileTimeline(
@@ -113,6 +120,7 @@ describe("compileTimeline", () => {
         makeScene({duration: 1}),
       ]),
       30,
+      {},
     );
 
     assert.equal(original.scenes[1].from, 30);
@@ -127,8 +135,8 @@ describe("compileTimeline", () => {
       makeScene({duration: 2}),
     ]);
 
-    assert.equal(getStoryMetadata(shortStory, 30).durationInFrames, 30);
-    assert.equal(getStoryMetadata(longStory, 30).durationInFrames, 150);
+    assert.equal(getStoryMetadata(shortStory, 30, {}).durationInFrames, 30);
+    assert.equal(getStoryMetadata(longStory, 30, {}).durationInFrames, 150);
   });
 
   it("preserves story scene order", () => {
@@ -138,11 +146,39 @@ describe("compileTimeline", () => {
         makeScene({type: "punchline", text: "Second"}),
       ]),
       30,
+      {},
     );
 
     assert.deepEqual(
       timeline.scenes.map(({text}) => text),
       ["First", "Second"],
     );
+  });
+});
+
+const voice = `local:audio:sha256:${"c".repeat(64)}`;
+
+describe("duration: auto", () => {
+  const story = makeStory([
+    makeScene({duration: 1}),
+    makeScene({duration: "auto", voice: {src: voice}}),
+    makeScene({duration: 2}),
+  ]);
+
+  it("uses the voice duration plus padding, rounded up", () => {
+    const t = compileTimeline(story, 30, {[voice]: 2.2});
+    assert.deepEqual(t.scenes.map((s) => [s.from, s.durationInFrames, s.durationSource]),
+      [[0, 30, "fixed"], [30, 81, "voice"], [111, 60, "fixed"]]);
+    assert.equal(t.durationInFrames, 171);
+  });
+
+  it("falls back to 3 s when the voice duration is unknown", () => {
+    const t = compileTimeline(story, 30, {});
+    assert.deepEqual(t.scenes[1].durationInFrames, 90);
+    assert.equal(t.scenes[1].durationSource, "fallback");
+  });
+
+  it("counts auto scenes at their lower bound for the acceptance policy", () => {
+    assert.equal(minimumStoryFrames(story, 30), 30 + 16 + 60);
   });
 });

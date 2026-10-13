@@ -81,7 +81,7 @@ describe("MVP reference story", () => {
 
   it("compiles to the exact golden timeline", async () => {
     const story = await loadStory(referencePath);
-    const timeline = compileTimeline(story, VIDEO_FPS);
+    const timeline = compileTimeline(story, VIDEO_FPS, {});
 
     assert.deepEqual(
       timeline.scenes.map(({from, durationInFrames}) => ({
@@ -115,7 +115,7 @@ describe("MVP reference story", () => {
         story.scenes[0].text = "Mutated caption";
       },
       async (story) => {
-        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
+        const renderPlan = buildStoryRenderPlan(compileTimeline(story, VIDEO_FPS, {}));
 
         assert.deepEqual(
           renderPlan.scenes.map(({type}) => type),
@@ -132,7 +132,7 @@ describe("MVP reference story", () => {
         story.scenes[0].duration = 4;
       },
       async (story) => {
-        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
+        const renderPlan = buildStoryRenderPlan(compileTimeline(story, VIDEO_FPS, {}));
 
         assert.deepEqual(
           renderPlan.scenes.map(({from}) => from),
@@ -151,7 +151,7 @@ describe("MVP reference story", () => {
         story.scenes[0].animation = "slowZoom";
       },
       async (story) => {
-        const renderPlan = buildStoryRenderPlan(story, VIDEO_FPS);
+        const renderPlan = buildStoryRenderPlan(compileTimeline(story, VIDEO_FPS, {}));
         const renderedScene = renderPlan.scenes[0];
 
         assert.equal(renderedScene.pose, "coffee");

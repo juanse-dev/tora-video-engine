@@ -1,4 +1,8 @@
-import type {AudioRef} from "./catalog.ts";
+import {
+  buildAudioDurationMap,
+  type AudioDurationMap,
+  type AudioRef,
+} from "./catalog.ts";
 import type {Story} from "../story/types.ts";
 
 export const storyAudioRefs = (story: Story): AudioRef[] => {
@@ -29,3 +33,10 @@ export const storyHasAudio = (story: Story): boolean =>
       scene.voice !== undefined ||
       scene.duration === "auto",
   );
+
+/** The only way to build a Story duration map: bundled catalog plus the given local durations. */
+export const storyAudioDurations = (
+  story: Story,
+  localDurations: AudioDurationMap = {},
+): AudioDurationMap =>
+  buildAudioDurationMap(storyAudioRefs(story), localDurations);

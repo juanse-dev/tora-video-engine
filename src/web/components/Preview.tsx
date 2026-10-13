@@ -1,5 +1,6 @@
 import {Player, type PlayerRef} from "@remotion/player";
 import {useEffect, useMemo, useRef} from "react";
+import {storyAudioDurations} from "../../audio/storyAudio.ts";
 import type {LocalAssetSourceMap} from "../../localAssets/sources.ts";
 import {ToraVideo} from "../../Video.tsx";
 import {exampleStory} from "../../story/exampleStory.ts";
@@ -66,13 +67,14 @@ export const Preview = ({
   localAssetSources,
   localAssetState,
 }: PreviewProps) => {
-  const config = getWebPlayerConfig(story);
+  const audioDurations = useMemo(() => storyAudioDurations(story), [story]);
+  const config = getWebPlayerConfig(story, audioDurations);
   const playerRef = useRef<PlayerRef>(null);
   const frameProbeRef = useRef<HTMLDivElement>(null);
   const overBudget = localAssetState?.kind === "over-budget";
   const inputProps = useMemo(
-    () => ({story, localAssetSources}),
-    [story, localAssetSources],
+    () => ({story, localAssetSources, audioDurations}),
+    [story, localAssetSources, audioDurations],
   );
   const statusLine = describeLocalAssetPreviewStatus(localAssetState);
 

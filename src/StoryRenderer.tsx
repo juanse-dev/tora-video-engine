@@ -1,15 +1,14 @@
-import {Sequence, useVideoConfig} from "remotion";
+import {Sequence} from "remotion";
 import {buildStoryRenderPlan} from "./renderPlan.ts";
 import {Scene} from "./Scene";
-import type {Story} from "./story/types";
+import type {Timeline} from "./story/timeline.ts";
 
 type StoryRendererProps = {
-  story: Story;
+  timeline: Timeline;
 };
 
-export const StoryRenderer = ({story}: StoryRendererProps) => {
-  const {fps} = useVideoConfig();
-  const renderPlan = buildStoryRenderPlan(story, fps);
+export const StoryRenderer = ({timeline}: StoryRendererProps) => {
+  const renderPlan = buildStoryRenderPlan(timeline);
 
   return (
     <>

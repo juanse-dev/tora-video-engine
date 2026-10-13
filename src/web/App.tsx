@@ -69,6 +69,7 @@ import {
   type PersistenceVersion,
   type ProtectedRecovery,
 } from "./persistence.ts";
+import {storyAudioDurations} from "../audio/storyAudio.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
 import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
@@ -300,7 +301,10 @@ export const App = () => {
     objectUrlPool,
     assetRefreshToken,
   );
-  const previewConfig = getWebPlayerConfig(activeStory);
+  const previewConfig = getWebPlayerConfig(
+    activeStory,
+    storyAudioDurations(activeStory),
+  );
 
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);

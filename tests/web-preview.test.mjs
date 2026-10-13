@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {exampleStory} from "../src/story/exampleStory.ts";
+import {storyAudioDurations} from "../src/audio/storyAudio.ts";
 import {getWebPlayerConfig} from "../src/web/previewConfig.ts";
 import {
   VIDEO_FPS,
@@ -10,7 +11,7 @@ import {
 
 describe("WEB-002 player metadata", () => {
   it("derives canonical Player metadata from the shared video config", () => {
-    const config = getWebPlayerConfig(exampleStory);
+    const config = getWebPlayerConfig(exampleStory, {});
 
     assert.deepEqual(config, {
       compositionHeight: VIDEO_HEIGHT,
@@ -27,8 +28,34 @@ describe("WEB-002 player metadata", () => {
     const story = structuredClone(exampleStory);
     story.scenes[0].duration = 4;
 
-    const config = getWebPlayerConfig(story);
+    const config = getWebPlayerConfig(story, {});
 
     assert.equal(config.durationInFrames, 390);
+  });
+
+  it("builds the Preview config from the Story's own duration map", () => {
+    const plain = getWebPlayerConfig(
+      exampleStory,
+      storyAudioDurations(exampleStory),
+    );
+
+    assert.equal(plain.durationInFrames, 360);
+
+    const audioStory = structuredClone(exampleStory);
+    audioStory.music = {src: "calm-loop"};
+    audioStory.scenes[0].sfx = {src: "whoosh"};
+    audioStory.scenes[1].duration = "auto";
+
+    const audioConfig = getWebPlayerConfig(
+      audioStory,
+      storyAudioDurations(audioStory),
+    );
+
+    // Bundled durations are unknown for now, so the auto scene uses the 3 s fallback.
+    assert.equal(
+      audioConfig.durationInFrames,
+      getWebPlayerConfig(audioStory, {}).durationInFrames,
+    );
+    assert.equal(audioConfig.durationInFrames, 360 - exampleStory.scenes[1].duration * 30 + 90);
   });
 });

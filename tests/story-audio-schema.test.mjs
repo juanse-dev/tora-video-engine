@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {StorySchema} from "../src/story/schema.ts";
-import {storyAudioRefs, storyHasAudio} from "../src/audio/storyAudio.ts";
+import {storyAudioDurations, storyAudioRefs, storyHasAudio} from "../src/audio/storyAudio.ts";
 
 const voice = `local:audio:sha256:${"b".repeat(64)}`;
 const scene = (o = {}) => ({type: "intro", pose: "formal", background: "office", text: "Hi", duration: 3, ...o});
@@ -101,5 +101,14 @@ describe("storyHasAudio", () => {
   it("lists refs music first, then sfx/voice by scene, without duplicates", () => {
     const s = story({music: {src: "boom"}}, [scene({sfx: {src: "ding"}, voice: {src: voice}}), scene({sfx: {src: "boom"}})]);
     assert.deepEqual(storyAudioRefs(s), ["boom", "ding", voice]);
+  });
+});
+
+describe("storyAudioDurations", () => {
+  it("keeps the local durations of referenced refs and ignores the rest", () => {
+    const other = `local:audio:sha256:${"e".repeat(64)}`;
+    const s = story({music: {src: "boom"}}, [scene({voice: {src: voice}})]);
+    assert.deepEqual(storyAudioDurations(s, {[voice]: 2.2, [other]: 9}), {[voice]: 2.2});
+    assert.deepEqual(storyAudioDurations(s), {});
   });
 });
