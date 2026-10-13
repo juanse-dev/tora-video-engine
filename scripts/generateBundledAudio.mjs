@@ -18,6 +18,7 @@ import {execFileSync} from "node:child_process";
 import {mkdirSync} from "node:fs";
 import {join, resolve} from "node:path";
 import process from "node:process";
+import {pathToFileURL} from "node:url";
 import {resolveFfmpegBinaries} from "../tests/helpers/ffmpeg.mjs";
 
 const SAMPLE_RATE = 48_000;
@@ -130,29 +131,38 @@ export const effects = {
   },
 };
 
-const outDir = resolve(process.argv[2] ?? "public/audio/sfx");
-mkdirSync(outDir, {recursive: true});
+/** Writes <id>.wav for every effect into `outDir`. */
+export const generateBundledAudio = (outDir) => {
+  mkdirSync(outDir, {recursive: true});
 
-const {ffmpeg, dir} = resolveFfmpegBinaries();
-const env = {
-  ...process.env,
-  LD_LIBRARY_PATH: [dir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
-  DYLD_LIBRARY_PATH: [dir, process.env.DYLD_LIBRARY_PATH].filter(Boolean).join(":"),
+  const {ffmpeg, dir} = resolveFfmpegBinaries();
+  const env = {
+    ...process.env,
+    LD_LIBRARY_PATH: [dir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
+    DYLD_LIBRARY_PATH: [dir, process.env.DYLD_LIBRARY_PATH].filter(Boolean).join(":"),
+  };
+
+  for (const [id, {seconds, graph}] of Object.entries(effects)) {
+    execFileSync(
+      ffmpeg,
+      [
+        "-hide_banner", "-loglevel", "error", "-y",
+        // No CPU-specific code paths: SIMD (FMA, AVX) float accumulation in amix
+        // can differ in the last bit from the C path.
+        "-cpuflags", "0",
+        "-bitexact", "-fflags", "+bitexact", "-flags:a", "+bitexact",
+        "-filter_threads", "1", "-filter_complex_threads", "1",
+        "-filter_complex", graph, "-map", "[out]",
+        "-map_metadata", "-1",
+        "-ar", String(SAMPLE_RATE), "-ac", "2", "-c:a", "pcm_s16le",
+        "-t", String(seconds), "-f", "wav",
+        join(outDir, `${id}.wav`),
+      ],
+      {env, windowsHide: true, stdio: ["ignore", "inherit", "inherit"]},
+    );
+  }
 };
 
-for (const [id, {seconds, graph}] of Object.entries(effects)) {
-  execFileSync(
-    ffmpeg,
-    [
-      "-hide_banner", "-loglevel", "error", "-y",
-      "-bitexact", "-fflags", "+bitexact", "-flags:a", "+bitexact",
-      "-filter_threads", "1", "-filter_complex_threads", "1",
-      "-filter_complex", graph, "-map", "[out]",
-      "-map_metadata", "-1",
-      "-ar", String(SAMPLE_RATE), "-ac", "2", "-c:a", "pcm_s16le",
-      "-t", String(seconds), "-f", "wav",
-      join(outDir, `${id}.wav`),
-    ],
-    {env, windowsHide: true, stdio: ["ignore", "inherit", "inherit"]},
-  );
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  generateBundledAudio(resolve(process.argv[2] ?? "public/audio/sfx"));
 }

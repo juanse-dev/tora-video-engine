@@ -1,26 +1,38 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {execFileSync} from "node:child_process";
-import {mkdtempSync, readFileSync, existsSync} from "node:fs";
+import {existsSync, mkdtempSync, readFileSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {describe, it} from "node:test";
+import {after, describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const licenses = readFileSync("public/audio/LICENSES.md", "utf8");
+const effectIds = ["whoosh", "boom", "ding", "pop"];
 
 describe("bundled audio files", () => {
+  const outputs = [];
+  const generate = () => {
+    const out = mkdtempSync(join(tmpdir(), "tora-sfx-"));
+    outputs.push(out);
+    execFileSync(process.execPath, ["scripts/generateBundledAudio.mjs", out]);
+    return out;
+  };
+  after(() => {
+    for (const dir of outputs) rmSync(dir, {recursive: true, force: true});
+  });
+
   for (const entry of Object.values(bundledAudioCatalog)) {
     if (entry.file === null) continue;
     it(`${entry.id}: file exists and has a LICENSES row`, () => {
       assert.ok(existsSync(join("public", entry.file)));
-      assert.match(licenses, new RegExp(`\| ${entry.id} \| ${entry.file.replace(/[.]/g, "\.")} \|`));
+      assert.ok(licenses.includes(`| ${entry.id} | ${entry.file} |`), `${entry.id} has no LICENSES row`);
     });
   }
 
   // Only the synthesized effects are WAVs; owner-supplied music may be MP3, M4A or Ogg (task 7).
-  for (const id of ["whoosh", "boom", "ding", "pop"]) {
+  for (const id of effectIds) {
     const entry = bundledAudioCatalog[id];
     it(`${id}: is 48 kHz stereo 16-bit PCM WAV of the catalog length`, () => {
       const bytes = readFileSync(join("public", entry.file));
@@ -33,7 +45,7 @@ describe("bundled audio files", () => {
     });
   }
 
-  for (const id of ["whoosh", "boom", "ding", "pop"]) {
+  for (const id of effectIds) {
     it(`${id}: sample peak is between -6 and -0.5 dBFS, without clipping`, () => {
       const bytes = readFileSync(join("public", bundledAudioCatalog[id].file));
       const start = bytes.indexOf("data") + 8;
@@ -45,11 +57,31 @@ describe("bundled audio files", () => {
     });
   }
 
-  it("the generator is deterministic and matches the committed files", () => {
-    const out = mkdtempSync(join(tmpdir(), "tora-sfx-"));
-    execFileSync(process.execPath, ["scripts/generateBundledAudio.mjs", out]);
-    for (const id of ["whoosh", "boom", "ding", "pop"]) {
-      assert.equal(sha(join(out, `${id}.wav`)), sha(join("public/audio/sfx", `${id}.wav`)), id);
+  it("the generator is deterministic: two runs write byte-identical files", () => {
+    const first = generate();
+    const second = generate();
+    for (const id of effectIds) {
+      assert.equal(sha(join(first, `${id}.wav`)), sha(join(second, `${id}.wav`)), id);
+    }
+  });
+
+  it("a fresh run matches the committed files (same header, every sample within 1 LSB)", () => {
+    const out = generate();
+    for (const id of effectIds) {
+      const fresh = join(out, `${id}.wav`);
+      const committed = join("public/audio/sfx", `${id}.wav`);
+      if (sha(fresh) === sha(committed)) continue;
+      const a = readFileSync(fresh);
+      const b = readFileSync(committed);
+      const start = a.indexOf("data") + 8;
+      assert.equal(a.length, b.length, `${id}: length differs`);
+      assert.deepEqual(a.subarray(0, start), b.subarray(0, start), `${id}: header differs`);
+      for (let at = start; at + 1 < a.length; at += 2) {
+        assert.ok(
+          Math.abs(a.readInt16LE(at) - b.readInt16LE(at)) <= 1,
+          `${id}: sample ${(at - start) / 2} differs by more than 1 LSB (${a.readInt16LE(at)} vs ${b.readInt16LE(at)})`,
+        );
+      }
     }
   });
 });
