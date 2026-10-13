@@ -69,6 +69,16 @@ describe("audio schema", () => {
     assert.deepEqual(durations([1e14, 1e14, 1e14, "1e14", "1e14"]), [typeError(3), typeError(4)]);
     assert.deepEqual(durations([1e14, 1e14, 1e14, 1e14]), [cumulative]);
 
+    // Check-level failures (positive, frame count) are non-aborting on main, so the
+    // cumulative check still runs for the scene after them.
+    const tooSmall = "scenes.3.duration: Too small: expected number to be >0";
+    const frames = "scenes.3.duration: Duration must produce a finite safe frame count of at least 1 at 30 FPS";
+    const cumulative4 = "scenes.4.duration: Cumulative story duration must remain within the safe integer frame range at 30 FPS";
+    const atThree = (d) => durations([1e14, 1e14, 1e14, d, 1e14]);
+    assert.deepEqual(atThree(-1), [tooSmall, frames, cumulative4]);
+    assert.deepEqual(atThree(0), [tooSmall, frames, cumulative4]);
+    assert.deepEqual(atThree(1e-9), [frames, cumulative4]);
+
     const unfittable = `${"A ".repeat(20)}A`;
     assert.deepEqual(issues(story({}, [scene({type: "dialogue", text: unfittable, duration: "3"})])), [typeError(0)]);
     assert.deepEqual(issues(story({}, [scene({type: "dialogue", text: unfittable, duration: 3})])), ["scenes.0.text: Text cannot fit within the deterministic caption layout at the minimum font size"]);

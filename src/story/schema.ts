@@ -111,7 +111,7 @@ const SceneDurationSchema = z
           code: "custom",
           message: issue.message,
           path: issue.path,
-          continue: false,
+          continue: issue.code !== "invalid_type",
         });
       }
     }
