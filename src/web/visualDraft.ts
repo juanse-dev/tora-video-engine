@@ -5,7 +5,9 @@ import {
   sceneTypes,
   StorySchema,
   type Animation,
+  type AudioClip,
   type Background,
+  type Music,
   type Pose,
   type SceneType,
   type Story,
@@ -25,10 +27,13 @@ export type VisualSceneDraft = {
   animation: Animation | "";
   text: string;
   duration: string;
+  sfx?: AudioClip;
+  voice?: AudioClip;
 };
 
 export type VisualStoryDraft = {
   title: string;
+  music?: Music;
   scenes: VisualSceneDraft[];
 };
 
@@ -70,6 +75,7 @@ export const DEFAULT_VISUAL_SCENE: VisualSceneDraft = {
 
 export const storyToVisualDraft = (story: Story): VisualStoryDraft => ({
   title: story.title,
+  ...(story.music ? {music: story.music} : {}),
   scenes: story.scenes.map((scene) => ({
     type: scene.type,
     pose: scene.pose,
@@ -77,6 +83,8 @@ export const storyToVisualDraft = (story: Story): VisualStoryDraft => ({
     animation: scene.animation ?? "",
     text: scene.text,
     duration: String(scene.duration),
+    ...(scene.sfx ? {sfx: scene.sfx} : {}),
+    ...(scene.voice ? {voice: scene.voice} : {}),
   })),
 });
 
@@ -92,11 +100,16 @@ export const updateVisualScene = (
   ),
 });
 
-const durationFromInput = (value: string): number =>
-  value.trim().length === 0 ? Number.NaN : Number(value);
+const durationFromInput = (value: string): number | "auto" =>
+  value.trim() === "auto"
+    ? "auto"
+    : value.trim().length === 0
+      ? Number.NaN
+      : Number(value);
 
 const visualDraftToCandidate = (draft: VisualStoryDraft): unknown => ({
   title: draft.title,
+  ...(draft.music ? {music: draft.music} : {}),
   scenes: draft.scenes.map((scene) => ({
     type: scene.type,
     pose: scene.pose,
@@ -104,6 +117,8 @@ const visualDraftToCandidate = (draft: VisualStoryDraft): unknown => ({
     ...(scene.animation === "" ? {} : {animation: scene.animation}),
     text: scene.text,
     duration: durationFromInput(scene.duration),
+    ...(scene.sfx ? {sfx: scene.sfx} : {}),
+    ...(scene.voice ? {voice: scene.voice} : {}),
   })),
 });
 
