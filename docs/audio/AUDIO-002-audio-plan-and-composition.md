@@ -90,7 +90,7 @@ Transport: `ToraVideoProps` gains `audioSources?: AudioSourceMap` and `bundledAu
 
 ### `src/components/StoryAudio.tsx`
 
-Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames={track.durationInFrames} layout="none"><Audio src={…} volume={(f) => track.gainAt(track.fromFrame + f)} /></Sequence>`, with `Audio` from `@remotion/media`. `isAvailable` is `resolveAudioSrc(...).kind === "audio"`. Mounted in `ToraVideo` next to `StoryRenderer` (inside `LocalAssetSourcesProvider`), and given the **same** timeline object `ToraVideo` compiled for `StoryRenderer` (AUDIO-001, one timeline per composition). Renders nothing for a Story without audio.
+Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames={track.durationInFrames} layout="none"><Audio src={…} volume={(f) => track.gainAt(track.fromFrame + f)} /></Sequence>`, with `Audio` from `@remotion/media`. `sourceState` comes from `resolveAudioSrc` (see `src/audio/sources.ts` above). Mounted in `ToraVideo` next to `StoryRenderer` (inside `LocalAssetSourcesProvider`), and given the **same** timeline object `ToraVideo` compiled for `StoryRenderer` (AUDIO-001, one timeline per composition). Renders nothing for a Story without audio.
 
 ### Player (`src/web/components/Preview.tsx`)
 
@@ -117,7 +117,7 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - sfx crossing into the next scene keeps playing; sfx past the Story end is truncated;
   - voice cut + `voice-cut` issue with the right seconds; no issue for `auto` scenes;
   - ducking: single window ramps (gain exactly `duck` inside, 1 outside, ramp ends at window start), two windows 0.2 s apart merge, 0.5 s apart do not, `duck: 1` → 1 everywhere, default 0.35;
-  - missing duration or unavailable source → no track + `missing-audio` issue with role and scene;
+  - `missing` source → no track + `missing-audio` issue with role and scene; `pending` source, or `ready` without a duration → no track + `pending-audio` issue;
   - `maxSimultaneousGain` for overlapping sfx + voice + ducked music; for a music-only Story at `volume: 1` that loops it is `√2` (±1e-9, at the crossfade centre), and 1 when the music does not loop;
   - track keys are stable across calls;
   - sub-frame sources: a 0.005 s sfx and a 0.005 s voice (fixed and `auto` scenes) give tracks of exactly 1 frame, ducking windows of 1 frame plus ramps, and no track ever has `durationInFrames < 1` (property check over random durations in `(0, 0.05]` s).
