@@ -2,7 +2,7 @@
 
 Tora Video Engine is a small declarative video renderer and local-first browser authoring tool built with Remotion. The same validated `Story` drives the local CLI, Remotion Player preview, and browser-side H.264 MP4 rendering.
 
-> Status: **v0.3.3 deployed** (v0.1 renderer, v0.2 Web Authoring MVP, v0.3 Local Custom Assets); **v0.4 Videos with sound is specified** ([docs/audio/](docs/audio/README.md)) and not yet implemented. Production: `https://tora-video-engine.netlify.app`. The v0.1 reference render is accepted in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md), the v0.2 acceptance record lives in [docs/web/](docs/web/README.md), and each release's production gate report is attached to its [GitHub release](https://github.com/juanse-dev/tora-video-engine/releases).
+> Status: **v0.3.3 deployed** (v0.1 renderer, v0.2 Web Authoring MVP, v0.3 Local Custom Assets); **v0.4 Videos with sound is in progress** ([docs/audio/](docs/audio/README.md)): the audio fields (`music`, per-scene `sfx` and `voice`, `duration: auto`) are accepted, validated, saved and exported, but not yet played or rendered, and MP4 render is blocked for Stories that use them. Production: `https://tora-video-engine.netlify.app`. The v0.1 reference render is accepted in [MVP-006](docs/mvp/MVP-006-reference-story-and-verification.md), the v0.2 acceptance record lives in [docs/web/](docs/web/README.md), and each release's production gate report is attached to its [GitHub release](https://github.com/juanse-dev/tora-video-engine/releases).
 
 ## MVP flow
 
