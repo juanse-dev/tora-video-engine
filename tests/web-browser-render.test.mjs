@@ -1399,7 +1399,7 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
     background: "office",
     text: "Auto",
     duration: "auto",
-    voice: {src: "ding"},
+    voice: {src: `local:audio:sha256:${"d".repeat(64)}`}, // no known duration: the 3 s fallback
   };
   const renderWith = async (story) => {
     let seen = null;

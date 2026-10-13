@@ -105,10 +105,10 @@ describe("storyHasAudio", () => {
 });
 
 describe("storyAudioDurations", () => {
-  it("keeps the local durations of referenced refs and ignores the rest", () => {
+  it("keeps the bundled and local durations of referenced refs and ignores the rest", () => {
     const other = `local:audio:sha256:${"e".repeat(64)}`;
     const s = story({music: {src: "boom"}}, [scene({voice: {src: voice}})]);
-    assert.deepEqual(storyAudioDurations(s, {[voice]: 2.2, [other]: 9}), {[voice]: 2.2});
-    assert.deepEqual(storyAudioDurations(s), {});
+    assert.deepEqual(storyAudioDurations(s, {[voice]: 2.2, [other]: 9}), {boom: 0.8, [voice]: 2.2});
+    assert.deepEqual(storyAudioDurations(s), {boom: 0.8});
   });
 });

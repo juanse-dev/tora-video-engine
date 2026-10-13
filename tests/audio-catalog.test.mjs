@@ -41,7 +41,7 @@ describe("bundled audio catalog", () => {
   it("builds a duration map from local durations plus non-null bundled ones", () => {
     const map = buildAudioDurationMap(["boom", "calm-loop", local], {[local]: 2.2});
     assert.equal(map[local], 2.2);
-    assert.equal(map.boom, bundledAudioCatalog.boom.durationSeconds ?? undefined);
+    assert.equal(map.boom, 0.8);
     assert.equal("calm-loop" in map, false);
   });
 

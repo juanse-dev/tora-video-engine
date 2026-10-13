@@ -14,10 +14,10 @@ export type BundledAudioEntry = {
 };
 
 export const bundledAudioCatalog: Readonly<Record<BundledAudio, BundledAudioEntry>> = {
-  whoosh: {id: "whoosh", label: "Whoosh", kind: "sfx", file: null, durationSeconds: null},
-  boom: {id: "boom", label: "Boom", kind: "sfx", file: null, durationSeconds: null},
-  ding: {id: "ding", label: "Ding", kind: "sfx", file: null, durationSeconds: null},
-  pop: {id: "pop", label: "Pop", kind: "sfx", file: null, durationSeconds: null},
+  whoosh: {id: "whoosh", label: "Whoosh", kind: "sfx", file: "audio/sfx/whoosh.wav", durationSeconds: 0.6},
+  boom: {id: "boom", label: "Boom", kind: "sfx", file: "audio/sfx/boom.wav", durationSeconds: 0.8},
+  ding: {id: "ding", label: "Ding", kind: "sfx", file: "audio/sfx/ding.wav", durationSeconds: 1.2},
+  pop: {id: "pop", label: "Pop", kind: "sfx", file: "audio/sfx/pop.wav", durationSeconds: 0.12},
   "calm-loop": {id: "calm-loop", label: "Calm loop", kind: "music", file: null, durationSeconds: null},
   "upbeat-loop": {id: "upbeat-loop", label: "Upbeat loop", kind: "music", file: null, durationSeconds: null},
 };
