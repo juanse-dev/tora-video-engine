@@ -26,9 +26,9 @@ describe("audio schema", () => {
   }
 
   it("rejects unknown keys in every audio object", () => {
-    assert.ok(issues(story({music: {src: "boom", loop: true}})).length > 0);
-    assert.ok(issues(story({}, [scene({sfx: {src: "boom", trim: 1}})])).length > 0);
-    assert.ok(issues(story({}, [scene({voice: {src: voice, offset: 1}})])).length > 0);
+    assert.deepEqual(issues(story({music: {src: "boom", loop: true}})), ['music: Unrecognized key: "loop"']);
+    assert.deepEqual(issues(story({}, [scene({sfx: {src: "boom", trim: 1}})])), ['scenes.0.sfx: Unrecognized key: "trim"']);
+    assert.deepEqual(issues(story({}, [scene({voice: {src: voice, offset: 1}})])), ['scenes.0.voice: Unrecognized key: "offset"']);
   });
 
   it("rejects a non-audio src with the spec message", () => {
@@ -56,6 +56,22 @@ describe("audio schema", () => {
     }
     const {duration: _omitted, ...withoutDuration} = scene();
     assert.deepEqual(issues(story({}, [withoutDuration])), ["scenes.0.duration: Invalid input: expected number, received undefined"], "missing duration");
+  });
+
+  // Expected strings recorded from main (0354d12): a non-number duration aborts the
+  // scene and story refinements, so they never add their own issues.
+  it("keeps main's abort semantics: a bad duration never reaches the story or scene refinements", () => {
+    const typeError = (i) => `scenes.${i}.duration: Invalid input: expected number, received string`;
+    const cumulative = "scenes.3.duration: Cumulative story duration must remain within the safe integer frame range at 30 FPS";
+    const durations = (list) => issues(story({}, list.map((duration) => scene({duration}))));
+
+    assert.deepEqual(durations(["1e14", "1e14", "1e14", "1e14"]), [0, 1, 2, 3].map(typeError));
+    assert.deepEqual(durations([1e14, 1e14, 1e14, "1e14", "1e14"]), [typeError(3), typeError(4)]);
+    assert.deepEqual(durations([1e14, 1e14, 1e14, 1e14]), [cumulative]);
+
+    const unfittable = `${"A ".repeat(20)}A`;
+    assert.deepEqual(issues(story({}, [scene({type: "dialogue", text: unfittable, duration: "3"})])), [typeError(0)]);
+    assert.deepEqual(issues(story({}, [scene({type: "dialogue", text: unfittable, duration: 3})])), ["scenes.0.text: Text cannot fit within the deterministic caption layout at the minimum font size"]);
   });
 
   it("ignores auto scenes in the story frame-total check", () => {
