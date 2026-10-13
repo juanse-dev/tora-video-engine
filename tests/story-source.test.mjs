@@ -5,6 +5,7 @@ import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
 import ts from "typescript";
+import {exampleStory} from "../src/story/exampleStory.ts";
 import {parseStorySource} from "../src/story/parseStory.ts";
 import {serializeStorySource} from "../src/story/serializeStory.ts";
 
@@ -302,5 +303,53 @@ scenes:
     assert.match(source, /parseStorySource/);
     assert.doesNotMatch(source, /from\s+["']yaml["']/);
     assert.doesNotMatch(source, /StorySchema/);
+  });
+
+  it("serializes audio fields in canonical order and omits unset optionals", () => {
+    const voice = `local:audio:sha256:${"e".repeat(64)}`;
+    const story = {
+      scenes: [{duration: "auto", voice: {src: voice}, sfx: {volume: 0.5, src: "boom"}, text: "Hi", background: "office", pose: "formal", type: "intro"}],
+      music: {duck: 0.2, src: "ding", fadeIn: 1},
+      title: "T",
+    };
+    assert.equal(serializeStorySource(story), [
+      "title: T",
+      "music:",
+      "  src: ding",
+      "  fadeIn: 1",
+      "  duck: 0.2",
+      "scenes:",
+      "  - type: intro",
+      "    pose: formal",
+      "    background: office",
+      "    text: Hi",
+      "    sfx:",
+      "      src: boom",
+      "      volume: 0.5",
+      "    voice:",
+      `      src: local:audio:sha256:${"e".repeat(64)}`,
+      "    duration: auto",
+      "",
+    ].join("\n"));
+  });
+
+  it("round-trips a Story with every audio field and one with none", () => {
+    const voice = `local:audio:sha256:${"e".repeat(64)}`;
+    const audioStory = {
+      title: "T",
+      music: {src: "ding", volume: 0.6, fadeIn: 1, fadeOut: 2, duck: 0.2},
+      scenes: [
+        {type: "intro", pose: "formal", background: "office", text: "Hi", sfx: {src: "boom", volume: 0.5}, voice: {src: voice}, duration: "auto"},
+        {type: "dialogue", pose: "confused", background: "office", text: "Yo", duration: 2},
+      ],
+    };
+    assert.deepEqual(parseStorySource(serializeStorySource(audioStory)), audioStory);
+    assert.deepEqual(parseStorySource(serializeStorySource(exampleStory)), exampleStory);
+  });
+
+  it("keeps the canonical YAML of a Story without audio byte-identical to v0.3", async () => {
+    // The committed file is LF; a Windows checkout may materialize CRLF (core.autocrlf).
+    const source = (await readFile(canonicalPath, "utf8")).replaceAll("\r\n", "\n");
+    assert.equal(serializeStorySource(parseStorySource(source)), source);
   });
 });
