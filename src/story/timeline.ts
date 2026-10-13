@@ -11,6 +11,8 @@ import {
 } from "../audio/constants.ts";
 import type {Story, StoryScene} from "./types";
 
+export type {AudioDurationMap} from "../audio/catalog.ts";
+
 export type TimelineScene = StoryScene & {
   from: number;
   durationInFrames: number;
