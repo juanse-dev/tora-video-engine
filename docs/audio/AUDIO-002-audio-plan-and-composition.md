@@ -13,13 +13,13 @@ One pure function, `compileAudioPlan`, decides every sound in the video: where i
 All times below are in frames at the composition FPS; seconds are converted with `Math.round(seconds * fps)` unless stated. `T` = `timeline.durationInFrames`.
 
 - **Track sources.** A track is emitted only when its ref's duration is in `audioDurations` **and** the caller marks its source as available (`isAvailable(ref)`). Otherwise the plan records an issue `{kind: "missing-audio", ref, role, sceneIndex?}` and emits nothing for it (AINV-5).
-- **Music.** Let `D = max(1, round(musicSeconds * fps))`. If `D >= T`, one copy `[0, T)`. If `musicSeconds < MIN_LOOPING_MUSIC_SECONDS`, one copy `[0, min(D, T))` (no loop) and the plan records `{kind: "music-too-short-to-loop"}`. Otherwise let `X = min(round(MUSIC_CROSSFADE_SECONDS * fps), floor(D / 2))`, so the stride `S = D - X >= ceil(D / 2) >= 1` is always positive and copies cannot pile up; copies start at `k * S` for `k = 0, 1, …` while the start is `< T`; copy `k` lasts `min(D, T - start)`. In each overlap of `X` frames, with `u = (f − overlapStart + 0.5) / X`, the outgoing copy's crossfade factor is `cos(πu/2)` and the incoming one's `sin(πu/2)` (equal-power, D-4); with `X = 0` copies abut. No `<Audio loop>` (D-4). With `MIN_LOOPING_MUSIC_SECONDS = 1` and `T <= 9_000`, a Story has at most `ceil(9_000 / 21) = 429` music copies, and `<Sequence>` mounts only the ones overlapping the current frame.
+- **Music.** Let `D = max(1, round(musicSeconds * fps))`. If `D >= T`, one copy `[0, T)`. If `musicSeconds < MIN_LOOPING_MUSIC_SECONDS`, one copy `[0, min(D, T))` (no loop) and the plan records `{kind: "music-too-short-to-loop"}`. Otherwise let `X = min(round(MUSIC_CROSSFADE_SECONDS * fps), floor(D / 2))`, so the stride `S = D - X >= ceil(D / 2) >= 1` is always positive and copies cannot pile up; copies start at `k * S` for `k = 0, 1, …` while the start is `< T`; copy `k` lasts `min(D, T - start)`. In each overlap of `X` frames, with `u = (f − overlapStart + 0.5) / X`, the outgoing copy's crossfade factor is `cos(πu/2)` and the incoming one's `sin(πu/2)` (equal-power, D-4); with `X = 0` copies abut. No `<Audio loop>` (D-4). Copy count is bounded everywhere, not only in the browser: a Story with audio longer than `MAX_AUDIO_STORY_SECONDS` (3,600 s) gets the plan issue `{kind: "story-too-long-for-audio"}` and **no tracks** (render is blocked in both renderers, AUDIO-005), so with `MIN_LOOPING_MUSIC_SECONDS = 1` a plan has at most `ceil(108_000 / 21) = 5_143` music copies (429 under the browser's 9,000-frame cap), and `<Sequence>` mounts only the ones overlapping the current frame.
 - **Music envelope.** `gain(f) = volume × fade(f) × duckGain(f) × crossfade(f)`, where `fade` is a linear ramp over `fadeIn` from frame 0 and over `fadeOut` to frame `T`; if `fadeIn + fadeOut > T / fps`, both are scaled by `(T / fps) / (fadeIn + fadeOut)` and the plan records `{kind: "fades-scaled"}` (D-5).
 - **Minimum length.** Every audio length in frames is `max(1, round(seconds * fps))` before any clamp, so a valid sub-frame file (AINV-7 only requires `> 0`, e.g. a 5 ms click) still yields a track of at least 1 frame; the clamps below never go under 1 because a scene and the remaining Story are at least 1 frame long. `auto` already rounds up (AUDIO-001).
 - **Sfx.** Starts at its scene's `from`; lasts `min(max(1, round(sfxSeconds * fps)), T - from)` frames; constant gain `volume` (default 1).
 - **Voice.** Starts at its scene's `from`; lasts `min(max(1, round(voiceSeconds * fps)), scene.durationInFrames)`; constant gain `volume`. If the voice is longer than a **fixed** scene, the plan records `{kind: "voice-cut", sceneIndex, seconds}` with the cut length in seconds (D-3).
 - **Ducking windows** (D-6). Collect `[start, end)` of every emitted sfx and voice track; sort; merge windows whose gap is `< round(DUCK_MERGE_GAP_SECONDS * fps)` frames. With `R = round(DUCK_RAMP_SECONDS * fps)`, `duckGain` is 1 outside windows, `duck` inside, a linear ramp 1→`duck` over `[start - R, start)` and `duck`→1 over `[end, end + R)`, clamped to `[0, T)`. Overlapping ramps take the minimum gain. With `duck = 1` or no windows, `duckGain ≡ 1`.
-- **Clipping hint** (D-7). `maxSimultaneousGain` = the maximum over frames of the sum of the sources' gains, where the music counts **once** with its envelope gain `volume × fade × duckGain` (the copies of one crossfade are the same source; their equal-power factors add in power, not amplitude, for uncorrelated material) and each sfx and voice counts with its gain. Computed analytically over the plan's breakpoints, not by iterating every frame of a 9,000-frame Story more than once.
+- **Clipping hint** (D-7). `maxSimultaneousGain` = the maximum over frames of the **amplitude** sum of every mounted track's `gainAt`, including both music copies inside a crossfade (`cos + sin` peaks at √2 at the overlap centre). This is the conservative bound: correlated, in-phase loop material really can reach it, so a full-volume looping music track warns `may clip` at its seams, which is correct. Computed analytically over the plan's breakpoints, not by iterating every frame of a 9,000-frame Story more than once.
 
 ## Interfaces
 
@@ -40,11 +40,14 @@ export type AudioPlanIssue =
   | {kind: "missing-audio"; ref: AudioRef; role: AudioRole; sceneIndex: number | null}
   | {kind: "voice-cut"; sceneIndex: number; seconds: number}
   | {kind: "fades-scaled"}
-  | {kind: "music-too-short-to-loop"};
+  | {kind: "music-too-short-to-loop"}
+  | {kind: "story-too-long-for-audio"};
 export type AudioPlan = {
   tracks: readonly AudioPlanTrack[];
   issues: readonly AudioPlanIssue[];
   maxSimultaneousGain: number;
+  /** The music's single-source envelope `volume × fade × duckGain` (no crossfade factors), for display; null without music. */
+  musicEnvelopeAt: ((absoluteFrame: number) => number) | null;
 };
 export const compileAudioPlan: (input: {
   story: Story;
@@ -55,7 +58,7 @@ export const compileAudioPlan: (input: {
 }) => AudioPlan;
 ```
 
-A Story without audio yields `{tracks: [], issues: [], maxSimultaneousGain: 0}`.
+A Story without audio yields `{tracks: [], issues: [], maxSimultaneousGain: 0, musicEnvelopeAt: null}`. Each music copy's `gainAt` is `musicEnvelopeAt(f) × crossfade(f)`, so the envelope is computed once, in the plan.
 
 ### `src/audio/sources.ts`
 
@@ -67,7 +70,7 @@ export type AudioSourceResolution =
 export const resolveAudioSrc: (ref: AudioRef, localSources: LocalAssetSourceMap | undefined) => AudioSourceResolution;
 ```
 
-Bundled: `staticFile(entry.file)` when `file` is non-null, else `missing`. Local: same `LocalAssetSource` map as images (`url` → `src`, `static` → `staticFile(path)`, `pending` → pending, absent → missing). Never falls back (AINV-5).
+Bundled: an entry for the id in the source map wins (the browser render puts an object URL of the preflighted bytes there, AUDIO-005); otherwise `staticFile(entry.file)` when `file` is non-null (Player preview, CLI), else `missing`. The map type becomes `AudioSourceMap = Readonly<Partial<Record<LocalAssetRef | BundledAudio, LocalAssetSource>>>` and travels through the same provider as the image sources. Local: same `LocalAssetSource` map as images (`url` → `src`, `static` → `staticFile(path)`, `pending` → pending, absent → missing). Never falls back (AINV-5).
 
 ### `src/components/StoryAudio.tsx`
 
@@ -92,13 +95,14 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - **phase sanity (documents D-4):** summing two unit sinusoids with the plan's factors at the overlap centre gives amplitude `√2·cos(φ/2)` — ≈ 1.41 at `φ = 0°`, ≈ 0.71 at 120°, 0 at 180° (the linear law would give `cos(φ/2)`: 1, 0.5, 0) — while for two independent seeded noise signals the RMS stays within ±10% of 1 across the overlap. This is why AUDIO-006 checks the seam with noise, not a tone;
   - music longer than the Story → one copy;
   - music shorter than `MIN_LOOPING_MUSIC_SECONDS` (the 0.12 s `pop`) → one copy, no loop, `music-too-short-to-loop` issue, the function terminates;
+  - a Story longer than 3,600 s with music → no tracks, one `story-too-long-for-audio` issue, and the function returns without building copies (property: a plan never holds more than 5,143 music copies + 2 tracks per scene);
   - music of 1.0 s at 30 FPS → `X = min(9, 15) = 9`, stride 21; music of 0.5 s is below the minimum; a duration where `floor(D / 2) < round(0.3 × fps)` clamps `X` and every stride is `>= 1`;
   - fade-in/out values at their endpoints and midpoints; fades scaled + issue when too long;
   - sfx crossing into the next scene keeps playing; sfx past the Story end is truncated;
   - voice cut + `voice-cut` issue with the right seconds; no issue for `auto` scenes;
   - ducking: single window ramps (gain exactly `duck` inside, 1 outside, ramp ends at window start), two windows 0.2 s apart merge, 0.5 s apart do not, `duck: 1` → 1 everywhere, default 0.35;
   - missing duration or unavailable source → no track + `missing-audio` issue with role and scene;
-  - `maxSimultaneousGain` for overlapping sfx + voice + ducked music, and unchanged by a music crossfade (music counted once);
+  - `maxSimultaneousGain` for overlapping sfx + voice + ducked music; for a music-only Story at `volume: 1` that loops it is `√2` (±1e-9, at the crossfade centre), and 1 when the music does not loop;
   - track keys are stable across calls;
   - sub-frame sources: a 0.005 s sfx and a 0.005 s voice (fixed and `auto` scenes) give tracks of exactly 1 frame, ducking windows of 1 frame plus ramps, and no track ever has `durationInFrames < 1` (property check over random durations in `(0, 0.05]` s).
 - `tests/audio-sources.test.mjs`: bundled with/without file, local url/static/pending/absent.

@@ -54,6 +54,7 @@ Define each constant exactly once, in the file listed. Import it everywhere else
 | `DUCK_MERGE_GAP_SECONDS` | `0.3` | `src/audio/constants.ts` |
 | `MUSIC_CROSSFADE_SECONDS` | `0.3` | `src/audio/constants.ts` |
 | `MIN_LOOPING_MUSIC_SECONDS` | `1` | `src/audio/constants.ts` |
+| `MAX_AUDIO_STORY_SECONDS` | `3_600` | `src/audio/constants.ts` |
 | `MAX_FADE_SECONDS` | `10` | `src/audio/constants.ts` |
 | `OUTPUT_AUDIO_SAMPLE_RATE` | `48_000` | `src/audio/constants.ts` |
 | `OUTPUT_AUDIO_BITRATE` | `128_000` | `src/audio/constants.ts` |
