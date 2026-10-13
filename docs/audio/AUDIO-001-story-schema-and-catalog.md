@@ -15,6 +15,8 @@ A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The s
 - The Story-level frame-total check in `StorySchema.superRefine` counts only numeric durations; `auto` scenes are bounded by the browser policy (lower bound at acceptance) and by render readiness (exact durations), see AUDIO-005.
 - `compileTimeline(story, fps, audioDurations)`: `audioDurations` is `AudioDurationMap = Readonly<Partial<Record<AudioRef, number>>>` (seconds). Each `TimelineScene` gains `durationSource: "fixed" | "voice" | "fallback"`. Without the voice's entry in the map an `auto` scene uses `AUTO_DURATION_FALLBACK_SECONDS` and `durationSource: "fallback"`.
 - `storyHasAudio(story)` is true when any of `music`, a scene `sfx`, a scene `voice`, or a scene `duration: "auto"` is present. It drives persistence version 3 (D-11), the render `muted` flag (D-13) and the "no change" guarantee (AINV-6).
+- **The visual editor never loses audio.** `src/web/visualDraft.ts` rebuilds the Story from its draft fields only (`type, pose, background, animation, text, duration`), so today a Story with audio loaded from YAML would silently lose `music`/`sfx`/`voice` on the first visual edit, and `duration: auto` would become `NaN`. In this spec the draft carries `music` (Story) and `sfx`/`voice` (scene) through unchanged, and a scene whose duration is `auto` keeps the draft string `"auto"`, which `visualDraftToCandidate` maps back to the literal. Adding, moving, duplicating and deleting scenes keeps each scene's audio with its scene. AUDIO-004 adds the controls that edit these fields.
+- **Acceptance bound for `auto`.** `getStoryMetadata` now needs a duration map, and the browser acceptance policy (`evaluateBrowserStoryPolicy`, which also gates the stored project at start-up before My assets opens) must not depend on asset state. Its default `deriveTotalFrames` becomes `minimumStoryFrames(story, fps)` (in `src/story/timeline.ts`): fixed scenes at their frames, each `auto` scene at `AUTO_DURATION_MIN_FRAMES(fps)` (16 at 30 FPS). The exact check with real durations is AUDIO-005's render readiness.
 - Bundled music entries exist in the catalog from the start with `file: null` until the owner supplies the files (task 7). A Story referencing a bundled id whose `file` is null is treated as a **missing** audio asset (AINV-5), never as a schema error.
 
 ## Files
@@ -31,6 +33,8 @@ A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The s
 | `src/story/serializeStory.ts` | canonical field order, omit unset optionals |
 | `src/Video.tsx`, `src/Root.tsx` | `audioDurations` prop → `calculateMetadata` |
 | `src/web/persistence.ts` | version 3 |
+| `src/web/visualDraft.ts` | carry `music`/`sfx`/`voice` and `auto` through the draft |
+| `src/web/browserPolicy.ts` | default `deriveTotalFrames` = `minimumStoryFrames` |
 | `scripts/generateBundledAudio.mjs` | new: synthesizes the four effects |
 | `public/audio/sfx/*.wav`, `public/audio/LICENSES.md` | generated effects + license table |
 
@@ -119,6 +123,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 - `tests/timeline.test.mjs` (extend): `auto` with a known duration (`2.2 s` at 30 FPS → `ceil(2.7 × 30) = 81` frames, `durationSource: "voice"`), unknown → 90 frames `fallback`, fixed scenes unchanged, cumulative `from` correct across mixed scenes, `buildAudioDurationMap` adds bundled durations and skips null ones.
 - `tests/story-source.test.mjs` (extend): YAML round-trip for a Story with every audio field and with none; canonical output omits defaults.
 - `tests/persistence-v3.test.mjs`: first promotions 1→2 (local ref), 1→3 (audio), 2→3 (audio added to a v2 project); monotonic cases v2 → bundled-only stays 2, v3 → no audio stays 3, v3 → no audio and no local refs stays 3; a fresh project with no durable version is written at 1/2/3 by content; read all three; reject audio in version 1/2; the v0.3 reader fixture treats version 3 as unsupported.
+- `tests/web-editor.test.mjs` (extend): a Story with `music`, a scene `sfx`, a scene `voice` and `duration: auto` survives `storyToVisualDraft` → caption edit → `evaluateVisualDraft` with every audio field intact and `auto` preserved; scene add/move/delete keeps each scene's audio on that scene; `minimumStoryFrames` counts `auto` as 16 frames at 30 FPS; the policy accepts 101 `auto` scenes with fixed scenes summing to under the budget.
 - `tests/bundled-audio.test.mjs`: every catalog entry with a non-null `file` exists, has a LICENSES row, and the generator is deterministic (hash twice).
 - Existing suites unchanged and green (AINV-6), including the browser-render golden.
 
