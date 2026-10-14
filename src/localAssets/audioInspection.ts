@@ -9,6 +9,7 @@ import {
   WAVE,
 } from "mediabunny";
 import {
+  AUDIO_TRUNCATION_TOLERANCE_SECONDS,
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_DURATION_SECONDS,
   MAX_AUDIO_SAMPLE_RATE,
@@ -205,11 +206,43 @@ const UNRECOGNIZED: RawAudioInfo = {
 };
 
 /**
+ * The declared (metadata) duration, unless the file is demonstrably longer: a
+ * stale Xing/Info header (a file extended after it was written) declares less
+ * than the file holds. When the scanned end of the last packet exceeds the
+ * declared duration by more than the truncation tolerance the file really is
+ * that long, so the scanned value wins and the length limit sees it. Otherwise
+ * (equal within tolerance, or shorter: a truncated file) the declared value
+ * stays, which is what the decode-time truncation rule compares against. A
+ * scan failure keeps the declared value.
+ */
+const declaredOrScannedDuration = async (input: Input): Promise<number> => {
+  const declared = await input.getDurationFromMetadata();
+
+  if (declared === null) {
+    return input.computeDuration();
+  }
+
+  try {
+    const scanned = await input.computeDuration();
+
+    if (scanned > declared + AUDIO_TRUNCATION_TOLERANCE_SECONDS) {
+      return scanned;
+    }
+  } catch {
+    // Keep the declared duration.
+  }
+
+  return declared;
+};
+
+/**
  * Metadata only, no decoding (S-7): runs unchanged in Node and in the browser.
  * The duration is the one the container declares (AINV-3): the metadata
  * duration when the file has one (an MP3 with a Xing header, an MP4 or WAV
- * header), else the end of the last packet. A truncated MP3 with a Xing header
- * therefore keeps its declared length, which is what the truncation rule needs.
+ * header), else the end of the last packet; a file longer than its header
+ * declares reports its real length (see declaredOrScannedDuration). A truncated
+ * MP3 with a Xing header therefore keeps its declared length, which is what the
+ * truncation rule needs.
  * Any reader failure means "not a supported audio file".
  */
 export const readAudioInfoWithMediabunny: ReadRawAudioInfo = async (source) => {
@@ -254,9 +287,7 @@ export const readAudioInfoWithMediabunny: ReadRawAudioInfo = async (source) => {
     let durationSeconds = Number.NaN;
 
     if (videoTracks.length === 0 && audioTracks.length === 1) {
-      durationSeconds =
-        (await input.getDurationFromMetadata()) ??
-        (await input.computeDuration());
+      durationSeconds = await declaredOrScannedDuration(input);
     }
 
     return {

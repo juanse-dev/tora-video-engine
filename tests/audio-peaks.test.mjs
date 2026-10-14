@@ -116,6 +116,41 @@ describe("decodeAudioPeaks on PCM fixtures (mediabunny decodes PCM without WebCo
     assert.equal((await decode("tone-880-0.4s.wav")).summary.peaks.length, 20);
   });
 
+  it("stops consuming samples past the container duration plus the tolerance: they neither pile into the last bucket nor count as decoded", async () => {
+    // 4 s of 48 kHz mono 16-bit PCM: 3 s of silence, then 1 s of full scale.
+    const sampleRate = 48_000;
+    const frames = 4 * sampleRate;
+    const bytes = new Uint8Array(44 + frames * 2);
+    const view = new DataView(bytes.buffer);
+    const ascii = (offset, text) => [...text].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+
+    ascii(0, "RIFF");
+    view.setUint32(4, bytes.byteLength - 8, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, frames * 2, true);
+
+    for (let frame = 3 * sampleRate; frame < frames; frame += 1) {
+      view.setInt16(44 + frame * 2, 32_767, true);
+    }
+
+    // The container says 2 s: everything from 2.25 s on must be ignored.
+    const summary = await decodeAudioPeaks(new Blob([bytes]), {durationSeconds: 2});
+
+    assert.equal(summary.peaks.length, 100);
+    assert.equal(summary.peaks[99], 0);
+    assert.equal(Math.max(...summary.peaks), 0);
+    assert.ok(summary.decodedSeconds >= 2 && summary.decodedSeconds < 2.5, `${summary.decodedSeconds}`);
+  });
+
   it("rejects with the abort reason when the signal is already aborted", async () => {
     const controller = new AbortController();
 

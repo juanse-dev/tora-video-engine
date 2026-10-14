@@ -21,6 +21,10 @@ export const deletionScope = (
   protectingRefs: LocalAssetRef[];
   derivedStores: readonly DerivedStoreName[];
 } =>
+  // Audio has no protecting refs: no byte string is both an accepted image and
+  // an accepted audio file (different magic bytes), so an audio digest is never
+  // shared with an image. If that ever changed, a shared digest would need
+  // protection here.
   category === "audio"
     ? {protectingRefs: [], derivedStores: ["waveforms"]}
     : {

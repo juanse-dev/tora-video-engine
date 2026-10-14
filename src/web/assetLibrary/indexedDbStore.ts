@@ -302,7 +302,7 @@ export const openIndexedDbAssetStore = async (
       (mutation.kind === "import" && category === "audio") ||
       (mutation.kind === "import-audio" && category !== "audio")
     ) {
-      throw new Error(`${mutation.kind} does not accept a ${category} ref`);
+      throw new Error(`${mutation.kind} does not accept ${category === "audio" ? "an" : "a"} ${category} ref`);
     }
 
     return transact(STORE_NAMES, "readwrite", async (transaction) => {

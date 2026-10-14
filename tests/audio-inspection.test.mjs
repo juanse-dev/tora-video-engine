@@ -57,6 +57,33 @@ describe("inspectAudio on the fixtures", () => {
     assert.ok(Math.abs(result.metadata.durationSeconds - 10.031) < 0.0005, `${result.metadata.durationSeconds}`);
   });
 
+  it("reports the real length of an MP3 whose Xing/Info header declares less than the file holds (three joined copies)", async () => {
+    const one = fixtureBytes("tone-220-10s.mp3");
+    const joined = new Uint8Array(one.byteLength * 3);
+
+    for (let copy = 0; copy < 3; copy += 1) {
+      joined.set(one, copy * one.byteLength);
+    }
+
+    const result = await inspectAudio(joined);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(Math.abs(result.metadata.durationSeconds - 30.093) < 0.1, `${result.metadata.durationSeconds}`);
+  });
+
+  it("rejects an MP3 whose stale header hides a length over the limit (31 joined copies, ~311 s)", async () => {
+    const one = fixtureBytes("tone-220-10s.mp3");
+    const joined = new Uint8Array(one.byteLength * 31);
+
+    for (let copy = 0; copy < 31; copy += 1) {
+      joined.set(one, copy * one.byteLength);
+    }
+
+    const result = await inspectAudio(joined);
+
+    assert.deepEqual(result, {ok: false, message: AUDIO_TOO_LONG_MESSAGE});
+  });
+
   it("gives the same result for a Blob and a Uint8Array", async () => {
     for (const [name] of accepted) {
       const bytes = fixtureBytes(name);

@@ -105,7 +105,7 @@ export const createMemoryAssetStore = () => {
 
     if (mutation.kind === "import" || mutation.kind === "import-audio") {
       if ((mutation.kind === "import-audio") !== (category === "audio")) {
-        throw new Error(`${mutation.kind} does not accept a ${category} ref`);
+        throw new Error(`${mutation.kind} does not accept ${category === "audio" ? "an" : "a"} ${category} ref`);
       }
 
       const existing = decodeAssetRow(mutation.ref, staged.assets.get(mutation.ref));

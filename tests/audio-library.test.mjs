@@ -247,7 +247,7 @@ describe("audio transactions (in-memory store)", () => {
     await assert.rejects(store.apply(audioMutation(poseRef(1))), /import-audio does not accept a pose ref/u);
     await assert.rejects(
       store.apply({kind: "import", ref: audioRef(1), defaultLabel: "x", originalFilename: "x", createdAt: CREATED_AT, payloadMeta: {mimeType: "image/png", byteSize: 1, width: 1, height: 1}, blob: new Blob([new Uint8Array([1])]), thumbnail: {blob: new Blob([new Uint8Array([1])]), mimeType: "image/png", width: 1, height: 1}}),
-      /import does not accept a audio ref/u,
+      /import does not accept an audio ref/u,
     );
     assert.deepEqual(store.snapshot(), before);
   });

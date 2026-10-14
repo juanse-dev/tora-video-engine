@@ -3,6 +3,7 @@ import {
   MAX_WAVEFORM_PEAKS,
   WAVEFORM_PEAKS_PER_SECOND,
 } from "../../audio/constants.ts";
+import {AUDIO_TRUNCATION_TOLERANCE_SECONDS} from "../../localAssets/limits.ts";
 import type {AudioMetadata} from "../../localAssets/audioInspection.ts";
 
 export type DecodedAudioSummary = {
@@ -140,9 +141,19 @@ export const decodeAudioPeaks = async (
     const accumulator = createPeakAccumulator(metadata.durationSeconds);
     const sink = new AudioSampleSink(track);
 
+    // Bounded work: samples that start at or past the container duration plus
+    // the truncation tolerance are ignored (a file longer than its header
+    // declares must not pile into the last bucket or decode without limit).
+    const consumeUntilSeconds =
+      metadata.durationSeconds + AUDIO_TRUNCATION_TOLERANCE_SECONDS;
+
     for await (const sample of sink.samples()) {
       try {
         deps.signal?.throwIfAborted();
+
+        if (sample.timestamp >= consumeUntilSeconds) {
+          break;
+        }
 
         const planes: Float32Array[] = [];
 

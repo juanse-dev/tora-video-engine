@@ -342,7 +342,7 @@ const toraHarness = {
   /**
    * Opens the library through `openAssetLibrary`. `version` makes the adapter
    * ask the real IDBFactory for another version (the production adapter only
-   * ever requests version 1; this is how the blocked-upgrade path is tested).
+   * ever requests version 2; this is how the blocked-upgrade path is tested).
    * Resolves with the first status; later changes arrive through the log.
    */
   async openLibrary(options: {version?: number} = {}): Promise<StatusSummary> {
