@@ -45,6 +45,16 @@ describe("bundled audio catalog", () => {
     assert.equal("calm-loop" in map, false);
   });
 
+  it("drops local durations that are not finite and greater than 0", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -1, -0.001]) {
+      const map = buildAudioDurationMap([local], {[local]: bad});
+
+      assert.equal(local in map, false, String(bad));
+    }
+
+    assert.equal(buildAudioDurationMap([local], {[local]: 0.005})[local], 0.005);
+  });
+
   it("derives the auto lower bound from the padding", () => {
     assert.equal(AUTO_DURATION_PADDING_SECONDS, 0.5);
     assert.equal(autoDurationMinFrames(30), 16);

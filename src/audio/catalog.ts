@@ -37,7 +37,11 @@ export const buildAudioDurationMap = (
     const seconds = isBundledAudio(ref)
       ? bundledAudioCatalog[ref].durationSeconds
       : localDurations[ref];
-    if (typeof seconds === "number") map[ref] = seconds;
+    // AINV-2 / compileTimeline: a NaN, infinite or non-positive duration would make
+    // the timeline throw inside the Player, so it never enters the map.
+    if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0) {
+      map[ref] = seconds;
+    }
   }
   return map;
 };

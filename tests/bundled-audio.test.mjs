@@ -6,6 +6,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {after, describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
+import {inspectAudio} from "../src/localAssets/audioInspection.ts";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const licenses = readFileSync("public/audio/LICENSES.md", "utf8");
@@ -54,6 +55,17 @@ describe("bundled audio files", () => {
       const dbfs = 20 * Math.log10(peak / 32_768);
       assert.ok(peak < 32_767, `${id} clips`);
       assert.ok(dbfs >= -6 && dbfs <= -0.5, `${id} peak ${dbfs.toFixed(2)} dBFS`);
+    });
+  }
+
+  for (const id of effectIds) {
+    it(`${id}: the catalog duration equals inspectAudio of the committed file within 1 microsecond (AINV-3)`, async () => {
+      const result = await inspectAudio(readFileSync(join("public", bundledAudioCatalog[id].file)));
+
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.metadata.container, "wave");
+      assert.equal(result.metadata.codec, "pcm");
+      assert.ok(Math.abs(result.metadata.durationSeconds - bundledAudioCatalog[id].durationSeconds) < 1e-6, `${id}: ${result.metadata.durationSeconds}`);
     });
   }
 
