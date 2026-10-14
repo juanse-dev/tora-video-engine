@@ -1,3 +1,4 @@
+import type {AudioRole} from "../audio/plan.ts";
 import type {Story} from "../story/schema.ts";
 import type {
   AudioCodec,
@@ -12,21 +13,101 @@ import {
 } from "./limits.ts";
 import {
   isImageAssetCategory,
+  isLocalAudioRef,
   parseLocalAssetRef,
   type ImageAssetCategory,
+  type LocalAudioRef,
   type LocalImageRef,
 } from "./refs.ts";
 
-export type LocalAssetUsage = {
+export type LocalImageUsage = {
   ref: LocalImageRef;
   category: ImageAssetCategory;
   digest: string;
   sceneIndexes: number[]; // 0-based, ascending, a scene appears once per ref
 };
 
-/** Distinct local refs in first-appearance order (scene order, pose before background). */
+export type LocalAudioUsage = {
+  ref: LocalAudioRef;
+  category: "audio";
+  digest: string;
+  /** Scenes whose sfx or voice use it, ascending. The Story's music has no scene. */
+  sceneIndexes: number[];
+  /** Distinct, in first-appearance order (music first). */
+  roles: AudioRole[];
+};
+
+export type LocalAssetUsage = LocalImageUsage | LocalAudioUsage;
+
+const collectAudioUsages = (story: Story): LocalAudioUsage[] => {
+  const byRef = new Map<LocalAudioRef, LocalAudioUsage>();
+  const add = (value: string, role: AudioRole, sceneIndex: number | null) => {
+    if (!isLocalAudioRef(value)) {
+      return;
+    }
+
+    let usage = byRef.get(value);
+
+    if (usage === undefined) {
+      usage = {
+        ref: value,
+        category: "audio",
+        digest: value.slice(value.length - 64),
+        sceneIndexes: [],
+        roles: [],
+      };
+      byRef.set(value, usage);
+    }
+
+    if (!usage.roles.includes(role)) {
+      usage.roles.push(role);
+    }
+
+    if (sceneIndex !== null && !usage.sceneIndexes.includes(sceneIndex)) {
+      usage.sceneIndexes.push(sceneIndex);
+    }
+  };
+
+  if (story.music !== undefined) {
+    add(story.music.src, "music", null);
+  }
+
+  for (const [sceneIndex, scene] of story.scenes.entries()) {
+    if (scene.sfx !== undefined) {
+      add(scene.sfx.src, "sfx", sceneIndex);
+    }
+
+    if (scene.voice !== undefined) {
+      add(scene.voice.src, "voice", sceneIndex);
+    }
+  }
+
+  return [...byRef.values()];
+};
+
+export const splitUsagesByCategory = (
+  usages: readonly LocalAssetUsage[],
+): {image: LocalImageUsage[]; audio: LocalAudioUsage[]} => {
+  const image: LocalImageUsage[] = [];
+  const audio: LocalAudioUsage[] = [];
+
+  for (const usage of usages) {
+    if (usage.category === "audio") {
+      audio.push(usage);
+    } else {
+      image.push(usage);
+    }
+  }
+
+  return {image, audio};
+};
+
+/**
+ * Distinct local refs: image usages first in first-appearance order (scene
+ * order, pose before background), then audio usages in storyAudioRefs order.
+ */
 export const collectStoryLocalAssetUsages = (story: Story): LocalAssetUsage[] => {
-  const usagesByRef = new Map<string, LocalAssetUsage>();
+  const usagesByRef = new Map<string, LocalImageUsage>();
 
   for (const [sceneIndex, scene] of story.scenes.entries()) {
     for (const value of [scene.pose, scene.background]) {
@@ -51,9 +132,10 @@ export const collectStoryLocalAssetUsages = (story: Story): LocalAssetUsage[] =>
     }
   }
 
-  return [...usagesByRef.values()];
+  return [...usagesByRef.values(), ...collectAudioUsages(story)];
 };
 
+// Image refs only: audio refs are found with collectStoryLocalAssetUsages / storyHasAudio.
 export const storyHasLocalAssetRefs = (story: Story): boolean =>
   story.scenes.some(
     (scene) =>
@@ -111,7 +193,7 @@ export type LocalAssetBudgetResult =
  * A value equal to its limit passes; one above fails.
  */
 export const evaluateLocalAssetBudget = (
-  usages: readonly LocalAssetUsage[],
+  usages: readonly LocalImageUsage[],
   metadataByDigest: ReadonlyMap<string, PayloadMetadata>,
 ): LocalAssetBudgetResult => {
   const refCount = usages.length;

@@ -10,7 +10,10 @@ import {
   storyAudioDurations,
   storyHasAudio,
 } from "../audio/storyAudio.ts";
-import {collectStoryLocalAssetUsages} from "../localAssets/readiness.ts";
+import {
+  collectStoryLocalAssetUsages,
+  splitUsagesByCategory,
+} from "../localAssets/readiness.ts";
 import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {ToraVideoProps} from "../Video.tsx";
 import {getStoryMetadata} from "../story/metadata.ts";
@@ -526,7 +529,11 @@ export const renderStoryMediaOnWeb = async (
 
   // INV-5: a local ref must never reach the renderer without a resolved
   // source, or the composition would draw a placeholder into the MP4.
-  const unresolved = collectStoryLocalAssetUsages(story).filter((usage) => {
+  // Image refs only: audio sources are checked by AUDIO-005's readiness (until then
+  // the interim block keeps every Story with audio away from here).
+  const unresolved = splitUsagesByCategory(
+    collectStoryLocalAssetUsages(story),
+  ).image.filter((usage) => {
     const kind = options.localAssetSources?.[usage.ref]?.kind;
 
     return kind !== "url" && kind !== "static";

@@ -605,3 +605,25 @@ test("a Story over the ref cap is over-budget at once, without a pending Player"
     assert.equal(shown.sources, undefined);
   }
 });
+
+test("a different audio role for the same ref and scene is a change: the settled state is not reused", () => {
+  const audioRef = `local:audio:sha256:${"1".repeat(64)}`;
+  const scene = {type: "intro", pose: "formal", background: "office", text: "Hi", duration: 3};
+  const asVoice = {title: "T", scenes: [{...scene, voice: {src: audioRef}}]};
+  const asSfx = {title: "T", scenes: [{...scene, sfx: {src: audioRef}}]};
+  const library = {kind: "ready", store: {}};
+  const settled = {
+    snapshot: {
+      state: {kind: "resolved", refs: [], verified: new Map(), blobs: new Map(), allReady: true, failureMessage: null},
+      sources: {},
+      lease: {release() {}},
+    },
+    story: asVoice,
+    library,
+  };
+  const select = (story) =>
+    selectVisibleLocalAssets({story, library, usages: collectStoryLocalAssetUsages(story), settled});
+
+  assert.equal(select(asVoice).state.kind, "resolved");
+  assert.equal(select(asSfx).state.kind, "pending");
+});
