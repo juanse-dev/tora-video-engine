@@ -10,11 +10,14 @@ import type {
 } from "../../localAssets/refs.ts";
 import type {VisualSceneDraft} from "../visualDraft.ts";
 import {MyAssetsSection} from "./MyAssetsSection.tsx";
+import {MyAudioSection} from "./MyAudioSection.tsx";
 
 type AssetCatalogProps = {
   scene: VisualSceneDraft;
   /** Every scene of the visual draft (for My assets usage counts). */
   scenes: readonly VisualSceneDraft[];
+  /** The visual draft's music (for My audio usage). */
+  music?: {readonly src: string};
   onChange: (patch: Partial<VisualSceneDraft>) => void;
 };
 
@@ -27,6 +30,7 @@ const SelectionMark = ({selected}: {selected: boolean}) => (
 export const AssetCatalog = ({
   scene,
   scenes,
+  music,
   onChange,
 }: AssetCatalogProps) => {
   return (
@@ -179,6 +183,11 @@ export const AssetCatalog = ({
             );
           })}
         </div>
+      </div>
+
+      <div className="asset-category">
+        <h4>Audio</h4>
+        <MyAudioSection music={music} scenes={scenes} />
       </div>
     </section>
   );

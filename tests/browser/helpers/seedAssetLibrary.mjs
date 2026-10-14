@@ -281,3 +281,57 @@ export const buildStoryYaml = (scenes, title = "Local assets") =>
     ]),
     "",
   ].join("\n");
+
+const AUDIO_FIXTURE_DIR = new URL("../../fixtures/local-audio/", import.meta.url);
+
+// PCM WAV fixtures only: their metadata is exact (frames / 48000), so the
+// integrity check (SHA-256 plus inspectAudio of the bytes) accepts the record.
+const WAV_FIXTURE_SECONDS = {
+  "tone-220-10s.wav": 10,
+  "tone-440-2.2s.wav": 2.2,
+  "tone-880-0.4s.wav": 0.4,
+  "tone-220-12s.wav": 12,
+};
+
+/** Reads a committed local-audio fixture. */
+export const readAudioFixture = async (name) => {
+  const bytes = new Uint8Array(await readFile(new URL(name, AUDIO_FIXTURE_DIR)));
+
+  return {
+    name,
+    bytes,
+    base64: Buffer.from(bytes).toString("base64"),
+    digest: digestOfBytes(bytes),
+  };
+};
+
+/** A seed record (row, audio payloadMeta, bytes) for a PCM WAV fixture; the default label is the file name without extension. */
+export const audioWavRecord = async (name, options = {}) => {
+  const seconds = WAV_FIXTURE_SECONDS[name];
+
+  if (seconds === undefined) {
+    throw new Error(`Not a seedable WAV fixture: ${name}`);
+  }
+
+  const fixture = await readAudioFixture(name);
+
+  return {
+    ref: localAssetRef("audio", fixture.digest),
+    digest: fixture.digest,
+    meta: {
+      kind: "audio",
+      mimeType: "audio/wav",
+      byteSize: fixture.bytes.length,
+      container: "wave",
+      codec: "pcm",
+      durationSeconds: seconds,
+      sampleRate: 48_000,
+      channels: 2,
+    },
+    bytesBase64: fixture.base64,
+    mimeType: "audio/wav",
+    row: options.row !== false,
+    label: options.label ?? name.replace(/\.[^.]+$/u, ""),
+    thumbnail: null,
+  };
+};

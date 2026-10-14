@@ -141,11 +141,19 @@ export const AssetDialogHost = ({
   const isDelete = dialog.kind === "delete";
   const heading =
     dialog.kind === "delete"
-      ? deleteConfirmationText(dialog.label, dialog.category, dialog.sceneCount)
+      ? deleteConfirmationText(
+          dialog.label,
+          dialog.category,
+          dialog.sceneCount,
+          dialog.usesMusic === true,
+          dialog.sceneNumbers ?? [],
+        )
       : mismatchDialogText(dialog.candidateRef);
   const primaryLabel =
     dialog.kind === "delete"
-      ? deleteConfirmButtonLabel(dialog.sceneCount)
+      ? deleteConfirmButtonLabel(
+          dialog.sceneCount + (dialog.usesMusic === true ? 1 : 0),
+        )
       : "Use it as replacement for this scene";
   const runPrimary = () =>
     dialog.kind === "delete"

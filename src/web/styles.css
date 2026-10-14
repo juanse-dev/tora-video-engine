@@ -616,6 +616,10 @@ h1 {
   cursor: pointer;
 }
 
+.local-asset-static {
+  cursor: default;
+}
+
 .local-asset-thumbnail-fallback {
   display: flex;
   align-items: center;

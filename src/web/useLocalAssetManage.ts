@@ -42,6 +42,10 @@ export type LocalAssetManage = {
     label: string;
     category: LocalAssetCategory;
     sceneCount: number;
+    /** Audio only: the Story's music uses the ref. */
+    usesMusic?: boolean;
+    /** Audio only: 1-based numbers of the scenes using the ref. */
+    sceneNumbers?: readonly number[];
   }) => void;
 };
 
@@ -108,11 +112,15 @@ export const useLocalAssetManage = (): LocalAssetManage => {
       label,
       category,
       sceneCount,
+      usesMusic,
+      sceneNumbers,
     }: {
       ref: LocalAssetRef;
       label: string;
       category: LocalAssetCategory;
       sceneCount: number;
+      usesMusic?: boolean;
+      sceneNumbers?: readonly number[];
     }) => {
       const current = contextRef.current;
       const library = current === null ? null : libraryFromContext(current);
@@ -129,6 +137,8 @@ export const useLocalAssetManage = (): LocalAssetManage => {
         label,
         category,
         sceneCount,
+        usesMusic,
+        sceneNumbers,
         onConfirm: async (onCancelable) => {
           const result = await deleteAssetFlow(library, ref, {onCancelable});
 

@@ -527,3 +527,54 @@ describe("ASSET-003 local asset page controller", () => {
     assert.equal(controller.getSnapshot().loaded, false);
   });
 });
+
+describe("AUDIO-003 audio page", () => {
+  const audioMeta = (n) => ({
+    kind: "audio", mimeType: "audio/wav", byteSize: 10, container: "wave", codec: "pcm",
+    durationSeconds: n + 0.5, sampleRate: 48_000, channels: 2,
+  });
+
+  it("lists audio, loads no thumbnail and carries the stored duration of audio entries only", async () => {
+    const base = createFakeStore("audio", numbers(3));
+    const store = {
+      ...base,
+      async getPayloadMeta(digest) {
+        const n = Number.parseInt(digest, 16);
+
+        if (n === 1) return {status: "present", value: audioMeta(1)};
+        if (n === 2) return {status: "present", value: {mimeType: "image/png", byteSize: 1, width: 1, height: 1}};
+
+        return {status: "absent"};
+      },
+    };
+    const created = [];
+    let thumbnailLoads = 0;
+    const controller = createLocalAssetPageController({
+      store,
+      category: "audio",
+      loadThumbnail: async () => {
+        thumbnailLoads += 1;
+        return {ok: true, blob: new Blob([])};
+      },
+      createUrl: (blob) => {
+        created.push(blob);
+        return "blob:test";
+      },
+      revokeUrl: () => {},
+    });
+
+    await controller.sync(null);
+
+    const {entries, total} = controller.getSnapshot();
+
+    assert.equal(total, 3);
+    assert.equal(entries.length, 3);
+    assert.equal(thumbnailLoads, 0);
+    assert.equal(created.length, 0);
+    assert.equal(entries.every((entry) => entry.thumbnailUrl === null), true);
+    assert.equal(entries[0].audio.durationSeconds, 1.5);
+    assert.equal(entries[1].audio, undefined);
+    assert.equal(entries[2].audio, undefined);
+    controller.dispose();
+  });
+});

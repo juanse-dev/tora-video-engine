@@ -33,6 +33,10 @@ export type AssetDialog =
       label: string;
       category: LocalAssetCategory;
       sceneCount: number;
+      /** Audio only: the Story's music uses the ref. */
+      usesMusic?: boolean;
+      /** Audio only: 1-based numbers of the scenes using the ref. */
+      sceneNumbers?: readonly number[];
       onConfirm: (onCancelable: MutationCancelable) => Promise<void>;
     }
   | {

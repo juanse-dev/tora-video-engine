@@ -16,6 +16,7 @@ export default defineConfig({
     "browser-render-golden.spec.mjs",
     "render-cancel-cleanup.spec.mjs",
     "render-caption-geometry.spec.mjs",
+    "my-audio-m4a.spec.mjs",
   ],
   timeout: 20_000,
   use: {

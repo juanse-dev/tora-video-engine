@@ -3,7 +3,7 @@ import type {
   LocalAssetRef,
 } from "../../localAssets/refs.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
-import {describeMissingLocalAsset} from "../localAssetUi.ts";
+import {describeMissingLocalAsset, fileAcceptFor} from "../localAssetUi.ts";
 
 export type MissingLocalAssetKind = "missing" | "corrupt" | "unavailable";
 
@@ -14,6 +14,8 @@ type MissingLocalAssetCardProps = {
   kind: MissingLocalAssetKind;
   /** 1-based numbers of the scenes using the ref. */
   sceneNumbers: readonly number[];
+  /** Audio only: the Story's music uses the ref. */
+  usesMusic?: boolean;
   /** Why the ref is unavailable here (library status message or the ref's detail). */
   unavailableMessage?: string;
   /**
@@ -36,6 +38,7 @@ export const MissingLocalAssetCard = ({
   category,
   kind,
   sceneNumbers,
+  usesMusic = false,
   unavailableMessage = "",
   onImportMatching,
   importDisabled = false,
@@ -49,7 +52,7 @@ export const MissingLocalAssetCard = ({
           Import matching file
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept={fileAcceptFor(category)}
             disabled={importDisabled}
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -92,6 +95,7 @@ export const MissingLocalAssetCard = ({
     ref: assetRef,
     sceneNumbers,
     damaged: kind === "corrupt",
+    usesMusic,
   });
 
   return (
