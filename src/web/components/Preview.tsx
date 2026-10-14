@@ -1,7 +1,8 @@
 import {Player, type PlayerRef} from "@remotion/player";
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import {buildAudioSourceMap} from "../../audio/sources.ts";
-import {storyAudioDurations, storyHasAudio} from "../../audio/storyAudio.ts";
+import type {AudioDurationMap} from "../../audio/catalog.ts";
+import {storyHasAudio} from "../../audio/storyAudio.ts";
 import type {LocalAssetSourceMap} from "../../localAssets/sources.ts";
 import {ToraVideo} from "../../Video.tsx";
 import {exampleStory} from "../../story/exampleStory.ts";
@@ -20,14 +21,15 @@ type PreviewProps = {
   story?: Story;
   localAssetSources?: LocalAssetSourceMap;
   localAssetState?: StoryLocalAssetState;
+  audioDurations: AudioDurationMap;
 };
 
 export const Preview = ({
   story = exampleStory,
   localAssetSources,
   localAssetState,
+  audioDurations,
 }: PreviewProps) => {
-  const audioDurations = useMemo(() => storyAudioDurations(story), [story]);
   const config = getWebPlayerConfig(story, audioDurations);
   const playerRef = useRef<PlayerRef>(null);
   const frameProbeRef = useRef<HTMLDivElement>(null);

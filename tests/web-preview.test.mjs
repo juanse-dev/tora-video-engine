@@ -97,18 +97,16 @@ describe("AUDIO-002 Player length and audio props", () => {
     );
   });
 
-  it("Preview feeds one duration map to the Player length and to inputProps", async () => {
+  it("Preview takes one required duration map and feeds it to the Player length and to inputProps", async () => {
     const source = await readFile(
       new URL("../src/web/components/Preview.tsx", import.meta.url),
       "utf8",
     );
 
-    assert.match(
-      source,
-      /const audioDurations = useMemo\(\(\) => storyAudioDurations\(story\), \[story\]\)/,
-    );
+    assert.match(source, /audioDurations: AudioDurationMap;/);
     assert.match(source, /getWebPlayerConfig\(story, audioDurations\)/);
     assert.match(source, /inputProps = useMemo\([\s\S]*?audioDurations,[\s\S]*?\)/);
+    assert.doesNotMatch(source, /storyAudioDurations\(/);
   });
 
   it("Preview starts the Player muted, shows volume controls only for audio and arms in a layout effect", async () => {

@@ -1,6 +1,9 @@
+import {readFile} from "node:fs/promises";
 import {expect, test} from "@playwright/test";
 import {
   buildStoryYaml,
+  digestOfBytes,
+  localAssetRef,
   metadataOnlyRecord,
 } from "./helpers/seedAssetLibrary.mjs";
 import {applyYaml, openSeeded} from "./helpers/localAssetPage.mjs";
@@ -413,4 +416,87 @@ test("a stored Story with audio restores muted after a reload", async ({page}) =
     "data-tora-audio-armed",
     "true",
   );
+});
+
+// A seed record (row, audio payloadMeta, bytes) for the committed 2.2 s voice WAV.
+const voiceRecord = async () => {
+  const bytes = new Uint8Array(
+    await readFile(
+      new URL("../fixtures/local-audio/tone-440-2.2s.wav", import.meta.url),
+    ),
+  );
+  const digest = digestOfBytes(bytes);
+
+  return {
+    ref: localAssetRef("audio", digest),
+    digest,
+    meta: {
+      kind: "audio",
+      mimeType: "audio/wav",
+      byteSize: bytes.length,
+      container: "wave",
+      codec: "pcm",
+      durationSeconds: 2.2,
+      sampleRate: 48_000,
+      channels: 2,
+    },
+    bytesBase64: Buffer.from(bytes).toString("base64"),
+    mimeType: "audio/wav",
+    row: true,
+    label: "tone-440-2.2s",
+    thumbnail: null,
+  };
+};
+
+test("the Player length comes from the imported voice's duration: one auto scene of a 2.2 s voice is 81 frames, not the 90-frame fallback", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+
+  const voice = await voiceRecord();
+
+  await openSeeded(page, [voice]);
+  await applyYaml(
+    page,
+    [
+      "title: Voice length",
+      "scenes:",
+      "  - type: dialogue",
+      "    pose: formal",
+      "    background: office",
+      "    animation: fade",
+      "    text: Hello",
+      "    voice:",
+      `      src: ${voice.ref}`,
+      "    duration: auto",
+      "",
+    ].join("\n"),
+  );
+  await expect(page.locator(".preview-frame")).toHaveAttribute(
+    "data-tora-audio-armed",
+    "true",
+  );
+  // The control bar shows the Player length: 2.7 s ("0:02") from the imported voice, not the 3 s fallback ("0:03").
+  await expect(page.locator(".preview-frame")).toContainText("0:00 / 0:02");
+
+  // The Player returns to frame 0 when it ends, so record the highest frame it reaches.
+  await page.evaluate(() => {
+    const probe = document.querySelector("[data-tora-frame]");
+
+    window.__maxFrame = 0;
+    new MutationObserver(() => {
+      window.__maxFrame = Math.max(window.__maxFrame, Number(probe.dataset.toraFrame));
+    }).observe(probe, {attributes: true, attributeFilter: ["data-tora-frame"]});
+  });
+
+  const playButton = page.getByRole("button", {name: "Play video"});
+
+  await expect(playButton).toBeVisible();
+  await playButton.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__maxFrame), {timeout: 15_000})
+    .toBeGreaterThanOrEqual(80);
+  await page.waitForTimeout(1500);
+  // 81 frames: the last is frame 80. The 3 s fallback would have reached frame 89.
+  expect(await page.evaluate(() => window.__maxFrame)).toBe(80);
 });
