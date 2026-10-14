@@ -1,6 +1,6 @@
 # AUDIO-002 — Audio plan, composition and Player audio
 
-Status: not started
+Status: implemented (interim: the Player resolves bundled sounds with static-fallback until AUDIO-004; no local audio library until AUDIO-003)
 
 Depends on: AUDIO-001. Read [README](./README.md) first.
 
@@ -114,10 +114,10 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
 
 ## Tasks
 
-1. [ ] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
-2. [ ] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
-3. [ ] `AudioSource`/`AudioSourceMap`/`BundledAudioPolicy`, `resolveAudioSrc`, `AudioSourcesProvider`, `StoryAudio` + `ToraVideo` wiring.
-4. [ ] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `storyAudioDurations(story, localDurations)` (AUDIO-001) where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
+1. [x] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
+2. [x] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
+3. [x] `AudioSource`/`AudioSourceMap`/`BundledAudioPolicy`, `resolveAudioSrc`, `AudioSourcesProvider`, `StoryAudio` + `ToraVideo` wiring.
+4. [x] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `storyAudioDurations(story, localDurations)` (AUDIO-001) where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
 
 ## Tests
 
@@ -156,3 +156,14 @@ npx playwright test --config=playwright.browser-render.config.mjs
 ## Done when
 
 The plan tests pass, the Player plays bundled sounds after unmute, and every v0.3 golden is unchanged.
+
+## Implementation notes
+
+- `Preview` (not `App`) builds `audioSources` with `buildAudioSourceMap(story, localAssetSources, noBundledAudio)`, where `noBundledAudio` is a stub returning `undefined`, until AUDIO-004's bundled-audio store replaces it; `App.tsx` is unchanged by this spec.
+- The Player passes `bundledAudioPolicy: "static-fallback"` and a source test pins it; AUDIO-004 task 3 changes both (the Player switches to `"explicit"` with the store's entries).
+- The arming rule, the mount list and the volume store are pure modules tested in Node: `src/audio/mounts.ts`, `src/web/audioArming.ts`, `src/web/playerVolume.ts`.
+- Volume is restored with the Player's `initialVolume` prop from a validated `tora.playerVolume` and persisted on the Player's `volumechange` event, not through the Player ref.
+- Test hooks on `.preview-frame`: `data-tora-muted` and `data-tora-audio-armed`.
+- `buildAudioSourceMap` takes a `LocalAudioSourceMap` (`Readonly<Partial<Record<LocalAudioRef, LocalAssetSource>>>`); the image `LocalAssetSourceMap` is assignable to it.
+- `maxSimultaneousGain` is computed in one sweep over the frames with a small active set of tracks, not by evaluating every track on every frame.
+- The CLI props stay `{story}` (plus `localAssetSources` for images) until AUDIO-005 adds the audio props.
