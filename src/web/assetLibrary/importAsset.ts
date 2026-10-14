@@ -118,7 +118,7 @@ export const prepareLocalAssetImport = async (
   deps: PrepareLocalAssetImportDeps = {},
 ): Promise<PreparedLocalAssetImport> => {
   // 1. Bound the size before any bytes are read.
-  const size = checkLocalAssetByteSize(file.size);
+  const size = checkLocalAssetByteSize(file.size, category);
 
   if (!size.ok) {
     throw new LocalAssetImportError(

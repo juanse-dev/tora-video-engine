@@ -176,7 +176,7 @@ const inspectEntry = async (
   deps: ScanDeps,
 ): Promise<CandidateResult> => {
   const {relativePath, stats} = entry;
-  const size = checkLocalAssetByteSize(stats.size);
+  const size = checkLocalAssetByteSize(stats.size, category);
 
   if (!size.ok) {
     return {relativePath, ok: false, reason: size.reason};

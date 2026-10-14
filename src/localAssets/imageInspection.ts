@@ -1,8 +1,9 @@
 import {
-  MAX_LOCAL_ASSET_BYTES,
   MAX_LOCAL_ASSET_DIMENSION,
   MAX_LOCAL_ASSET_PIXELS,
+  maxLocalAssetBytes,
 } from "./limits.ts";
+import type {LocalAssetCategory} from "./refs.ts";
 
 export type InspectedImage = {
   mimeType: "image/png" | "image/jpeg" | "image/webp";
@@ -25,12 +26,13 @@ export type ImageInspectionResult =
 
 export const checkLocalAssetByteSize = (
   byteSize: number,
+  category: LocalAssetCategory,
 ): {ok: true} | {ok: false; reason: "empty" | "too-large"} => {
   if (!(byteSize > 0)) {
     return {ok: false, reason: "empty"};
   }
 
-  if (byteSize > MAX_LOCAL_ASSET_BYTES) {
+  if (byteSize > maxLocalAssetBytes(category)) {
     return {ok: false, reason: "too-large"};
   }
 
@@ -387,7 +389,8 @@ const parseHeader = (bytes: Uint8Array): ParsedHeader => {
  * the end of the data is `malformed`.
  */
 export const inspectImageBytes = (bytes: Uint8Array): ImageInspectionResult => {
-  const size = checkLocalAssetByteSize(bytes.length);
+  // Pose and background share the image limit; the header inspector only ever sees images.
+  const size = checkLocalAssetByteSize(bytes.length, "pose");
 
   if (!size.ok) {
     return size;
