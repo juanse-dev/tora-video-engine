@@ -1,7 +1,7 @@
 import {useCallback, useContext, useRef, useState} from "react";
 import type {
-  ImageAssetCategory,
-  LocalImageRef,
+  LocalAssetCategory,
+  LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {LocalAssetImportError, type ImportPhase} from "./assetLibrary/importAsset.ts";
 import type {AssetLibrary} from "./assetLibrary/library.ts";
@@ -24,7 +24,7 @@ export type LocalAssetImportUi = {
   errorText: string | null;
   importFile: (file: File) => Promise<void>;
   /** Import matching file for `missingRef` (the recovery card). */
-  importMatchingFile: (file: File, missingRef: LocalImageRef) => Promise<void>;
+  importMatchingFile: (file: File, missingRef: LocalAssetRef) => Promise<void>;
   /** Drops a stale message (called when a rename or delete starts). */
   clearOutcome: () => void;
 };
@@ -35,8 +35,8 @@ export type LocalAssetImportUi = {
  * selected scene through `onImported` (the catalog's onChange path).
  */
 export const useLocalAssetImport = (
-  category: ImageAssetCategory,
-  onImported: (ref: LocalImageRef) => void,
+  category: LocalAssetCategory,
+  onImported: (ref: LocalAssetRef) => void,
 ): LocalAssetImportUi => {
   const context = useContext(AssetLibraryContext);
   const [phase, setPhase] = useState<ImportPhase | null>(null);
@@ -127,7 +127,7 @@ export const useLocalAssetImport = (
   );
 
   const importMatchingFile = useCallback(
-    (file: File, missingRef: LocalImageRef) =>
+    (file: File, missingRef: LocalAssetRef) =>
       runImport(async (current, library) => {
         const result = await runMatchingFileImport({
           file,

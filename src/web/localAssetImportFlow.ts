@@ -8,8 +8,12 @@ import {
 } from "./assetLibrary/importAsset.ts";
 import type {AssetLibrary} from "./assetLibrary/library.ts";
 import type {AssetDialog} from "./assetLibraryContext.ts";
-import {evaluateMatchingFile} from "./localAssetUi.ts";
-import type {ImageAssetCategory, LocalImageRef} from "../localAssets/refs.ts";
+import {evaluateMatchingFile, mismatchDialogText} from "./localAssetUi.ts";
+import {
+  parseLocalAssetRef,
+  type LocalAssetCategory,
+  type LocalAssetRef,
+} from "../localAssets/refs.ts";
 
 /** Shown for an error that is not a LocalAssetImportError (the details go to the console). */
 export const UNEXPECTED_IMPORT_MESSAGE = "The file could not be imported.";
@@ -21,6 +25,8 @@ export const importPhaseText = (phase: ImportPhase): string => {
       return "Reading…";
     case "validating":
       return "Checking…";
+    case "decoding":
+      return "Decoding…";
     case "hashing":
       return "Hashing…";
     case "storing":
@@ -31,10 +37,14 @@ export const importPhaseText = (phase: ImportPhase): string => {
 /** Neutral notice after the user cancelled a commit that was waiting for the library lock. */
 export const IMPORT_CANCELLED_MESSAGE = "Import cancelled.";
 
-export const importSuccessText = (label: string, created: boolean): string =>
+export const importSuccessText = (
+  label: string,
+  created: boolean,
+  category: LocalAssetCategory = "pose",
+): string =>
   created
     ? `Imported "${label}".`
-    : `"${label}" was already in My assets; its stored copy was refreshed.`;
+    : `"${label}" was already in My ${category === "audio" ? "audio" : "assets"}; its stored copy was refreshed.`;
 
 export type ImportFlowDeps = PrepareLocalAssetImportDeps & {
   storage?: StorageManager;
@@ -86,7 +96,7 @@ export type PrepareFileResult =
  */
 export const prepareImportFile = async (
   file: File,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   options: {onPhase?: (phase: ImportPhase) => void; deps?: ImportFlowDeps} = {},
 ): Promise<PrepareFileResult> => {
   try {
@@ -104,7 +114,7 @@ export const prepareImportFile = async (
 export type CommitImportResult =
   | {
       ok: true;
-      ref: LocalImageRef;
+      ref: LocalAssetRef;
       created: boolean;
       /** The stored label (an existing row keeps its own, possibly renamed, label). */
       label: string;
@@ -172,7 +182,11 @@ export const commitPreparedImport = async (
       ref,
       created,
       label,
-      message: importSuccessText(label, created),
+      message: importSuccessText(
+        label,
+        created,
+        parseLocalAssetRef(ref)?.category ?? "pose",
+      ),
     };
   } catch (error) {
     if (error instanceof LocalAssetImportError && error.code === "cancelled") {
@@ -246,11 +260,11 @@ export const runLocalAssetImport = ({
   deps,
 }: {
   file: File;
-  category: ImageAssetCategory;
+  category: LocalAssetCategory;
   library: AssetLibrary;
   setInFlight: (inFlight: boolean) => void;
   /** Applies the imported ref to the selected scene (App's onChange path). */
-  apply: (ref: LocalImageRef) => void;
+  apply: (ref: LocalAssetRef) => void;
   onPhase?: (phase: ImportPhase) => void;
   /** Offers Cancel while "Saving…" waits for the library lock (see CommitCancelable). */
   onCancelable?: CommitCancelable;
@@ -290,7 +304,7 @@ export type MatchingFileDialogResult =
   | {kind: "failed"; message: string};
 
 export type MatchingFileOutcome =
-  | {kind: "restored"; ref: LocalImageRef; message: string}
+  | {kind: "restored"; ref: LocalAssetRef; message: string}
   | {kind: "failed"; message: string; error?: unknown}
   /** The user cancelled the commit while it waited for the lock; nothing was written. */
   | {kind: "cancelled"; message: string}
@@ -320,13 +334,13 @@ export const runMatchingFileImport = ({
   deps,
 }: {
   file: File;
-  category: ImageAssetCategory;
-  missingRef: LocalImageRef;
+  category: LocalAssetCategory;
+  missingRef: LocalAssetRef;
   library: AssetLibrary;
   setInFlight: (inFlight: boolean) => void;
   /** Returns false when no dialog could open (another panel is open). */
   openMismatchDialog: (dialog: MismatchDialog) => boolean;
-  apply: (ref: LocalImageRef) => void;
+  apply: (ref: LocalAssetRef) => void;
   onPhase?: (phase: ImportPhase) => void;
   /** Offers Cancel while a commit (the exact file, or the replacement) waits for the library lock. */
   onCancelable?: CommitCancelable;
@@ -365,6 +379,15 @@ export const runMatchingFileImport = ({
         return committed.cancelled
           ? {kind: "cancelled", message: committed.message}
           : {kind: "failed", message: committed.message, error: committed.error};
+      }
+
+      if (category === "audio") {
+        // Replacing an audio ref needs the scene-field pickers of AUDIO-004:
+        // refuse the file, write nothing, open no dialog.
+        return {
+          kind: "failed",
+          message: mismatchDialogText(evaluation.candidateRef),
+        };
       }
 
       const opened = openMismatchDialog({

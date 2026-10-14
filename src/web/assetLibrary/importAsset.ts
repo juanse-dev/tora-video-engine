@@ -3,55 +3,40 @@ import {
   checkLocalAssetByteSize,
   describeImageRejection,
   inspectImageBytes,
-  type ImageRejection,
 } from "../../localAssets/imageInspection.ts";
 import type {ImagePayloadMetadata} from "../../localAssets/readiness.ts";
 import {
   buildLocalAssetRef,
   type ImageAssetCategory,
+  type LocalAssetCategory,
+  type LocalAssetRef,
+  type LocalAudioRef,
   type LocalImageRef,
 } from "../../localAssets/refs.ts";
-import {MAX_LOCAL_ASSET_LABEL_LENGTH} from "./constants.ts";
 import {
   requestPersistentStorageOnce,
   withAssetLibraryLock,
   type AssetLibraryMessage,
 } from "./coordination.ts";
+import {
+  buildDefaultLabel,
+  LocalAssetImportError,
+  type ImportPhase,
+  type LocalAssetImportErrorCode,
+} from "./importCommon.ts";
+import {
+  prepareLocalAudioImport,
+  type PreparedLocalAudioImport,
+  type PrepareLocalAudioImportDeps,
+} from "./importAudio.ts";
 import type {ThumbnailRecord} from "./records.ts";
 import {LocalAssetLibraryError, type AssetLibraryStore} from "./store.ts";
 import {createThumbnail} from "./thumbnails.ts";
 
-export type ImportPhase = "reading" | "validating" | "hashing" | "storing";
+export {LocalAssetImportError};
+export type {ImportPhase, LocalAssetImportErrorCode};
 
-export type LocalAssetImportErrorCode =
-  | ImageRejection
-  | "decode-failed"
-  | "thumbnail-failed"
-  | "storage-full"
-  | "storage-error"
-  /** The user cancelled while the commit was still waiting for the library lock; nothing was written. */
-  | "cancelled";
-
-export class LocalAssetImportError extends Error {
-  code: LocalAssetImportErrorCode;
-  cause?: unknown;
-
-  constructor(
-    code: LocalAssetImportErrorCode,
-    message: string,
-    options?: {cause?: unknown},
-  ) {
-    super(message);
-    this.name = "LocalAssetImportError";
-    this.code = code;
-
-    if (options?.cause !== undefined) {
-      this.cause = options.cause;
-    }
-  }
-}
-
-export type PreparedLocalAssetImport = {
+export type PreparedLocalImageImport = {
   ref: LocalImageRef;
   defaultLabel: string;
   originalFilename: string;
@@ -59,6 +44,11 @@ export type PreparedLocalAssetImport = {
   blob: Blob;
   thumbnail: ThumbnailRecord;
 };
+
+export type {PreparedLocalAudioImport};
+export type PreparedLocalAssetImport =
+  | PreparedLocalImageImport
+  | PreparedLocalAudioImport;
 
 export type PrepareLocalAssetImportDeps = {
   subtle?: SubtleCrypto;
@@ -71,7 +61,7 @@ export type PrepareLocalAssetImportDeps = {
     height: number,
   ) => Promise<ThumbnailRecord>;
   onPhase?: (phase: ImportPhase) => void;
-};
+} & Pick<PrepareLocalAudioImportDeps, "inspectAudio" | "decodePeaks">;
 
 type ImportLibrary = {
   store: AssetLibraryStore;
@@ -81,24 +71,6 @@ type ImportLibrary = {
 
 /** Browser default; Node tests inject `decode` and never reach this. */
 const decodeWithBrowser = (blob: Blob) => createImageBitmap(blob);
-
-/**
- * D-12: filename without its last extension, trimmed, cut to the label limit in
- * code points; falls back to "Untitled <category>" when nothing is left.
- */
-const buildDefaultLabel = (
-  filename: string,
-  category: ImageAssetCategory,
-): string => {
-  const dot = filename.lastIndexOf(".");
-  const stem = dot === -1 ? filename : filename.slice(0, dot);
-  const label = Array.from(stem.trim())
-    .slice(0, MAX_LOCAL_ASSET_LABEL_LENGTH)
-    .join("")
-    .trim();
-
-  return label === "" ? `Untitled ${category}` : label;
-};
 
 const isSameOrSwappedSize = (
   decoded: {width: number; height: number},
@@ -112,11 +84,11 @@ const isSameOrSwappedSize = (
  * inspection, hashing, decode check and thumbnail. Takes no lock and writes
  * nothing. Throws LocalAssetImportError.
  */
-export const prepareLocalAssetImport = async (
+const prepareLocalImageImport = async (
   file: File,
   category: ImageAssetCategory,
   deps: PrepareLocalAssetImportDeps = {},
-): Promise<PreparedLocalAssetImport> => {
+): Promise<PreparedLocalImageImport> => {
   // 1. Bound the size before any bytes are read.
   const size = checkLocalAssetByteSize(file.size, category);
 
@@ -233,20 +205,48 @@ export const prepareLocalAssetImport = async (
   };
 };
 
+export function prepareLocalAssetImport(
+  file: File,
+  category: ImageAssetCategory,
+  deps?: PrepareLocalAssetImportDeps,
+): Promise<PreparedLocalImageImport>;
+export function prepareLocalAssetImport(
+  file: File,
+  category: "audio",
+  deps?: PrepareLocalAssetImportDeps,
+): Promise<PreparedLocalAudioImport>;
+export function prepareLocalAssetImport(
+  file: File,
+  category: LocalAssetCategory,
+  deps?: PrepareLocalAssetImportDeps,
+): Promise<PreparedLocalAssetImport>;
+export function prepareLocalAssetImport(
+  file: File,
+  category: LocalAssetCategory,
+  deps: PrepareLocalAssetImportDeps = {},
+): Promise<PreparedLocalAssetImport> {
+  return category === "audio"
+    ? prepareLocalAudioImport(file, deps)
+    : prepareLocalImageImport(file, category, deps);
+}
+
 const isStorageFull = (error: unknown): boolean =>
   (error instanceof LocalAssetLibraryError && error.code === "storage-full") ||
   (error as {name?: unknown} | null)?.name === "QuotaExceededError";
 
-const toStorageError = (error: unknown): LocalAssetImportError =>
+const toStorageError = (
+  error: unknown,
+  noun: "image" | "audio file",
+): LocalAssetImportError =>
   isStorageFull(error)
     ? new LocalAssetImportError(
         "storage-full",
-        "There is not enough browser storage left for this image.",
+        `There is not enough browser storage left for this ${noun}.`,
         {cause: error},
       )
     : new LocalAssetImportError(
         "storage-error",
-        "The image could not be saved to browser storage.",
+        `The ${noun} could not be saved to browser storage.`,
         {cause: error},
       );
 
@@ -267,11 +267,27 @@ export type CommitPreparedLocalAssetImportDeps = {
  * Commits an already-prepared import under the exclusive lock and posts the
  * change message. The Story is never touched here.
  */
-export const commitPreparedLocalAssetImport = async (
+export function commitPreparedLocalAssetImport(
+  prepared: PreparedLocalImageImport,
+  library: ImportLibrary,
+  deps?: CommitPreparedLocalAssetImportDeps,
+): Promise<{ref: LocalImageRef; created: boolean}>;
+export function commitPreparedLocalAssetImport(
+  prepared: PreparedLocalAudioImport,
+  library: ImportLibrary,
+  deps?: CommitPreparedLocalAssetImportDeps,
+): Promise<{ref: LocalAudioRef; created: boolean}>;
+export function commitPreparedLocalAssetImport(
   prepared: PreparedLocalAssetImport,
   library: ImportLibrary,
   deps?: CommitPreparedLocalAssetImportDeps,
-): Promise<{ref: LocalImageRef; created: boolean}> => {
+): Promise<{ref: LocalAssetRef; created: boolean}>;
+export async function commitPreparedLocalAssetImport(
+  prepared: PreparedLocalAssetImport,
+  library: ImportLibrary,
+  deps?: CommitPreparedLocalAssetImportDeps,
+): Promise<{ref: LocalAssetRef; created: boolean}> {
+  const noun = "waveform" in prepared ? "audio file" : "image";
   let result;
   let lockAcquired = false;
 
@@ -283,16 +299,31 @@ export const commitPreparedLocalAssetImport = async (
         lockAcquired = true;
         deps?.onLockAcquired?.();
 
-        return library.store.apply({
-          kind: "import",
-          ref: prepared.ref,
-          defaultLabel: prepared.defaultLabel,
-          originalFilename: prepared.originalFilename,
-          createdAt: new Date().toISOString(),
-          payloadMeta: prepared.payloadMeta,
-          blob: prepared.blob,
-          thumbnail: prepared.thumbnail,
-        });
+        const createdAt = new Date().toISOString();
+
+        return library.store.apply(
+          "waveform" in prepared
+            ? {
+                kind: "import-audio",
+                ref: prepared.ref,
+                defaultLabel: prepared.defaultLabel,
+                originalFilename: prepared.originalFilename,
+                createdAt,
+                payloadMeta: prepared.payloadMeta,
+                blob: prepared.blob,
+                waveform: prepared.waveform,
+              }
+            : {
+                kind: "import",
+                ref: prepared.ref,
+                defaultLabel: prepared.defaultLabel,
+                originalFilename: prepared.originalFilename,
+                createdAt,
+                payloadMeta: prepared.payloadMeta,
+                blob: prepared.blob,
+                thumbnail: prepared.thumbnail,
+              },
+        );
       },
       deps?.signal === undefined ? undefined : {signal: deps.signal},
     );
@@ -306,13 +337,13 @@ export const commitPreparedLocalAssetImport = async (
       });
     }
 
-    throw toStorageError(error);
+    throw toStorageError(error, noun);
   }
 
   if (result.kind !== "imported") {
     throw new LocalAssetImportError(
       "storage-error",
-      "The image could not be saved to browser storage.",
+      `The ${noun} could not be saved to browser storage.`,
     );
   }
 
@@ -331,15 +362,15 @@ export const commitPreparedLocalAssetImport = async (
   void requestPersistentStorageOnce(deps);
 
   return {ref: prepared.ref, created: result.created};
-};
+}
 
 /** prepareLocalAssetImport + onPhase("storing") + commitPreparedLocalAssetImport. */
 export const importLocalAsset = async (
   file: File,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   library: ImportLibrary,
   deps: PrepareLocalAssetImportDeps & {storage?: StorageManager} = {},
-): Promise<{ref: LocalImageRef; created: boolean}> => {
+): Promise<{ref: LocalAssetRef; created: boolean}> => {
   const prepared = await prepareLocalAssetImport(file, category, deps);
 
   deps.onPhase?.("storing");

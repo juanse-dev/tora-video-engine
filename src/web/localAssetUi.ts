@@ -105,7 +105,9 @@ export const describeMissingLocalAsset = ({
 };
 
 export const mismatchDialogText = (candidateRef: LocalAssetRef): string =>
-  `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.`;
+  `This file is a different ${
+    parseLocalAssetRef(candidateRef)?.category === "audio" ? "audio file" : "image"
+  } (${shortAssetId(candidateRef)}), so it can't restore the missing one.`;
 
 export type AssetDialogCallbackResult =
   | {ok: true}
