@@ -21,7 +21,9 @@ export const nextArmingAction = (
  * Applies the action. Arming mutes the Player first and only then sets the
  * state that lets `StoryAudio` mount, so the first commit containing an
  * `<Audio>` happens after the Player is muted. Without a Player yet it does
- * nothing and returns false, so the caller tries again.
+ * nothing and returns false. The caller retries when the Player mounts again:
+ * Preview's layout effect depends on `overBudget`, so it re-runs once an
+ * over-budget Story that unmounted the Player is replaced by one that fits.
  */
 export const applyArmingAction = (
   action: ArmingAction,
