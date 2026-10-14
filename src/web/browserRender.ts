@@ -515,11 +515,13 @@ export const renderStoryMediaOnWeb = async (
     );
   }
 
-  // A Story without audio keeps exactly the props it had before v0.4.
+  // A Story without audio keeps exactly the props it had before v0.4. A
+  // render always plays its audio: `audioArmed` is passed explicitly, never
+  // left to the default (only the Player's Preview ever passes false).
   const props = {
     story,
     localAssetSources: options.localAssetSources,
-    ...(storyHasAudio(story) ? {audioDurations} : {}),
+    ...(storyHasAudio(story) ? {audioDurations, audioArmed: true} : {}),
   };
 
   // INV-5: a local ref must never reach the renderer without a resolved

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
+import {readFile} from "node:fs/promises";
 import {exampleStory} from "../src/story/exampleStory.ts";
 import {storyAudioDurations} from "../src/audio/storyAudio.ts";
 import {getWebPlayerConfig} from "../src/web/previewConfig.ts";
@@ -63,5 +64,69 @@ describe("WEB-002 player metadata", () => {
       audioConfig.durationInFrames,
       fallbackConfig.durationInFrames,
     );
+  });
+});
+
+describe("AUDIO-002 Player length and audio props", () => {
+  const voice = `local:audio:sha256:${"f".repeat(64)}`;
+  const autoStory = {
+    title: "Auto voice",
+    scenes: [
+      {
+        type: "intro",
+        pose: "formal",
+        background: "office",
+        text: "Hi",
+        duration: "auto",
+        voice: {src: voice},
+      },
+    ],
+  };
+
+  it("sizes the Player from the voice duration, falling back to 3 s", () => {
+    // ceil((2.2 + 0.5) * 30) = 81; no map entry = the 3 s fallback = 90;
+    // ceil((4.5 + 0.5) * 30) = 150 (a long voice is not cut at the fallback).
+    assert.equal(
+      getWebPlayerConfig(autoStory, {[voice]: 2.2}).durationInFrames,
+      81,
+    );
+    assert.equal(getWebPlayerConfig(autoStory, {}).durationInFrames, 90);
+    assert.equal(
+      getWebPlayerConfig(autoStory, {[voice]: 4.5}).durationInFrames,
+      150,
+    );
+  });
+
+  it("Preview feeds one duration map to the Player length and to inputProps", async () => {
+    const source = await readFile(
+      new URL("../src/web/components/Preview.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(
+      source,
+      /const audioDurations = useMemo\(\(\) => storyAudioDurations\(story\), \[story\]\)/,
+    );
+    assert.match(source, /getWebPlayerConfig\(story, audioDurations\)/);
+    assert.match(source, /inputProps = useMemo\([\s\S]*?audioDurations,[\s\S]*?\)/);
+  });
+
+  it("Preview starts the Player muted, shows volume controls only for audio and arms in a layout effect", async () => {
+    const source = await readFile(
+      new URL("../src/web/components/Preview.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /\binitiallyMuted\b/);
+    assert.match(source, /showVolumeControls=\{hasAudio\}/);
+    assert.doesNotMatch(source, /showVolumeControls=\{false\}/);
+    assert.match(source, /initialVolume=\{initialVolume\}/);
+    assert.match(source, /const hasAudio = storyHasAudio\(story\)/);
+    assert.match(source, /useState\(false\)/);
+    assert.match(source, /const audioArmed = hasAudio && armed/);
+    assert.match(source, /useLayoutEffect\(/);
+    assert.match(source, /applyArmingAction\(/);
+    assert.match(source, /bundledAudioPolicy: "static-fallback" as const/);
+    assert.doesNotMatch(source, /Stories are video-only/);
   });
 });

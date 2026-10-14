@@ -1,6 +1,6 @@
 # AUDIO-002 — Audio plan, composition and Player audio
 
-Status: not started
+Status: implemented (interim: the Player resolves bundled sounds with static-fallback until AUDIO-004; no local audio library until AUDIO-003)
 
 Depends on: AUDIO-001. Read [README](./README.md) first.
 
@@ -110,14 +110,14 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
 
 ### Player (`src/web/components/Preview.tsx`)
 
-`initiallyMuted` stays unconditional, exactly as in v0.3; `showVolumeControls` is `storyHasAudio(story)`, so a silent Story keeps v0.3's `showVolumeControls={false}` (AINV-6). `initiallyMuted` only affects the Player's first mount and `Preview` does not remount the Player on Story edits, so `Preview` gates the tracks instead of muting after the fact. `ToraVideoProps` gains `audioArmed?: boolean`, and `StoryAudio` renders **no** `<Audio>` only when it is **exactly `false`**; absent means armed, so Remotion Studio (`src/Root.tsx` default props, no `Preview`) and any composition rendered without a Player play audio. Only `Preview` ever passes `false`, from its first render until the handshake below. `Preview` keeps `armed` state: whenever `storyHasAudio(story)` is false, `armed` is false; when it is true and `armed` is false, a `useLayoutEffect` calls `playerRef.current.mute()` and only then sets `armed = true`, so the first commit containing `<Audio>` happens after the Player is muted (layout effects and their state updates complete before paint, and the tracks did not exist before). This one rule covers an edit, a YAML import, a stored-project restore and a reload (initial mount starts unarmed too), and asynchronous availability changes, since local tracks only appear while armed. No remount: the current frame and play state are kept. The render paths (`renderMediaOnWeb`, CLI) pass `audioArmed: true` explicitly. The audio → no-audio transition changes nothing but hiding the controls. `audioDurations` is always passed in `inputProps`. The Player's **outer** length must use the same map: `getWebPlayerConfig(story, audioDurations)` (`src/web/previewConfig.ts`) calls `getStoryMetadata(story, VIDEO_FPS, audioDurations)`, and `Preview` passes the exact map object it puts in `inputProps`, so the Player's `durationInFrames`, the inner timeline and `compileAudioPlan` can never disagree (otherwise a 2.2 s voice would play inside a Player still sized for the 3 s fallback, and a voice longer than 3 s would be cut by the Player). When an asset's availability changes, the map, the Player length and the plan change together in the same render. The Player's volume is stored in `localStorage` key `tora.playerVolume` (number in `[0, 1]`) inside try/catch and restored via the Player ref on mount; mute state is never restored as unmuted (D-12). The comment saying Stories are video-only is updated.
+`initiallyMuted` stays unconditional, exactly as in v0.3; `showVolumeControls` is `storyHasAudio(story)`, so a silent Story keeps v0.3's `showVolumeControls={false}` (AINV-6). `initiallyMuted` only affects the Player's first mount and `Preview` does not remount the Player on Story edits, so `Preview` gates the tracks instead of muting after the fact. `ToraVideoProps` gains `audioArmed?: boolean`, and `StoryAudio` renders **no** `<Audio>` only when it is **exactly `false`**; absent means armed, so Remotion Studio (`src/Root.tsx` default props, no `Preview`) and any composition rendered without a Player play audio. Only `Preview` ever passes `false`, from its first render until the handshake below. `Preview` keeps `armed` state: whenever `storyHasAudio(story)` is false, `armed` is false; when it is true and `armed` is false, a `useLayoutEffect` calls `playerRef.current.mute()` and only then sets `armed = true`, so the first commit containing `<Audio>` happens after the Player is muted (layout effects and their state updates complete before paint, and the tracks did not exist before). This one rule covers an edit, a YAML import, a stored-project restore and a reload (initial mount starts unarmed too), and asynchronous availability changes, since local tracks only appear while armed. No remount: the current frame and play state are kept. The render paths (`renderMediaOnWeb`, CLI) pass `audioArmed: true` explicitly. The audio → no-audio transition changes nothing but hiding the controls. `audioDurations` is always passed in `inputProps`. The Player's **outer** length must use the same map: `getWebPlayerConfig(story, audioDurations)` (`src/web/previewConfig.ts`) calls `getStoryMetadata(story, VIDEO_FPS, audioDurations)`, and `Preview` passes the exact map object it puts in `inputProps`, so the Player's `durationInFrames`, the inner timeline and `compileAudioPlan` can never disagree (otherwise a 2.2 s voice would play inside a Player still sized for the 3 s fallback, and a voice longer than 3 s would be cut by the Player). When an asset's availability changes, the map, the Player length and the plan change together in the same render. The Player's volume is stored in `localStorage` key `tora.playerVolume` (number in `[0, 1]`) inside try/catch and restored with the Player's `initialVolume` prop (validated on read) and persisted on the Player's `volumechange` event; mute state is never restored as unmuted (D-12). The comment saying Stories are video-only is updated.
 
 ## Tasks
 
-1. [ ] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
-2. [ ] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
-3. [ ] `AudioSource`/`AudioSourceMap`/`BundledAudioPolicy`, `resolveAudioSrc`, `AudioSourcesProvider`, `StoryAudio` + `ToraVideo` wiring.
-4. [ ] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `storyAudioDurations(story, localDurations)` (AUDIO-001) where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
+1. [x] Add `@remotion/media@4.0.529` and `mediabunny@1.56.1` (exact) as dependencies.
+2. [x] `compileAudioPlan` with every rule above, plus `tests/audio-plan.test.mjs`.
+3. [x] `AudioSource`/`AudioSourceMap`/`BundledAudioPolicy`, `resolveAudioSrc`, `AudioSourcesProvider`, `StoryAudio` + `ToraVideo` wiring.
+4. [x] Player: muted start and volume controls only for Stories with audio, remembered volume, `audioDurations` in `inputProps`; the preview's `audioDurations` come from `storyAudioDurations(story, localDurations)` (AUDIO-001) where `localDurations` is empty until AUDIO-003 provides library metadata (bundled audio already works).
 
 ## Tests
 
@@ -156,3 +156,14 @@ npx playwright test --config=playwright.browser-render.config.mjs
 ## Done when
 
 The plan tests pass, the Player plays bundled sounds after unmute, and every v0.3 golden is unchanged.
+
+## Implementation notes
+
+- `Preview` (not `App`) builds `audioSources` with `buildAudioSourceMap(story, localAssetSources, noBundledAudio)`, where `noBundledAudio` is a stub returning `undefined`, until AUDIO-004's bundled-audio store replaces it; `App.tsx` is unchanged by this spec.
+- The Player passes `bundledAudioPolicy: "static-fallback"` and a source test pins it; AUDIO-004 task 3 changes both (the Player switches to `"explicit"` with the store's entries).
+- The arming rule, the mount list and the volume store are pure modules tested in Node: `src/audio/mounts.ts`, `src/web/audioArming.ts`, `src/web/playerVolume.ts`.
+- Volume is restored with the Player's `initialVolume` prop from a validated `tora.playerVolume` and persisted on the Player's `volumechange` event, not through the Player ref.
+- Test hooks on `.preview-frame`: `data-tora-muted` and `data-tora-audio-armed`.
+- `buildAudioSourceMap` takes a `LocalAudioSourceMap` (`Readonly<Partial<Record<LocalAudioRef, LocalAssetSource>>>`); the image `LocalAssetSourceMap` is assignable to it.
+- `maxSimultaneousGain` is computed in one sweep over the frames with a small active set of tracks, not by evaluating every track on every frame.
+- The CLI props stay `{story}` (plus `localAssetSources` for images) until AUDIO-005 adds the audio props.

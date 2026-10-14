@@ -1435,6 +1435,8 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
       seen.composition.defaultProps.audioDurations,
     );
     assert.notEqual(seen.inputProps.audioDurations, undefined);
+    assert.equal(seen.inputProps.audioArmed, true);
+    assert.equal(seen.composition.defaultProps.audioArmed, true);
   });
 
   it("a Story without audio keeps its duration and its props", async () => {
@@ -1446,6 +1448,7 @@ describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
       "story",
       "localAssetSources",
     ]);
+    assert.equal("audioArmed" in seen.inputProps, false);
   });
 
   it("refuses an auto Story whose exact total exceeds the cap while its lower bound passes", async () => {
