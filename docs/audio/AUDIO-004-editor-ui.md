@@ -24,7 +24,7 @@ Every audio field can be authored in the visual editor without touching YAML; th
 
 - A waveform thumbnail (canvas from stored peaks, `aria-hidden`), label, `m:ss` duration.
 - A play/stop toggle (`Play <label>` / `Stop <label>`). One preview at a time across the page; starting the Player pauses previews and starting a preview pauses the Player. Previews use an `HTMLAudioElement` on the verified payload's object URL (the same URL pool as images).
-- Delete warning counts uses across roles: `Used by the music and 2 scenes.` / `Used by scene 3.` etc.
+- Delete warning counts uses across roles with this wording: `Used by the music and 2 scenes.` / `Used by the music and 1 scene.` / `Used by the music.` (the Story's music is involved: scenes are counted), `Used by scene 3.` / `Used by scenes 1, 3.` (scenes only: their numbers are listed). A file used nowhere gets the plain question without a usage sentence.
 
 ### Audio timeline (under the Player)
 
