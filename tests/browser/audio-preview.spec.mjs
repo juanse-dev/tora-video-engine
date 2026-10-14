@@ -163,9 +163,12 @@ test("a Story with a bundled sfx starts muted, plays after unmute and seeks", as
 
   // Positive control for the spy: unmuted playback does start audio.
   await expect
-    .poll(async () => (await auditAfter(page, beforePlay)).starts.length, {
-      timeout: 10_000,
-    })
+    .poll(
+      async () =>
+        (await auditAfter(page, beforePlay)).starts.filter((entry) => !entry.muted)
+          .length,
+      {timeout: 10_000},
+    )
     .toBeGreaterThan(0);
 
   await page.getByRole("button", {name: "Pause video"}).click();
@@ -256,10 +259,16 @@ test("audio -> no audio -> audio mutes again and no audible start happens until 
     "data-tora-muted",
     "true",
   );
-  expect(await currentFrame(page)).toBeGreaterThanOrEqual(frameBefore);
+  const remountFrame = await currentFrame(page);
 
-  // Scenes start a ding every second: observe a few of them while muted.
-  await page.waitForTimeout(2500);
+  expect(remountFrame).toBeGreaterThanOrEqual(frameBefore);
+
+  // Playback keeps running while muted: wait until it has crossed at least two
+  // ding boundaries (one ding per 1 s scene, 30 fps), so the window below
+  // really contains scene starts that would have been audible.
+  await expect
+    .poll(() => currentFrame(page), {timeout: 10_000})
+    .toBeGreaterThanOrEqual(remountFrame + 75);
 
   const muted = await auditAfter(page, transition);
 
@@ -267,10 +276,14 @@ test("audio -> no audio -> audio mutes again and no audible start happens until 
 
   const mutedAt = muted.muteChanges.find((entry) => entry.value === "true").t;
 
+  // An empty list is the expected result: @remotion/media starts no audio
+  // while the Player is muted. The checks below only fail if something starts.
   for (const start of muted.starts) {
     expect(start.muted, `${start.kind} at ${start.t}`).toBe(true);
     expect(start.t).toBeGreaterThanOrEqual(mutedAt);
   }
+
+  expect(muted.starts.every((start) => start.muted)).toBe(true);
 
   // Only the user's click makes it audible again.
   const beforeUnmute = await markNow(page);
@@ -288,7 +301,7 @@ test("audio -> no audio -> audio mutes again and no audible start happens until 
     .toBeGreaterThan(0);
 });
 
-test("the Player remembers a valid volume and ignores a garbage one", async ({
+test("the Player restores a valid stored volume and persists a changed one", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -328,9 +341,15 @@ test("a stored Story with audio restores muted after a reload", async ({page}) =
 
   await expect
     .poll(() =>
-      page.evaluate(() => localStorage.getItem("tora-video-engine:project")),
+      page.evaluate(() => {
+        const raw = localStorage.getItem("tora-video-engine:project");
+
+        return raw === null
+          ? null
+          : JSON.parse(raw).story?.scenes?.[0]?.sfx?.src ?? null;
+      }),
     )
-    .toContain("ding");
+    .toBe("ding");
 
   await page.reload({waitUntil: "domcontentloaded"});
 
