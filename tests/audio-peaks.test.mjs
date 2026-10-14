@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {isDecodeComplete} from "../src/audio/decodeCheck.ts";
 import {inspectAudio} from "../src/localAssets/audioInspection.ts";
 import {
+  AUDIO_DECODE_FAILED_MESSAGE,
   AudioDecodeError,
   createPeakAccumulator,
   decodeAudioPeaks,
@@ -44,17 +45,22 @@ describe("peak accumulator", () => {
     assert.equal(summary.decodedSeconds, 1);
   });
 
-  it("clamps values above full scale, ignores NaN, and clamps out-of-range frames to the ends", () => {
+  it("clamps values above full scale, ignores NaN, and clamps out-of-range frames to the ends (one bucket per case)", () => {
+    // 1 s at 100 Hz: 50 buckets of 2 frames.
     const accumulator = createPeakAccumulator(1);
 
-    accumulator.push(0, 100, [plane([1.5, Number.NaN])]);
-    accumulator.push(1.5, 100, [plane([0.5])]);
-    accumulator.push(-0.5, 100, [plane([1])]);
+    accumulator.push(0.1, 100, [plane([1.5])]); // above full scale -> bucket 5
+    accumulator.push(0.5, 100, [plane([Number.NaN])]); // NaN alone -> bucket 25
+    accumulator.push(1.5, 100, [plane([0.5])]); // after the end -> last bucket
+    accumulator.push(-0.5, 100, [plane([0.3])]); // before the start -> bucket 0
 
     const {peaks} = accumulator.finish();
 
-    assert.equal(peaks[0], 255);
+    assert.equal(peaks[5], 255);
+    assert.equal(peaks[25], 0);
     assert.equal(peaks[49], 128);
+    assert.equal(peaks[0], 77);
+    assert.equal(peaks.filter((value) => value !== 0).length, 3);
   });
 
   it("gives the same peaks for one big chunk and for several chunks with their own start times", () => {
@@ -117,7 +123,37 @@ describe("decodeAudioPeaks on PCM fixtures (mediabunny decodes PCM without WebCo
     await assert.rejects(decode("tone-220-10s.wav", {signal: controller.signal}), (error) => error.name === "AbortError");
   });
 
+  it("a signal aborted before the call rejects with the abort reason without opening the file (an undecodable blob would otherwise give AudioDecodeError)", async () => {
+    const controller = new AbortController();
+    const metadata = {durationSeconds: 1};
+
+    controller.abort();
+    await assert.rejects(
+      decodeAudioPeaks(new Blob(["not audio"]), metadata, {signal: controller.signal}),
+      (error) => error.name === "AbortError",
+    );
+  });
+
+  it("an undecodable file rejects with AudioDecodeError carrying exactly the user-facing text", async () => {
+    await assert.rejects(
+      decodeAudioPeaks(new Blob(["not audio"]), {durationSeconds: 1}),
+      (error) =>
+        error instanceof AudioDecodeError &&
+        error.message === "This audio file could not be decoded." &&
+        error.message === AUDIO_DECODE_FAILED_MESSAGE,
+    );
+  });
+
+  it("a non-positive or non-finite container duration is refused up front with the same text", async () => {
+    for (const durationSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assert.rejects(
+        decodeAudioPeaks(new Blob(["x"]), {durationSeconds}),
+        (error) => error instanceof AudioDecodeError && error.message === "This audio file could not be decoded.",
+      );
+    }
+  });
+
   it("an MP3 cannot be decoded in Node (no WebCodecs): AudioDecodeError, not a crash", {skip: typeof AudioDecoder !== "undefined"}, async () => {
-    await assert.rejects(decode("tone-220-10s.mp3"), (error) => error instanceof AudioDecodeError && error.name === "AudioDecodeError");
+    await assert.rejects(decode("tone-220-10s.mp3"), (error) => error instanceof AudioDecodeError && error.name === "AudioDecodeError" && error.message === "This audio file could not be decoded.");
   });
 });

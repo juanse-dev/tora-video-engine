@@ -11,13 +11,23 @@ export type DecodedAudioSummary = {
   peaksPerSecond: number;
 };
 
+/** The one user-facing text for any decode failure or unsupported codec. */
+export const AUDIO_DECODE_FAILED_MESSAGE = "This audio file could not be decoded.";
+
 /** The decoder could not read the file (unsupported codec in this browser, or a corrupt stream). */
 export class AudioDecodeError extends Error {
   override name = "AudioDecodeError";
   cause?: unknown;
 
-  constructor(message: string, options?: {cause?: unknown}) {
-    super(message);
+  /** Extra, non-user-facing detail about what went wrong. */
+  detail?: string;
+
+  constructor(options?: {cause?: unknown; detail?: string}) {
+    super(AUDIO_DECODE_FAILED_MESSAGE);
+
+    if (options?.detail !== undefined) {
+      this.detail = options.detail;
+    }
 
     if (options?.cause !== undefined) {
       this.cause = options.cause;
@@ -105,14 +115,27 @@ export const decodeAudioPeaks = async (
   metadata: AudioMetadata,
   deps: {signal?: AbortSignal} = {},
 ): Promise<DecodedAudioSummary> => {
+  deps.signal?.throwIfAborted();
+
+  // Precondition: a usable container duration (inspectAudio guarantees it).
+  if (!Number.isFinite(metadata.durationSeconds) || metadata.durationSeconds <= 0) {
+    throw new AudioDecodeError({detail: "The container duration is not a positive number."});
+  }
+
   const input = new Input({source: new BlobSource(blob), formats: ALL_FORMATS});
 
   try {
     const track = await input.getPrimaryAudioTrack();
 
-    if (track === null || !(await track.canDecode())) {
-      throw new AudioDecodeError("This browser cannot decode this audio file.");
+    if (track === null) {
+      throw new AudioDecodeError({detail: "The file has no audio track."});
     }
+
+    if (!(await track.canDecode())) {
+      throw new AudioDecodeError({detail: "This browser cannot decode this audio track."});
+    }
+
+    deps.signal?.throwIfAborted();
 
     const accumulator = createPeakAccumulator(metadata.durationSeconds);
     const sink = new AudioSampleSink(track);
@@ -142,9 +165,7 @@ export const decodeAudioPeaks = async (
       throw error;
     }
 
-    throw new AudioDecodeError("The audio file could not be decoded.", {
-      cause: error,
-    });
+    throw new AudioDecodeError({cause: error});
   } finally {
     input.dispose();
   }
