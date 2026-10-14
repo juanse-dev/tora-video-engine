@@ -20,6 +20,7 @@ import {
   categoryFolderExists,
   displayRoot,
   getLocalAssetsRoot,
+  inventoryAudioAssets,
   inventoryLocalAssets,
   LOCAL_ASSETS_ROOT,
   MissingLocalAssetsError,
@@ -28,6 +29,12 @@ import {
 } from "../scripts/localAssets.ts";
 import {renderStory} from "../scripts/renderStory.ts";
 import {buildRenderArgs} from "../scripts/renderSupport.ts";
+import {AUDIO_RENDER_BLOCK_MESSAGE} from "../src/audio/storyAudio.ts";
+import {
+  AUDIO_EMPTY_MESSAGE,
+  AUDIO_TOO_LARGE_MESSAGE,
+  AUDIO_UNSUPPORTED_MESSAGE,
+} from "../src/localAssets/audioInspection.ts";
 import {sha256Hex} from "../src/localAssets/hash.ts";
 import {
   buildApng,
@@ -35,6 +42,7 @@ import {
   buildPng,
   buildTextBytes,
 } from "./helpers/imageBytes.mjs";
+import {buildWav, fixtureBytes} from "./helpers/audioBytes.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = join(repoRoot, "tests", "fixtures", "local-assets");
@@ -1349,6 +1357,41 @@ describe("renderStory staging", () => {
     assert.deepEqual(await readdir(tempBase), []);
   });
 
+  it("still refuses a Story whose voice is a local audio ref before staging or starting Remotion", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const {storyPath, tempBase} = await setup(
+      [
+        'title: "T2"',
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        "    animation: fade",
+        '    text: "Hi"',
+        "    voice:",
+        `      src: ${audioRefOf(voice)}`,
+        "    duration: 1",
+        "",
+      ].join("\n"),
+    );
+    let started = false;
+
+    await put(root, "audio/voice.wav", voice);
+    await assert.rejects(
+      renderStory(storyPath, {
+        localAssetsRoot: root,
+        tempBase,
+        runRemotion: async () => {
+          started = true;
+        },
+      }),
+      {message: AUDIO_RENDER_BLOCK_MESSAGE},
+    );
+    assert.equal(started, false);
+    assert.deepEqual(await readdir(tempBase), []);
+  });
+
   it("stages local assets into a temporary public dir and cleans it up", async () => {
     const pose = await fixture("pose-magenta.png");
     const root = await makeRoot();
@@ -1534,5 +1577,319 @@ describe("bundled-only render args", () => {
         process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
       }
     }
+  });
+});
+
+const MIB = 1024 * 1024;
+const audioRefOf = (bytes) => `local:audio:sha256:${nodeSha(bytes)}`;
+const audioStoryOf = ({music, voices = [], sfx = []}) => ({
+  title: "Audio",
+  ...(music === undefined ? {} : {music: {src: music}}),
+  scenes: [
+    ...voices.map((src) => ({...sceneOf("formal", "office"), voice: {src}})),
+    ...sfx.map((src) => ({...sceneOf("formal", "office"), sfx: {src}})),
+  ],
+});
+
+describe("local-assets/audio: scanning", () => {
+  it("classifies by content: matches by digest whatever the name, rejects wrong content, skips nothing silently", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.mp3");
+    const music = fixtureBytes("tone-220-10s.wav");
+    const ding = fixtureBytes("tone-880-0.4s.opus.ogg");
+
+    await put(root, "audio/voice.mp3", voice);
+    await put(root, "audio/renamed.bin", voice);
+    await put(root, "audio/sub/music.wav", music);
+    await put(root, "audio/sub/ding.ogg", ding);
+    await put(root, "audio/fake.mp3", buildTextBytes());
+    await put(root, "audio/picture.png", await fixture("pose-magenta.png"));
+
+    const results = await collect(scanCategory(root, "audio"));
+    const byPath = Object.fromEntries(results.map((result) => [result.relativePath, result]));
+
+    assert.deepEqual(results.map((result) => result.relativePath), ["fake.mp3", "picture.png", "renamed.bin", "sub/ding.ogg", "sub/music.wav", "voice.mp3"]);
+    assert.deepEqual(
+      [byPath["voice.mp3"].ref, byPath["renamed.bin"].ref, byPath["sub/music.wav"].ref, byPath["sub/ding.ogg"].ref],
+      [audioRefOf(voice), audioRefOf(voice), audioRefOf(music), audioRefOf(ding)],
+    );
+    assert.deepEqual(
+      [byPath["voice.mp3"].audio.container, byPath["sub/music.wav"].audio.container, byPath["sub/ding.ogg"].audio.container],
+      ["mp3", "wave", "ogg"],
+    );
+    assert.equal(Math.abs(byPath["sub/music.wav"].audio.durationSeconds - 10) < 0.001, true);
+    assert.deepEqual(
+      [byPath["fake.mp3"], byPath["picture.png"]].map(({ok, reason, message}) => ({ok, reason, message})),
+      [
+        {ok: false, reason: "audio-rejected", message: AUDIO_UNSUPPORTED_MESSAGE},
+        {ok: false, reason: "audio-rejected", message: AUDIO_UNSUPPORTED_MESSAGE},
+      ],
+    );
+  });
+
+  it("skips symlinked files and directories but resolves regular siblings", async (context) => {
+    const root = await makeRoot();
+    const outside = await makeRoot();
+
+    await put(root, "audio/real.wav", fixtureBytes("tone-880-0.4s.wav"));
+    await put(outside, "target.wav", fixtureBytes("tone-440-2.2s.wav"));
+    await put(outside, "dir/inner.wav", fixtureBytes("tone-440-2.2s.wav"));
+
+    try {
+      await symlink(join(outside, "target.wav"), join(root, "audio", "link.wav"), "file");
+      await symlink(join(outside, "dir"), join(root, "audio", "linkdir"), "dir");
+    } catch (error) {
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        context.skip("symlinks are not permitted here");
+
+        return;
+      }
+
+      throw error;
+    }
+
+    const {opened, deps} = spyOpen();
+    const results = await collect(scanCategory(root, "audio", deps));
+
+    assert.deepEqual(results.map((result) => result.relativePath), ["real.wav"]);
+    assert.equal(opened.length, 1);
+  });
+
+  it("uses the audio limit before reading: a 30 MiB WAV is read, a 51 MiB file is never opened, and the image limit is unchanged", async () => {
+    const root = await makeRoot();
+    const big = buildWav({dataBytes: 30 * MIB - 44});
+
+    await put(root, "audio/big.wav", big);
+    await put(root, "audio/huge.wav", buildWav({dataBytes: 51 * MIB - 44}));
+    await put(root, "audio/empty.wav", new Uint8Array(0));
+    await put(root, "poses/big.png", new Uint8Array(26 * MIB));
+
+    const {opened, deps} = spyOpen();
+    const audio = await collect(scanCategory(root, "audio", deps));
+    const byPath = Object.fromEntries(audio.map((result) => [result.relativePath, result]));
+
+    assert.equal(byPath["big.wav"].ok, true);
+    assert.equal(byPath["big.wav"].ref, audioRefOf(big));
+    assert.equal(Math.abs(byPath["big.wav"].audio.durationSeconds - 163.84) < 0.01, true);
+    assert.equal(byPath["huge.wav"].message, AUDIO_TOO_LARGE_MESSAGE);
+    assert.equal(byPath["empty.wav"].message, AUDIO_EMPTY_MESSAGE);
+    assert.deepEqual(opened.map((path) => path.replaceAll("\\", "/").split("/").at(-1)), ["big.wav"]);
+
+    const poseSpy = spyOpen();
+    const poses = await collect(scanCategory(root, "pose", poseSpy.deps));
+
+    assert.deepEqual(poses.map(({ok, reason}) => ({ok, reason})), [{ok: false, reason: "too-large"}]);
+    assert.deepEqual(poseSpy.opened, []);
+  });
+});
+
+describe("local-assets/audio: staging", () => {
+  it("stages originals under __local-assets/audio/<digest>.<ext> and leaves the repository public/ alone", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.mp3");
+    const music = fixtureBytes("tone-220-10s.wav");
+    const ding = fixtureBytes("tone-880-0.4s.opus.ogg");
+    const m4a = fixtureBytes("tone-880-0.4s.m4a");
+
+    await put(root, "audio/a-voice.mp3", voice);
+    await put(root, "audio/b-music.wav", music);
+    await put(root, "audio/c-ding.ogg", ding);
+    await put(root, "audio/d-voice.m4a", m4a);
+
+    const story = audioStoryOf({music: audioRefOf(music), voices: [audioRefOf(voice), audioRefOf(m4a)], sfx: [audioRefOf(ding)]});
+    const {publicDir, staged} = await stageInto(story, root);
+    const expected = [
+      [audioRefOf(music), music, `__local-assets/audio/${nodeSha(music)}.wav`],
+      [audioRefOf(voice), voice, `__local-assets/audio/${nodeSha(voice)}.mp3`],
+      [audioRefOf(m4a), m4a, `__local-assets/audio/${nodeSha(m4a)}.m4a`],
+      [audioRefOf(ding), ding, `__local-assets/audio/${nodeSha(ding)}.ogg`],
+    ];
+
+    assert.deepEqual(staged.sources, Object.fromEntries(expected.map(([ref, , path]) => [ref, {kind: "static", path}])));
+
+    for (const [, original, path] of expected) {
+      assert.deepEqual(Buffer.from(await readFile(join(publicDir, ...path.split("/")))), Buffer.from(original));
+    }
+
+    await assert.rejects(stat(join(repoRoot, "public", "__local-assets")), {code: "ENOENT"});
+  });
+
+  it("stages images and audio of one Story independently, each category from its own folder", async () => {
+    const root = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+
+    await put(root, "poses/pose.png", pose);
+    await put(root, "audio/voice.wav", voice);
+
+    const story = {...audioStoryOf({voices: [audioRefOf(voice)]})};
+
+    story.scenes[0].pose = poseRefOf(pose);
+
+    const {publicDir, staged} = await stageInto(story, root);
+
+    assert.deepEqual(Object.keys(staged.sources).sort(), [audioRefOf(voice), poseRefOf(pose)].sort());
+    assert.equal((await readFile(join(publicDir, "__local-assets", "audio", `${nodeSha(voice)}.wav`))).length, voice.length);
+  });
+
+  it("snapshots bytes: editing the source after a match cannot change the staged file", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const source = join(root, "audio", "voice.wav");
+
+    await put(root, "audio/voice.wav", voice);
+
+    const publicDir = await makeRoot();
+
+    await stageLocalAssetsForStory(audioStoryOf({voices: [audioRefOf(voice)]}), {
+      root,
+      publicDir,
+      onStaged: async () => {
+        await writeFile(source, new Uint8Array([1, 2, 3]));
+      },
+    });
+
+    assert.deepEqual(Buffer.from(await readFile(join(publicDir, "__local-assets", "audio", `${nodeSha(voice)}.wav`))), Buffer.from(voice));
+  });
+
+  it("stages a 30 MiB WAV; a 51 MiB file is refused and its bytes are never opened, hashed or staged", async () => {
+    const root = await makeRoot();
+    const big = buildWav({dataBytes: 30 * MIB - 44});
+    const huge = buildWav({dataBytes: 51 * MIB - 44});
+
+    await put(root, "audio/a-big.wav", big);
+    await put(root, "audio/b-huge.wav", huge);
+
+    const {opened, deps} = spyOpen();
+    const {publicDir, staged} = await stageInto(audioStoryOf({voices: [audioRefOf(big)]}), root, {}, deps);
+
+    assert.equal((await stat(join(publicDir, "__local-assets", "audio", `${nodeSha(big)}.wav`))).size, 30 * MIB);
+    assert.deepEqual(Object.keys(staged.sources), [audioRefOf(big)]);
+
+    const hugeSpy = spyOpen();
+
+    await assert.rejects(
+      stageInto(audioStoryOf({voices: [audioRefOf(huge)]}), root, {}, hugeSpy.deps),
+      (error) => error instanceof MissingLocalAssetsError,
+    );
+    assert.deepEqual(hugeSpy.opened.map((path) => path.replaceAll("\\", "/").split("/").at(-1)), ["a-big.wav"]);
+  });
+
+  it("an audio file in poses/ or an image in audio/ never satisfies an audio ref", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+
+    await put(root, "poses/voice.wav", voice);
+    await put(root, "audio/pose.png", await fixture("pose-magenta.png"));
+
+    await assert.rejects(stageInto(audioStoryOf({voices: [audioRefOf(voice)]}), root), (error) => error instanceof MissingLocalAssetsError);
+  });
+
+  it("a missing audio ref is reported with its roles, the audio folder and the audio hint; the image text is unchanged", async () => {
+    const root = join(await makeRoot(), "assets");
+    const musicRef = `local:audio:sha256:${"b".repeat(64)}`;
+    const voiceRef = `local:audio:sha256:${"c".repeat(64)}`;
+    const story = {...audioStoryOf({music: musicRef, voices: [voiceRef]})};
+
+    await assert.rejects(stageInto(story, root), (error) => {
+      assert.ok(error instanceof MissingLocalAssetsError);
+      assert.equal(
+        error.message,
+        [
+          "Cannot render Story: 2 local assets are missing.",
+          "",
+          "Audio:",
+          `  ${musicRef}`,
+          "  used by: the music",
+          `  searched: ${displayRoot(root)}/audio/`,
+          "",
+          `  ${voiceRef}`,
+          "  used by scenes: 1",
+          `  searched: ${displayRoot(root)}/audio/`,
+          "",
+          "Copy the original audio file (MP3, WAV, M4A or Ogg Opus) into that folder (any filename),",
+          "or replace the reference in the Story. Run `npm run assets` to list the refs",
+          "of the files that are there.",
+        ].join("\n"),
+      );
+
+      return true;
+    });
+  });
+});
+
+describe("npm run assets with audio", () => {
+  const runAssets = (root) => {
+    const env = {...process.env, TORA_LOCAL_ASSETS_ROOT: root};
+
+    return spawnSync(process.execPath, ["--experimental-strip-types", join(repoRoot, "scripts", "assets.ts")], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+    });
+  };
+
+  it("lists audio refs with duration after the image sections, and skipped files with their reason", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const long = buildWav({dataBytes: 30 * MIB - 44});
+
+    await put(root, "audio/voice.wav", voice);
+    await put(root, "audio/fake.mp3", buildTextBytes());
+    await put(root, "audio/z-long.wav", long);
+
+    const result = runAssets(root);
+    const base = root.replaceAll("\\", "/");
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      [
+        `${base}/poses/ (folder not found — create it and copy images into it)`,
+        "",
+        `${base}/backgrounds/ (folder not found — create it and copy images into it)`,
+        "",
+        `${base}/audio/fake.mp3`,
+        `  skipped: ${AUDIO_UNSUPPORTED_MESSAGE}`,
+        "",
+        `${base}/audio/voice.wav`,
+        `  ${audioRefOf(voice)}`,
+        "  duration: 0:02 (2.20 s)",
+        "",
+        `${base}/audio/z-long.wav`,
+        `  ${audioRefOf(long)}`,
+        "  duration: 2:44 (163.84 s)",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("says when an existing audio folder has no files, and prints nothing about audio when there is no folder", async () => {
+    const withFolder = await makeRoot();
+    const without = await makeRoot();
+
+    await mkdir(join(withFolder, "audio"));
+    await mkdir(join(without, "poses"));
+
+    const base = withFolder.replaceAll("\\", "/");
+
+    assert.equal(
+      runAssets(withFolder).stdout,
+      [
+        `${base}/poses/ (folder not found — create it and copy images into it)`,
+        "",
+        `${base}/backgrounds/ (folder not found — create it and copy images into it)`,
+        "",
+        `${base}/audio/ (no files)`,
+        "",
+      ].join("\n"),
+    );
+    assert.equal(runAssets(without).stdout.includes("audio"), false);
+  });
+
+  it("inventoryAudioAssets reports whether the folder exists", async () => {
+    const root = await makeRoot();
+
+    assert.deepEqual(await inventoryAudioAssets(root), {folderExists: false, lines: []});
   });
 });

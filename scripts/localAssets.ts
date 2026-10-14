@@ -1,6 +1,13 @@
 import {lstat, mkdir, open, readdir, stat, writeFile} from "node:fs/promises";
 import type {Stats} from "node:fs";
 import {dirname, isAbsolute, join, relative, resolve, sep} from "node:path";
+import {
+  AUDIO_EMPTY_MESSAGE,
+  AUDIO_TOO_LARGE_MESSAGE,
+  audioFileExtensionFor,
+  inspectAudio,
+} from "../src/localAssets/audioInspection.ts";
+import type {AudioMetadata} from "../src/localAssets/audioInspection.ts";
 import {sha256Hex} from "../src/localAssets/hash.ts";
 import {
   checkLocalAssetByteSize,
@@ -12,12 +19,16 @@ import type {
   InspectedImage,
 } from "../src/localAssets/imageInspection.ts";
 import {collectStoryLocalAssetUsages} from "../src/localAssets/readiness.ts";
+import type {LocalAssetUsage} from "../src/localAssets/readiness.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {STAGED_LOCAL_ASSETS_DIR} from "../src/localAssets/sources.ts";
 import type {LocalAssetSourceMap} from "../src/localAssets/sources.ts";
 import type {Story} from "../src/story/schema.ts";
 import type {
   ImageAssetCategory,
+  LocalAssetCategory,
+  LocalAssetRef,
+  LocalAudioRef,
   LocalImageRef,
 } from "../src/localAssets/refs.ts";
 
@@ -26,22 +37,39 @@ export const LOCAL_ASSETS_ROOT = "local-assets";
 export const categoryFolder = {
   pose: "poses",
   background: "backgrounds",
+  audio: "audio",
 } as const;
 
-export type CandidateResult =
-  | {
-      relativePath: string;
-      ok: true;
-      ref: LocalImageRef;
-      digest: string;
-      image: InspectedImage;
-      bytes: Uint8Array;
-    }
+export type ImageCandidate = {
+  relativePath: string;
+  ok: true;
+  ref: LocalImageRef;
+  digest: string;
+  image: InspectedImage;
+  bytes: Uint8Array;
+};
+
+export type AudioCandidate = {
+  relativePath: string;
+  ok: true;
+  ref: LocalAudioRef;
+  digest: string;
+  audio: AudioMetadata;
+  bytes: Uint8Array;
+};
+
+export type RejectedCandidate =
   | {
       relativePath: string;
       ok: false;
       reason: ImageRejection | "changed-during-scan" | "unreadable";
-    };
+    }
+  | {relativePath: string; ok: false; reason: "audio-rejected"; message: string};
+
+export type CandidateResult =
+  | ImageCandidate
+  | AudioCandidate
+  | RejectedCandidate;
 
 export type ScanDeps = {
   stat?: typeof import("node:fs/promises").stat; // root and category folders (follows symlinks)
@@ -91,7 +119,7 @@ type Entry = {relativePath: string; stats: Stats};
 
 const categoryDirectory = (
   root: string,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
 ): string => join(root, categoryFolder[category]);
 
 /**
@@ -101,7 +129,7 @@ const categoryDirectory = (
  */
 export const categoryFolderExists = async (
   root: string,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   deps: ScanDeps = {},
 ): Promise<boolean> => {
   const statImpl = deps.stat ?? stat;
@@ -172,14 +200,23 @@ const sameIdentity = (
 const inspectEntry = async (
   directory: string,
   entry: Entry,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   deps: ScanDeps,
 ): Promise<CandidateResult> => {
   const {relativePath, stats} = entry;
+  // The size is bounded by the category's own limit before anything is read or hashed.
   const size = checkLocalAssetByteSize(stats.size, category);
 
   if (!size.ok) {
-    return {relativePath, ok: false, reason: size.reason};
+    return category === "audio"
+      ? {
+          relativePath,
+          ok: false,
+          reason: "audio-rejected",
+          message:
+            size.reason === "empty" ? AUDIO_EMPTY_MESSAGE : AUDIO_TOO_LARGE_MESSAGE,
+        }
+      : {relativePath, ok: false, reason: size.reason};
   }
 
   const openImpl = deps.open ?? open;
@@ -202,6 +239,31 @@ const inspectEntry = async (
     }
   } catch {
     return {relativePath, ok: false, reason: "unreadable"};
+  }
+
+  if (category === "audio") {
+    // Metadata only: Node has no WebCodecs, the render preflight decodes (AUDIO-005).
+    const audioInspection = await inspectAudio(bytes);
+
+    if (!audioInspection.ok) {
+      return {
+        relativePath,
+        ok: false,
+        reason: "audio-rejected",
+        message: audioInspection.message,
+      };
+    }
+
+    const audioDigest = await sha256Hex(bytes);
+
+    return {
+      relativePath,
+      ok: true,
+      ref: buildLocalAssetRef("audio", audioDigest),
+      digest: audioDigest,
+      audio: audioInspection.metadata,
+      bytes,
+    };
   }
 
   const inspection = inspectImageBytes(bytes);
@@ -230,7 +292,7 @@ const inspectEntry = async (
  */
 export async function* scanCategory(
   root: string,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   deps: ScanDeps = {},
 ): AsyncGenerator<CandidateResult> {
   if (!(await categoryFolderExists(root, category, deps))) {
@@ -255,16 +317,18 @@ export type InventoryLine =
   | {relativePath: string; ref: LocalImageRef}
   | {relativePath: string; rejected: string}; // describeImageRejection or scan reason
 
-const describeScanFailure = (
-  reason: ImageRejection | "changed-during-scan" | "unreadable",
-): string => {
-  switch (reason) {
+const describeScanFailure = (result: RejectedCandidate): string => {
+  if (result.reason === "audio-rejected") {
+    return result.message;
+  }
+
+  switch (result.reason) {
     case "changed-during-scan":
       return "The file changed while it was being scanned.";
     case "unreadable":
       return "The file could not be read.";
     default:
-      return describeImageRejection(reason);
+      return describeImageRejection(result.reason);
   }
 };
 
@@ -277,11 +341,11 @@ const inventoryCategory = async (
 
   for await (const result of scanCategory(root, category, deps)) {
     lines.push(
-      result.ok
+      result.ok && "image" in result
         ? {relativePath: result.relativePath, ref: result.ref}
         : {
             relativePath: result.relativePath,
-            rejected: describeScanFailure(result.reason),
+            rejected: result.ok ? "" : describeScanFailure(result),
           },
     );
   }
@@ -323,6 +387,39 @@ export const inventoryLocalAssets = async (
   return {rootExists: true, poses, backgrounds};
 };
 
+export type AudioInventoryLine =
+  | {relativePath: string; ref: LocalAudioRef; durationSeconds: number}
+  | {relativePath: string; rejected: string};
+
+/** The audio folder of `npm run assets`: separate from inventoryLocalAssets so its result shape stays as in v0.3. */
+export const inventoryAudioAssets = async (
+  root: string,
+  deps: ScanDeps = {},
+): Promise<{folderExists: boolean; lines: AudioInventoryLine[]}> => {
+  if (!(await categoryFolderExists(root, "audio", deps))) {
+    return {folderExists: false, lines: []};
+  }
+
+  const lines: AudioInventoryLine[] = [];
+
+  for await (const result of scanCategory(root, "audio", deps)) {
+    lines.push(
+      result.ok && "audio" in result
+        ? {
+            relativePath: result.relativePath,
+            ref: result.ref,
+            durationSeconds: result.audio.durationSeconds,
+          }
+        : {
+            relativePath: result.relativePath,
+            rejected: result.ok ? "" : describeScanFailure(result),
+          },
+    );
+  }
+
+  return {folderExists: true, lines};
+};
+
 export type StagedLocalAssets = {sources: LocalAssetSourceMap};
 
 export class MissingLocalAssetsError extends Error {
@@ -340,11 +437,25 @@ const stagedExtension = (mimeType: InspectedImage["mimeType"]): string => {
   }
 };
 
-const categoryHeading = {pose: "Pose", background: "Background"} as const;
+const categoryHeading = {pose: "Pose", background: "Background", audio: "Audio"} as const;
+
+const usedByLine = (usage: LocalAssetUsage): string => {
+  const scenes = usage.sceneIndexes.map((scene) => scene + 1).join(", ");
+
+  if (usage.category !== "audio") {
+    return `  used by scenes: ${scenes}`;
+  }
+
+  const music = usage.roles.includes("music");
+
+  return scenes === ""
+    ? "  used by: the music"
+    : `  used by scenes: ${scenes}${music ? " and the music" : ""}`;
+};
 
 const formatMissingLocalAssets = (
   root: string,
-  missing: ReturnType<typeof collectStoryLocalAssetUsages>,
+  missing: LocalAssetUsage[],
 ): string => {
   const count = missing.length;
   const lines = [
@@ -353,7 +464,7 @@ const formatMissingLocalAssets = (
       : `Cannot render Story: ${count} local assets are missing.`,
   ];
 
-  for (const category of ["pose", "background"] as const) {
+  for (const category of ["pose", "background", "audio"] as const) {
     const inCategory = missing.filter((usage) => usage.category === category);
 
     if (inCategory.length === 0) {
@@ -369,18 +480,36 @@ const formatMissingLocalAssets = (
 
       lines.push(
         `  ${usage.ref}`,
-        `  used by scenes: ${usage.sceneIndexes.map((scene) => scene + 1).join(", ")}`,
+        usedByLine(usage),
         `  searched: ${displayRoot(root)}/${categoryFolder[category]}/`,
       );
     }
   }
 
-  lines.push(
-    "",
-    "Copy the original PNG/JPEG/WebP file into that folder (any filename),",
-    "or replace the reference in the Story. Run `npm run assets` to list the refs",
-    "of the files that are there.",
-  );
+  const hasImages = missing.some((usage) => usage.category !== "audio");
+  const hasAudio = missing.some((usage) => usage.category === "audio");
+
+  lines.push("");
+
+  if (hasImages) {
+    lines.push(
+      "Copy the original PNG/JPEG/WebP file into that folder (any filename),",
+      "or replace the reference in the Story. Run `npm run assets` to list the refs",
+      "of the files that are there.",
+    );
+  }
+
+  if (hasAudio) {
+    if (hasImages) {
+      lines.push("");
+    }
+
+    lines.push(
+      "Copy the original audio file (MP3, WAV, M4A or Ogg Opus) into that folder (any filename),",
+      "or replace the reference in the Story. Run `npm run assets` to list the refs",
+      "of the files that are there.",
+    );
+  }
 
   return lines.join("\n");
 };
@@ -399,16 +528,17 @@ export const stageLocalAssetsForStory = async (
   options: {
     root: string;
     publicDir: string;
-    onStaged?: (ref: LocalImageRef, stagedPath: string) => Promise<void> | void;
+    onStaged?: (ref: LocalAssetRef, stagedPath: string) => Promise<void> | void;
   },
   deps: ScanDeps = {},
 ): Promise<StagedLocalAssets> => {
   const usages = collectStoryLocalAssetUsages(story);
-  const sources: Partial<Record<LocalImageRef, LocalAssetSourceMap[LocalImageRef]>> =
-    {};
-  const missing: typeof usages = [];
+  const sources: Partial<
+    Record<LocalAssetRef, LocalAssetSourceMap[LocalAssetRef]>
+  > = {};
+  const missing: LocalAssetUsage[] = [];
 
-  for (const category of ["pose", "background"] as const) {
+  for (const category of ["pose", "background", "audio"] as const) {
     const required = new Map(
       usages
         .filter((usage) => usage.category === category)
@@ -430,7 +560,11 @@ export const stageLocalAssetsForStory = async (
         continue;
       }
 
-      const sourcePath = `${STAGED_LOCAL_ASSETS_DIR}/${category}/${candidate.digest}.${stagedExtension(candidate.image.mimeType)}`;
+      const extension =
+        "image" in candidate
+          ? stagedExtension(candidate.image.mimeType)
+          : audioFileExtensionFor(candidate.audio.container);
+      const sourcePath = `${STAGED_LOCAL_ASSETS_DIR}/${category}/${candidate.digest}.${extension}`;
       const stagedPath = join(options.publicDir, ...sourcePath.split("/"));
 
       await mkdir(dirname(stagedPath), {recursive: true});
