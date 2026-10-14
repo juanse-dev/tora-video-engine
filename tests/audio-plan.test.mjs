@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {
+  MUSIC,
   SFX,
   VOICE,
   buildPlan,
@@ -315,5 +316,428 @@ describe("compileAudioPlan: clipping hint without music", () => {
 
     assert.equal(plan.maxSimultaneousGain, 1);
     assert.equal(tracksOf(plan, "sfx").length, 1);
+  });
+});
+
+const close = (actual, expected, label = "") =>
+  assert.ok(
+    Math.abs(actual - expected) < 1e-9,
+    `${label} expected ${expected}, got ${actual}`,
+  );
+// Five 4 s scenes: a 600-frame Story, longer than the 10 s (300-frame) music.
+const loopStory = (music = {src: MUSIC}) =>
+  makeStory(Array.from({length: 5}, () => scene({duration: 4})), music);
+
+describe("compileAudioPlan: music loop", () => {
+  it("overlaps copies at k * (300 - 9) frames and truncates the last one", () => {
+    const plan = buildPlan(loopStory());
+
+    assert.deepEqual(shape(plan), [
+      ["music-0", 0, 300],
+      ["music-1", 291, 300],
+      ["music-2", 582, 18],
+    ]);
+    assert.deepEqual(plan.issues, []);
+    assert.deepEqual(
+      plan.tracks.map((track) => [track.role, track.ref, track.sceneIndex]),
+      [
+        ["music", MUSIC, null],
+        ["music", MUSIC, null],
+        ["music", MUSIC, null],
+      ],
+    );
+  });
+
+  it("crosses equal-power: out^2 + in^2 = 1 at every overlap frame, both monotonic", () => {
+    const [first, second] = buildPlan(loopStory()).tracks;
+    let previousOut = 2;
+    let previousIn = -1;
+
+    for (let frame = 291; frame <= 299; frame += 1) {
+      const out = first.gainAt(frame);
+      const incoming = second.gainAt(frame);
+
+      close(out * out + incoming * incoming, 1, `frame ${frame}`);
+      assert.ok(out < previousOut, `out falls at ${frame}`);
+      assert.ok(incoming > previousIn, `in rises at ${frame}`);
+      previousOut = out;
+      previousIn = incoming;
+    }
+
+    close(first.gainAt(290), 1);
+    close(second.gainAt(300), 1);
+  });
+
+  it("documents D-4: two tones sum to sqrt(2)*cos(phi/2) at the centre, noise keeps its power", () => {
+    const [first, second] = buildPlan(loopStory()).tracks;
+    const out = first.gainAt(295);
+    const incoming = second.gainAt(295);
+    const amplitude = (a, b, phi) =>
+      Math.sqrt(a * a + b * b + 2 * a * b * Math.cos(phi));
+    const radians = (degrees) => (degrees * Math.PI) / 180;
+
+    // Equal power: 1.41 in phase, 0.71 at 120 degrees, 0 in antiphase.
+    close(amplitude(out, incoming, 0), Math.SQRT2);
+    close(amplitude(out, incoming, radians(120)), Math.SQRT1_2);
+    close(amplitude(out, incoming, radians(180)), 0);
+    // The linear law (u, 1 - u) would give cos(phi/2): 1, 0.5, 0.
+    close(amplitude(0.5, 0.5, 0), 1);
+    close(amplitude(0.5, 0.5, radians(120)), 0.5);
+    close(amplitude(0.5, 0.5, radians(180)), 0);
+
+    // Two independent seeded noise signals keep their power across the overlap.
+    let seed = 20260101;
+    const uniform = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+
+      return seed / 4294967296;
+    };
+    const gaussian = () =>
+      Math.sqrt(-2 * Math.log(1 - uniform())) * Math.cos(2 * Math.PI * uniform());
+    const samplesPerFrame = 1600;
+    let power = 0;
+    let count = 0;
+
+    for (let frame = 291; frame <= 299; frame += 1) {
+      for (let sample = 0; sample < samplesPerFrame; sample += 1) {
+        const mixed =
+          first.gainAt(frame) * gaussian() + second.gainAt(frame) * gaussian();
+
+        power += mixed * mixed;
+        count += 1;
+      }
+    }
+
+    const rms = Math.sqrt(power / count);
+
+    assert.ok(rms > 0.9 && rms < 1.1, `RMS ${rms}`);
+  });
+
+  it("plays one copy of the Story length when the music is longer", () => {
+    const longer = buildPlan(
+      makeStory([scene({duration: 5})], {src: MUSIC}),
+    );
+
+    assert.deepEqual(shape(longer), [["music-0", 0, 150]]);
+
+    const exact = buildPlan(
+      makeStory([scene({duration: 10})], {src: MUSIC}),
+    );
+
+    assert.deepEqual(shape(exact), [["music-0", 0, 300]]);
+  });
+
+  it("plays the 0.12 s pop once and reports music-too-short-to-loop", () => {
+    const plan = buildPlan(makeStory([scene()], {src: "pop"}), {
+      durations: {pop: 0.12},
+    });
+
+    assert.deepEqual(shape(plan), [["music-0", 0, 4]]);
+    assert.deepEqual(plan.issues, [{kind: "music-too-short-to-loop"}]);
+  });
+
+  it("loops 1.0 s music with a 9-frame crossfade and a 21-frame stride", () => {
+    const plan = buildPlan(
+      makeStory([scene({duration: 100 / 30})], {src: MUSIC}),
+      {durations: {[MUSIC]: 1}},
+    );
+
+    assert.deepEqual(shape(plan), [
+      ["music-0", 0, 30],
+      ["music-1", 21, 30],
+      ["music-2", 42, 30],
+      ["music-3", 63, 30],
+      ["music-4", 84, 16],
+    ]);
+
+    const half = buildPlan(
+      makeStory([scene({duration: 100 / 30})], {src: MUSIC}),
+      {durations: {[MUSIC]: 0.5}},
+    );
+
+    assert.deepEqual(shape(half), [["music-0", 0, 15]]);
+    assert.deepEqual(half.issues, [{kind: "music-too-short-to-loop"}]);
+  });
+
+  it("derives the overlap from the FPS", () => {
+    const plan = buildPlan(
+      makeStory([scene({duration: 20})], {src: MUSIC}),
+      {fps: 60},
+    );
+
+    // 10 s = 600 frames, X = round(0.3 * 60) = 18, stride 582, Story = 1200 frames.
+    assert.deepEqual(shape(plan), [
+      ["music-0", 0, 600],
+      ["music-1", 582, 600],
+      ["music-2", 1164, 36],
+    ]);
+  });
+
+  it("bounds the copies of a 3,600 s Story at 5,143 and refuses a longer one", () => {
+    const hour = makeStory([scene({duration: 3600})], {src: MUSIC});
+    const plan = buildPlan(hour, {durations: {[MUSIC]: 1}});
+
+    assert.equal(plan.tracks.length, 5143);
+    assert.deepEqual(
+      [plan.tracks[5142].fromFrame, plan.tracks[5142].durationInFrames],
+      [107982, 18],
+    );
+    close(plan.maxSimultaneousGain, Math.SQRT2);
+
+    const tooLong = buildPlan(makeStory([scene({duration: 3601})], {src: MUSIC}), {
+      durations: {[MUSIC]: 1},
+    });
+
+    assert.deepEqual(tooLong.tracks, []);
+    assert.deepEqual(tooLong.issues, [{kind: "story-too-long-for-audio"}]);
+  });
+
+  it("emits nothing for a missing or pending music source and keeps the other tracks", () => {
+    const story = makeStory([scene({sfx: {src: SFX}})], {src: MUSIC});
+    const missing = buildPlan(story, {
+      sourceState: (ref) => (ref === MUSIC ? "missing" : "ready"),
+    });
+
+    assert.deepEqual(shape(missing), [["sfx-0", 0, 12]]);
+    assert.deepEqual(missing.issues, [
+      {kind: "missing-audio", ref: MUSIC, role: "music", sceneIndex: null},
+    ]);
+    assert.equal(missing.musicEnvelopeAt, null);
+
+    const pending = buildPlan(story, {
+      sourceState: (ref) => (ref === MUSIC ? "pending" : "ready"),
+    });
+
+    assert.deepEqual(pending.issues, [
+      {kind: "pending-audio", ref: MUSIC, role: "music", sceneIndex: null},
+    ]);
+
+    const unmeasured = buildPlan(story, {durations: {[SFX]: 0.4}});
+
+    assert.deepEqual(unmeasured.issues, [
+      {kind: "pending-audio", ref: MUSIC, role: "music", sceneIndex: null},
+    ]);
+  });
+});
+
+describe("compileAudioPlan: music envelope", () => {
+  // A 4 s Story: 120 frames, shorter than the music, so one copy.
+  const fourSeconds = (music) => makeStory([scene({duration: 4})], music);
+
+  it("ramps the fades linearly with values at their endpoints and midpoints", () => {
+    const plan = buildPlan(
+      fourSeconds({src: MUSIC, fadeIn: 1, fadeOut: 1}),
+    );
+    const envelope = plan.musicEnvelopeAt;
+
+    assert.deepEqual(plan.issues, []);
+    close(envelope(0), 0);
+    close(envelope(15), 0.5);
+    close(envelope(30), 1);
+    close(envelope(60), 1);
+    close(envelope(105), 0.5);
+    close(envelope(119), 1 / 30);
+    close(envelope(120), 0);
+    close(plan.tracks[0].gainAt(15), 0.5);
+  });
+
+  it("scales fades that do not fit and records fades-scaled", () => {
+    const plan = buildPlan(fourSeconds({src: MUSIC, fadeIn: 3, fadeOut: 3}));
+    const envelope = plan.musicEnvelopeAt;
+
+    assert.deepEqual(plan.issues, [{kind: "fades-scaled"}]);
+    close(envelope(0), 0);
+    close(envelope(30), 0.5);
+    close(envelope(60), 1);
+    close(envelope(90), 0.5);
+
+    const exact = buildPlan(fourSeconds({src: MUSIC, fadeIn: 2, fadeOut: 2}));
+
+    assert.deepEqual(exact.issues, []);
+  });
+
+  it("applies the music volume, default 1", () => {
+    const full = buildPlan(fourSeconds({src: MUSIC}));
+    const quiet = buildPlan(fourSeconds({src: MUSIC, volume: 0.6}));
+
+    assert.equal(full.musicEnvelopeAt(60), 1);
+    close(quiet.musicEnvelopeAt(60), 0.6);
+  });
+
+  it("has no envelope without music", () => {
+    assert.equal(
+      buildPlan(makeStory([scene({sfx: {src: SFX}})])).musicEnvelopeAt,
+      null,
+    );
+  });
+});
+
+describe("compileAudioPlan: ducking", () => {
+  // `lengths[i]` is the length in frames of scene i; every scene after the
+  // first carries an sfx (12 frames at 30 FPS).
+  const withSfx = (...lengths) =>
+    makeStory(
+      lengths.map((length, index) =>
+        scene({
+          duration: length / 30,
+          ...(index === 0 ? {} : {sfx: {src: SFX}}),
+        }),
+      ),
+      {src: MUSIC},
+    );
+
+  it("ramps to the default 0.35 over 5 frames before an effect and back after it", () => {
+    // Scene 1 starts at frame 90 and its sfx sounds on [90, 102).
+    const envelope = buildPlan(withSfx(90, 90, 90)).musicEnvelopeAt;
+
+    close(envelope(84), 1);
+    close(envelope(85), 1);
+    close(envelope(86), 0.87);
+    close(envelope(89), 0.48);
+    close(envelope(90), 0.35);
+    close(envelope(101), 0.35);
+    close(envelope(102), 0.35);
+    close(envelope(103), 0.48);
+    close(envelope(106), 0.87);
+    close(envelope(107), 1);
+  });
+
+  it("merges effects 0.2 s apart but not 0.5 s apart", () => {
+    // Windows [90, 102) and [108, 120): a 6-frame gap merges into one.
+    const merged = buildPlan(withSfx(90, 18, 90)).musicEnvelopeAt;
+
+    close(merged(105), 0.35);
+    close(merged(107), 0.35);
+
+    // Windows [90, 102) and [117, 129): a 15-frame gap stays two windows.
+    const apart = buildPlan(withSfx(90, 27, 90)).musicEnvelopeAt;
+
+    close(apart(105), 0.74);
+    close(apart(109), 1);
+    close(apart(115), 0.61);
+  });
+
+  it("merges a gap of 8 frames and keeps a gap of 9", () => {
+    // Scene 1 is 20 frames long: windows [90, 102) and [110, 122), gap 8.
+    const eight = buildPlan(withSfx(90, 20, 90)).musicEnvelopeAt;
+
+    close(eight(106), 0.35);
+
+    // Scene 1 is 21 frames long: windows [90, 102) and [111, 123), gap 9.
+    const nine = buildPlan(withSfx(90, 21, 90)).musicEnvelopeAt;
+
+    close(nine(106), 0.87);
+  });
+
+  it("ducks from the first frame when the effect starts the Story", () => {
+    const plan = buildPlan(
+      makeStory([scene({sfx: {src: SFX}}), scene()], {src: MUSIC}),
+    );
+
+    close(plan.musicEnvelopeAt(0), 0.35);
+    close(plan.musicEnvelopeAt(12), 0.35);
+    close(plan.musicEnvelopeAt(17), 1);
+  });
+
+  it("ducks under a voice for the whole voice", () => {
+    const plan = buildPlan(
+      makeStory([scene({voice: {src: VOICE}}), scene()], {src: MUSIC}),
+    );
+
+    close(plan.musicEnvelopeAt(0), 0.35);
+    close(plan.musicEnvelopeAt(65), 0.35);
+    close(plan.musicEnvelopeAt(66), 0.35);
+    close(plan.musicEnvelopeAt(71), 1);
+  });
+
+  it("honours duck 1 (no ducking) and duck 0 (silence under effects)", () => {
+    const story = (duck) =>
+      makeStory([scene({duration: 3}), scene({sfx: {src: SFX}})], {
+        src: MUSIC,
+        duck,
+      });
+
+    for (const frame of [0, 89, 90, 95, 120]) {
+      assert.equal(buildPlan(story(1)).musicEnvelopeAt(frame), 1);
+    }
+
+    close(buildPlan(story(0)).musicEnvelopeAt(95), 0);
+    close(buildPlan(story(0.5)).musicEnvelopeAt(95), 0.5);
+  });
+
+  it("gives a 1-frame effect a 1-frame window with the usual ramps", () => {
+    const plan = buildPlan(
+      makeStory([scene({duration: 1}), scene({duration: 1, sfx: {src: SFX}})], {
+        src: MUSIC,
+      }),
+      {durations: {[MUSIC]: 10, [SFX]: 0.005}},
+    );
+    const envelope = plan.musicEnvelopeAt;
+
+    close(envelope(25), 1);
+    close(envelope(29), 0.48);
+    close(envelope(30), 0.35);
+    close(envelope(31), 0.35);
+    close(envelope(32), 0.48);
+    close(envelope(36), 1);
+  });
+
+  it("ducks copies of looping music through the shared envelope", () => {
+    const plan = buildPlan(
+      makeStory(
+        Array.from({length: 5}, (_, index) =>
+          scene({duration: 4, ...(index === 1 ? {sfx: {src: SFX}} : {})}),
+        ),
+        {src: MUSIC},
+      ),
+    );
+
+    // Scene 1 starts at frame 120: the first copy is ducked there.
+    close(plan.tracks[0].gainAt(125), 0.35);
+    close(plan.tracks[0].gainAt(200), 1);
+  });
+});
+
+describe("compileAudioPlan: clipping hint with music", () => {
+  it("is sqrt(2) for looping full-volume music and 1 when it does not loop", () => {
+    close(buildPlan(loopStory()).maxSimultaneousGain, Math.SQRT2);
+    close(
+      buildPlan(makeStory([scene({duration: 10})], {src: MUSIC}))
+        .maxSimultaneousGain,
+      1,
+    );
+    close(
+      buildPlan(makeStory([scene({duration: 4})], {src: MUSIC}))
+        .maxSimultaneousGain,
+      1,
+    );
+  });
+
+  it("adds an overlapping effect, voice and ducked music", () => {
+    const plan = buildPlan(
+      makeStory(
+        [
+          scene({
+            duration: 4,
+            sfx: {src: SFX},
+            voice: {src: VOICE, volume: 0.5},
+          }),
+        ],
+        {src: MUSIC, volume: 0.8, duck: 0.5},
+      ),
+    );
+
+    // Frames 0..11: sfx 1 + voice 0.5 + music 0.8 * 0.5 = 1.9.
+    close(plan.maxSimultaneousGain, 1.9);
+  });
+});
+
+describe("compileAudioPlan: keys with music", () => {
+  it("names music copies music-0, music-1, ... and keeps every key stable", () => {
+    const story = loopStory();
+    const keys = () => buildPlan(story).tracks.map((track) => track.key);
+
+    assert.deepEqual(keys(), ["music-0", "music-1", "music-2"]);
+    assert.deepEqual(keys(), keys());
   });
 });
