@@ -1,4 +1,9 @@
 import {expect, test} from "@playwright/test";
+import {
+  buildStoryYaml,
+  metadataOnlyRecord,
+} from "./helpers/seedAssetLibrary.mjs";
+import {applyYaml, openSeeded} from "./helpers/localAssetPage.mjs";
 
 // The Player controls sit below the preview; a tall viewport keeps them on screen.
 test.use({viewport: {width: 1400, height: 1500}});
@@ -16,12 +21,20 @@ const sceneBlock = (index) =>
 
 // Ten 1 s scenes (300 frames), each starting the bundled `ding`: something
 // sounds every second, so a Player that wrongly stays unmuted is caught fast.
-const AUDIO_YAML = [
-  "title: Audio preview fixture",
-  "scenes:",
-  ...Array.from({length: 10}, (_, index) => sceneBlock(index)),
-  "",
-].join("\n");
+const audioYaml = (sceneCount) =>
+  [
+    "title: Audio preview fixture",
+    "scenes:",
+    ...Array.from({length: sceneCount}, (_, index) => sceneBlock(index)),
+    "",
+  ].join("\n");
+
+const AUDIO_YAML = audioYaml(10);
+
+// Twenty 1 s scenes (600 frames) for the test that waits for the playhead to
+// advance 75 frames after a remount: on a slow runner a 300-frame Player
+// could reach its end (it does not loop) before that wait finishes.
+const LONG_AUDIO_YAML = audioYaml(20);
 
 const SILENT_YAML = [
   "title: Silent preview fixture",
@@ -114,10 +127,10 @@ const auditAfter = (page, since) =>
     since,
   );
 
-const openWithAudio = async (page) => {
+const openWithAudio = async (page, source = AUDIO_YAML) => {
   await page.goto("/", {waitUntil: "domcontentloaded"});
   await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
-  await importYaml(page, "audio.yaml", AUDIO_YAML);
+  await importYaml(page, "audio.yaml", source);
   await expect(page.locator(".preview-frame")).toHaveAttribute(
     "data-tora-audio-armed",
     "true",
@@ -228,7 +241,7 @@ test("audio -> no audio -> audio mutes again and no audible start happens until 
   page,
 }) => {
   await page.addInitScript(installAudioSpy);
-  await openWithAudio(page);
+  await openWithAudio(page, LONG_AUDIO_YAML);
 
   // The user unmutes and plays: audio really starts (positive control).
   await volumeButton(page).click();
@@ -253,7 +266,7 @@ test("audio -> no audio -> audio mutes again and no audible start happens until 
 
   const transition = await markNow(page);
 
-  await importYaml(page, "audio.yaml", AUDIO_YAML);
+  await importYaml(page, "audio.yaml", LONG_AUDIO_YAML);
   await expect(volumeButton(page)).toHaveAttribute("aria-label", "Unmute sound");
   await expect(page.locator(".preview-frame")).toHaveAttribute(
     "data-tora-muted",
@@ -319,6 +332,44 @@ test("the Player restores a valid stored volume and persists a changed one", asy
   await expect
     .poll(() => page.evaluate(() => window.localStorage.getItem("tora.playerVolume")))
     .toBe("0.2");
+});
+
+test("the remembered volume survives an over-budget unmount and remount of the Player", async ({
+  page,
+}) => {
+  const meta = {mimeType: "image/png", byteSize: 1000, width: 10, height: 10};
+  const records = Array.from({length: 65}, (_, index) =>
+    metadataOnlyRecord("pose", index + 1, meta),
+  );
+
+  await openSeeded(page, records);
+  await applyYaml(page, AUDIO_YAML);
+  await volumeButton(page).click();
+  await volumeButton(page).hover();
+
+  const slider = page.locator('.preview-frame input[aria-label="Change volume"]');
+
+  await slider.fill("0.3");
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem("tora.playerVolume")))
+    .toBe("0.3");
+
+  // 65 local refs exceed the cap: the Player unmounts.
+  await applyYaml(
+    page,
+    buildStoryYaml(
+      records.map((record) => ({pose: record.ref, background: "office"})),
+    ),
+  );
+  await expect(page.locator("[data-local-asset-over-budget]")).toBeVisible();
+  await expect(volumeButton(page)).toHaveCount(0);
+
+  // Back to the audio Story: a new Player mounts with the remembered volume.
+  await applyYaml(page, AUDIO_YAML);
+  await expect(volumeButton(page)).toHaveAttribute("aria-label", "Unmute sound");
+  await volumeButton(page).click();
+  await volumeButton(page).hover();
+  await expect(slider).toHaveValue("0.3");
 });
 
 test("a garbage stored volume falls back to full volume", async ({page}) => {

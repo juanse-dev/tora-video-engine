@@ -88,7 +88,13 @@ export const Preview = ({
   // muted itself, so `armed` flips in a layout effect (see below).
   const [armed, setArmed] = useState(false);
   const audioArmed = hasAudio && armed;
-  const [initialVolume] = useState(() => readStoredPlayerVolume() ?? 1);
+  // Re-read whenever the Player (re)mounts: an over-budget Story unmounts it,
+  // and the new Player must start at the volume the user last chose.
+  const initialVolume = useMemo(
+    () => readStoredPlayerVolume() ?? 1,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overBudget],
+  );
   const inputProps = useMemo(
     () => ({
       story,
