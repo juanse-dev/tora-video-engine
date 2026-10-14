@@ -285,6 +285,8 @@ test("a Story ref that is not in the library shows a missing card with its scene
   await expect(missingCard(page, voice.ref)).toBeVisible();
   await expect(missingCard(page, voice.ref)).toContainText("Used by scene 1.");
   await expect(heading(page, 0)).toBeVisible();
+  // The missing card is the list's content: the empty-list line stays away, as in the image sections.
+  await expect(section(page).getByText("No imported audio yet.")).toHaveCount(0);
 });
 
 test("a referenced audio whose stored payload is corrupt shows only its damaged card, never also a regular card", async ({page}) => {
@@ -333,4 +335,58 @@ test("the Player length comes from the imported voice's duration: one auto scene
   await page.waitForTimeout(1500);
   // 81 frames: the last is frame 80. The 3 s fallback would have reached frame 89.
   expect(await page.evaluate(() => window.__maxFrame)).toBe(80);
+});
+
+const LIBRARY_LOCK = "tora-video-engine:asset-library";
+
+/** A second tab of the same browser context that holds the exclusive library lock until released. */
+const holdLibraryLockInOtherTab = async (page) => {
+  const holder = await page.context().newPage();
+
+  await holder.goto("/", {waitUntil: "domcontentloaded"});
+  await holder.evaluate(
+    (name) =>
+      new Promise((granted) => {
+        void navigator.locks.request(
+          name,
+          {mode: "exclusive"},
+          () =>
+            new Promise((release) => {
+              window.__releaseLibraryLock = release;
+            }),
+        );
+
+        const poll = () =>
+          window.__releaseLibraryLock === undefined ? setTimeout(poll, 10) : granted();
+
+        poll();
+      }),
+    LIBRARY_LOCK,
+  );
+
+  return {release: () => holder.evaluate(() => window.__releaseLibraryLock())};
+};
+
+test("while an audio import waits for the library lock, authoring is locked and the audio import, rename and delete controls are disabled", async ({page}) => {
+  const record = await audioWavRecord("tone-440-2.2s.wav");
+
+  await openSeeded(page, [record]);
+  await expect(cardFor(page, record.ref)).toBeVisible();
+
+  const {release} = await holdLibraryLockInOtherTab(page);
+
+  await importInput(page).setInputFiles(upload("tone-880-0.4s.wav", fixtureBytes("tone-880-0.4s.wav")));
+  await expect(statusLine(page)).toHaveText("Saving…");
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-authoring-locked", "true");
+  await expect(importInput(page)).toBeDisabled();
+  await expect(cardFor(page, record.ref).getByRole("button", {name: "Rename tone-440-2.2s"})).toBeDisabled();
+  await expect(cardFor(page, record.ref).getByRole("button", {name: "Delete tone-440-2.2s"})).toBeDisabled();
+
+  await release();
+  await expect(statusLine(page)).toHaveText(imported("tone-880-0.4s"));
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-authoring-locked", "false");
+  await expect(importInput(page)).toBeEnabled();
+  await expect(cardFor(page, record.ref).getByRole("button", {name: "Rename tone-440-2.2s"})).toBeEnabled();
+  await expect(cardFor(page, record.ref).getByRole("button", {name: "Delete tone-440-2.2s"})).toBeEnabled();
+  await expect(heading(page, 2)).toBeVisible();
 });

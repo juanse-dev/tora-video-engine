@@ -142,7 +142,7 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
       )}
 
       {missing.length > 0 || (ready && page.entries.length > 0) ? (
-        <div className="asset-grid my-assets-grid">
+        <div className="asset-grid audio-grid my-assets-grid">
           {missing.map((item) => (
             <MissingLocalAssetCard
               key={item.usage.ref}
@@ -184,6 +184,7 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
       ) : null}
 
       {ready &&
+      missing.length === 0 &&
       page.error === null &&
       page.total === 0 &&
       page.loaded &&

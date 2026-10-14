@@ -18,7 +18,7 @@ const poseRef = `local:pose:sha256:${"1".padStart(64, "0")}`;
 describe("formatAudioDuration", () => {
   it("rounds to whole seconds, never shows 0:00 for a positive duration, and handles bad input", () => {
     const cases = [
-      [0.12, "0:01"], [2.2, "0:02"], [2.6, "0:03"], [59.6, "1:00"], [125, "2:05"],
+      [0.12, "0:01"], [0.4, "0:01"], [2.2, "0:02"], [2.6, "0:03"], [59.5, "1:00"], [59.6, "1:00"], [125, "2:05"],
       [163.84, "2:44"], [300, "5:00"], [0, "0:00"], [-1, "0:00"], [Number.NaN, "0:00"], [Number.POSITIVE_INFINITY, "0:00"],
     ];
 
