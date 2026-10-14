@@ -741,3 +741,240 @@ describe("compileAudioPlan: keys with music", () => {
     assert.deepEqual(keys(), keys());
   });
 });
+
+describe("compileAudioPlan: silent Story bound (AINV-6)", () => {
+  it("returns the empty plan, with no issue, for a silent Story longer than 3,600 s", () => {
+    const plan = buildPlan(makeStory([scene({duration: 3601})]));
+
+    assert.deepEqual(plan, {
+      tracks: [],
+      issues: [],
+      maxSimultaneousGain: 0,
+      musicEnvelopeAt: null,
+    });
+  });
+});
+
+describe("compileAudioPlan: ducking uses emitted tracks only", () => {
+  // Scene 0 is 90 frames, scene 1 (with the sfx) starts at frame 90 and lasts
+  // 90 frames, scene 2 is 90 frames: a 270-frame Story, shorter than the 300-frame music.
+  const story = makeStory(
+    [
+      scene({duration: 3}),
+      scene({duration: 3, sfx: {src: SFX}}),
+      scene({duration: 3}),
+    ],
+    {src: MUSIC},
+  );
+  // Where an emitted sfx [90, 102) would duck the music: ramp 85..89, window, ramp 102..106.
+  const duckedFrames = [86, 89, 90, 95, 101, 102, 103, 106];
+  const cases = [
+    {
+      name: "missing",
+      options: {sourceState: (ref) => (ref === SFX ? "missing" : "ready")},
+      issue: {kind: "missing-audio", ref: SFX, role: "sfx", sceneIndex: 1},
+    },
+    {
+      name: "pending",
+      options: {sourceState: (ref) => (ref === SFX ? "pending" : "ready")},
+      issue: {kind: "pending-audio", ref: SFX, role: "sfx", sceneIndex: 1},
+    },
+    {
+      name: "ready but unmeasured",
+      options: {durations: {[MUSIC]: 10}},
+      issue: {kind: "pending-audio", ref: SFX, role: "sfx", sceneIndex: 1},
+    },
+  ];
+
+  for (const {name, options, issue} of cases) {
+    it(`does not duck the music for a ${name} sfx`, () => {
+      const plan = buildPlan(story, options);
+
+      assert.deepEqual(shape(plan), [["music-0", 0, 270]]);
+      assert.deepEqual(plan.issues, [issue]);
+
+      for (const frame of duckedFrames) {
+        assert.equal(plan.musicEnvelopeAt(frame), 1, `frame ${frame}`);
+      }
+
+      assert.equal(plan.tracks[0].gainAt(95), 1);
+    });
+  }
+
+  it("ducks once the same sfx is ready (control for the cases above)", () => {
+    const plan = buildPlan(story);
+
+    close(plan.musicEnvelopeAt(95), 0.35);
+  });
+});
+
+describe("compileAudioPlan: ducking windows use the clamped track lengths", () => {
+  it("ducks a voice cut by a fixed scene for the 30 scene frames, not the 66 voice frames", () => {
+    // The 2.2 s voice (66 frames) is cut to the 30-frame scene: window [0, 30).
+    const plan = buildPlan(
+      makeStory(
+        [scene({duration: 1, voice: {src: VOICE}}), scene({duration: 3})],
+        {src: MUSIC},
+      ),
+    );
+    const envelope = plan.musicEnvelopeAt;
+
+    assert.deepEqual(shape(plan), [
+      ["music-0", 0, 120],
+      ["voice-0", 0, 30],
+    ]);
+    close(envelope(29), 0.35);
+    // Trailing ramp 30..34 = 0.35 + 0.65 * (frame - 30) / 5.
+    close(envelope(30), 0.35);
+    close(envelope(34), 0.35 + (0.65 * 4) / 5);
+    // Back to full volume at window end + R = 35 (a 66-frame window would still duck here).
+    close(envelope(35), 1);
+    close(envelope(36), 1);
+  });
+
+  it("ends the window of an sfx truncated at the Story end at that end", () => {
+    // Scene 1 starts at 90 and lasts 6 frames: T = 96. The 12-frame sfx is cut to [90, 96).
+    const plan = buildPlan(
+      makeStory(
+        [scene({duration: 3}), scene({duration: 0.2, sfx: {src: SFX}})],
+        {src: MUSIC},
+      ),
+    );
+    const envelope = plan.musicEnvelopeAt;
+
+    assert.deepEqual(shape(plan), [
+      ["music-0", 0, 96],
+      ["sfx-1", 90, 6],
+    ]);
+    close(envelope(95), 0.35);
+    close(envelope(96), 0.35);
+    close(envelope(100), 0.35 + (0.65 * 4) / 5);
+    // Window end 96 + R 5 = 101: full volume (a 102-frame window would still duck here).
+    close(envelope(101), 1);
+  });
+});
+
+describe("compileAudioPlan: ducking scales with the FPS", () => {
+  // At 60 FPS: R = round(0.15 * 60) = 9, merge gap = round(0.3 * 60) = 18,
+  // and the 0.4 s sfx lasts 24 frames. Scene 0 is 90 frames; scene 1 starts at
+  // 90 with an sfx [90, 114); scene 2 starts at 90 + L and has an sfx too.
+  const sixty = (sceneOneFrames) =>
+    buildPlan(
+      makeStory(
+        [
+          scene({duration: 90 / 60}),
+          scene({duration: sceneOneFrames / 60, sfx: {src: SFX}}),
+          scene({duration: 90 / 60, sfx: {src: SFX}}),
+        ],
+        {src: MUSIC},
+      ),
+      {fps: 60},
+    );
+
+  it("ramps over 9 frames", () => {
+    const plan = sixty(42);
+    const envelope = plan.musicEnvelopeAt;
+
+    assert.deepEqual(
+      plan.tracks.map((track) => [track.key, track.fromFrame, track.durationInFrames]),
+      [
+        ["music-0", 0, 222],
+        ["sfx-1", 90, 24],
+        ["sfx-2", 132, 24],
+      ],
+    );
+    // Leading ramp 81..89 = 1 - 0.65 * (frame - 81) / 9.
+    close(envelope(80), 1);
+    close(envelope(81), 1);
+    close(envelope(82), 1 - 0.65 / 9);
+    close(envelope(89), 1 - (0.65 * 8) / 9);
+    close(envelope(90), 0.35);
+    close(envelope(113), 0.35);
+    // Trailing ramp 114..122 = 0.35 + 0.65 * (frame - 114) / 9.
+    close(envelope(114), 0.35);
+    close(envelope(115), 0.35 + 0.65 / 9);
+    close(envelope(120), 0.35 + (0.65 * 6) / 9);
+  });
+
+  it("merges windows 17 frames apart", () => {
+    // Scene 1 = 41 frames: windows [90, 114) and [131, 155), gap 17 < 18.
+    const plan = sixty(41);
+
+    assert.deepEqual(
+      plan.tracks.map((track) => [track.key, track.fromFrame]),
+      [
+        ["music-0", 0],
+        ["sfx-1", 90],
+        ["sfx-2", 131],
+      ],
+    );
+    close(plan.musicEnvelopeAt(114), 0.35);
+    close(plan.musicEnvelopeAt(120), 0.35);
+    close(plan.musicEnvelopeAt(130), 0.35);
+  });
+
+  it("keeps windows 18 frames apart separate", () => {
+    // Scene 1 = 42 frames: windows [90, 114) and [132, 156), gap 18, not < 18.
+    const plan = sixty(42);
+
+    // Trailing ramp of the first window: 120 is 6 frames after 114.
+    close(plan.musicEnvelopeAt(120), 0.35 + (0.65 * 6) / 9);
+    // The first ramp ends at 114 + 9 = 123, the second starts at 132 - 9 = 123.
+    close(plan.musicEnvelopeAt(122), 0.35 + (0.65 * 8) / 9);
+    close(plan.musicEnvelopeAt(123), 1);
+  });
+});
+
+describe("compileAudioPlan: issue order across sources", () => {
+  it("lists music-too-short-to-loop, fades-scaled, then the scene issues", () => {
+    // The 3 s Story is 90 frames; fades 3 s + 3 s = 6 s exceed it and scale.
+    const plan = buildPlan(
+      makeStory([scene({duration: 3, sfx: {src: SFX}})], {
+        src: "pop",
+        fadeIn: 3,
+        fadeOut: 3,
+      }),
+      {
+        durations: {pop: 0.12, [SFX]: 0.4},
+        sourceState: (ref) => (ref === SFX ? "pending" : "ready"),
+      },
+    );
+
+    assert.deepEqual(shape(plan), [["music-0", 0, 4]]);
+    assert.deepEqual(plan.issues, [
+      {kind: "music-too-short-to-loop"},
+      {kind: "fades-scaled"},
+      {kind: "pending-audio", ref: SFX, role: "sfx", sceneIndex: 0},
+    ]);
+  });
+
+  it("lists the music source issue before the scene issues", () => {
+    const plan = buildPlan(
+      makeStory([scene({sfx: {src: SFX}})], {src: MUSIC}),
+      {sourceState: () => "pending"},
+    );
+
+    assert.deepEqual(plan.tracks, []);
+    assert.deepEqual(plan.issues, [
+      {kind: "pending-audio", ref: MUSIC, role: "music", sceneIndex: null},
+      {kind: "pending-audio", ref: SFX, role: "sfx", sceneIndex: 0},
+    ]);
+  });
+
+  it("records one missing-audio issue per use of the same missing ref", () => {
+    const plan = buildPlan(
+      makeStory([
+        scene({sfx: {src: SFX}}),
+        scene(),
+        scene({sfx: {src: SFX}}),
+      ]),
+      {sourceState: () => "missing"},
+    );
+
+    assert.deepEqual(plan.tracks, []);
+    assert.deepEqual(plan.issues, [
+      {kind: "missing-audio", ref: SFX, role: "sfx", sceneIndex: 0},
+      {kind: "missing-audio", ref: SFX, role: "sfx", sceneIndex: 2},
+    ]);
+  });
+});
