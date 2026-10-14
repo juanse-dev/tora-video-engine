@@ -48,8 +48,10 @@ export const sine = (label, hz, seconds, {delay = 0, gain = 1} = {}) =>
   `[${label}]`;
 
 /**
- * Band-limited noise: `count` partials log-uniform in [lo, hi] Hz, each with a
- * random start delay (phase), mixed to a mono `[label]`. `tilt` 0 is pink,
+ * Band-limited noise: `count` partials in [lo, hi] Hz, each with a
+ * random start delay (phase), mixed to a mono `[label]`. The frequencies are
+ * log-uniform by default and linear-uniform when `linear` is true (low-passed
+ * white noise rather than pink/brown). `tilt` 0 is pink,
  * -0.5 is brown. `rms` is the target RMS of the result.
  */
 export const noise = ({label, seed, count, lo, hi, tilt, seconds, rms, linear = false}) => {

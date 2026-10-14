@@ -13,6 +13,35 @@ import {fixtureBytes, readWavHeader} from "./helpers/audioBytes.mjs";
 
 const DIR = "tests/fixtures/local-audio";
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+// Parses the leading ID3v2 tag, the first MP3 frame header and the Xing/Info tag
+// that follows its side information (bytes only, no decoder).
+const mp3Header = (bytes) => {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let frame = 0;
+
+  if (buffer.toString("latin1", 0, 3) === "ID3") {
+    frame = 10 + ((buffer[6] << 21) | (buffer[7] << 14) | (buffer[8] << 7) | buffer[9]);
+  }
+
+  assert.equal(buffer[frame], 0xff, "MP3 frame sync");
+  assert.equal(buffer[frame + 1] & 0xe0, 0xe0, "MP3 frame sync");
+
+  const versionBits = (buffer[frame + 1] >> 3) & 3;
+  const mpeg1 = versionBits === 3;
+  const rates = {3: [44_100, 48_000, 32_000], 2: [22_050, 24_000, 16_000], 0: [11_025, 12_000, 8_000]}[versionBits];
+  const mono = buffer[frame + 3] >> 6 === 3;
+  const tagOffset = frame + 4 + (mpeg1 ? (mono ? 17 : 32) : (mono ? 9 : 17));
+  const tag = buffer.toString("latin1", tagOffset, tagOffset + 4);
+  const flags = buffer.readUInt32BE(tagOffset + 4);
+
+  return {
+    channels: mono ? 1 : 2,
+    sampleRate: rates[(buffer[frame + 2] >> 2) & 3],
+    tagOffset,
+    tag,
+    frames: flags & 1 ? buffer.readUInt32BE(tagOffset + 8) : null,
+  };
+};
 const wavSamples = (bytes) => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const start = buffer.indexOf("data") + 8;
@@ -71,7 +100,9 @@ describe("committed audio fixtures", () => {
       assert.deepEqual(a.buffer.subarray(0, a.start), b.buffer.subarray(0, b.start), `${name}: header`);
 
       for (let at = a.start; at + 1 < a.buffer.length; at += 2) {
-        assert.ok(Math.abs(a.buffer.readInt16LE(at) - b.buffer.readInt16LE(at)) <= 1, `${name}: sample ${(at - a.start) / 2}`);
+        const delta = Math.abs(a.buffer.readInt16LE(at) - b.buffer.readInt16LE(at));
+
+        if (delta > 1) assert.fail(`${name}: sample ${(at - a.start) / 2} differs by ${delta}`);
       }
     }
   });
@@ -99,7 +130,7 @@ describe("committed audio fixtures", () => {
 
       for (let at = start; at + 1 < buffer.length; at += 2) peak = Math.max(peak, Math.abs(buffer.readInt16LE(at)));
 
-      assert.ok(peak >= 32_000, `${name} peak ${peak}`);
+      if (peak < 32_000) assert.fail(`${name}: peak ${peak} is not full scale`);
     }
   });
 
@@ -118,6 +149,25 @@ describe("committed audio fixtures", () => {
 
     assert.equal(cut.length, Math.floor(full.length * 0.6));
     assert.deepEqual(Buffer.from(cut), Buffer.from(full.subarray(0, cut.length)));
+  });
+
+  it("truncated.mp3 still carries the Info/Xing tag of the full file (declares 10 s)", () => {
+    const full = mp3Header(fixtureBytes("tone-220-10s.mp3"));
+    const cut = mp3Header(fixtureBytes("truncated.mp3"));
+
+    assert.ok(["Info", "Xing"].includes(cut.tag), cut.tag);
+    assert.equal(cut.tagOffset, 56);
+    assert.equal(cut.tagOffset, full.tagOffset);
+    assert.equal(cut.frames, full.frames);
+    // 1152 samples per frame at 44.1 kHz: more than 300 frames is more than 7.8 s.
+    assert.ok(cut.frames > 300, `${cut.frames} frames`);
+  });
+
+  it("long-301s.mp3 is 8 kHz mono", () => {
+    const header = mp3Header(fixtureBytes("long-301s.mp3"));
+
+    assert.equal(header.channels, 1);
+    assert.equal(header.sampleRate, 8_000);
   });
 
   it("not-audio.txt is plain text", () => {
