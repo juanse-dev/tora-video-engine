@@ -215,6 +215,31 @@ describe("resolveFades and fadeFactorAt", () => {
     );
   });
 
+  it("does not report float-rounding sums that fit exactly as scaled", () => {
+    // 1.1 + 2.2 = 3.3000000000000003 s and 0.1 + 0.2 = 0.30000000000000004 s
+    // are both exactly the Story length in frames.
+    assert.deepEqual(
+      resolveFades({fadeInSeconds: 1.1, fadeOutSeconds: 2.2, totalFrames: 99, fps: 30}),
+      {fadeInSeconds: 1.1, fadeOutSeconds: 2.2, scaled: false},
+    );
+    assert.deepEqual(
+      resolveFades({fadeInSeconds: 0.1, fadeOutSeconds: 0.2, totalFrames: 9, fps: 30}),
+      {fadeInSeconds: 0.1, fadeOutSeconds: 0.2, scaled: false},
+    );
+  });
+
+  it("still scales fades that are one frame too long", () => {
+    const fades = resolveFades({
+      fadeInSeconds: 1.1,
+      fadeOutSeconds: 2.2,
+      totalFrames: 98,
+      fps: 30,
+    });
+
+    assert.equal(fades.scaled, true);
+    close(fades.fadeInSeconds + fades.fadeOutSeconds, 98 / 30);
+  });
+
   it("ramps linearly from 0 at frame 0 and down to 0 at the Story end", () => {
     const at = (frame) =>
       fadeFactorAt({

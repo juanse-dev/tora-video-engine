@@ -133,7 +133,9 @@ export const resolveFades = (input: {
   const storySeconds = totalFrames / fps;
   const sum = fadeInSeconds + fadeOutSeconds;
 
-  if (sum > storySeconds) {
+  // Compared in whole frames so fades that fit exactly (1.1 + 2.2 on 3.3 s)
+  // are not reported as scaled by float rounding.
+  if (Math.round(sum * fps) > totalFrames) {
     const scale = storySeconds / sum;
 
     return {
