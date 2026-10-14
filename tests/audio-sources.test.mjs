@@ -97,6 +97,17 @@ describe("resolveAudioSrc", () => {
     );
   });
 
+  it("treats an entry with an unknown kind as missing, never as the bundled fallback", () => {
+    for (const policy of POLICIES) {
+      for (const ref of [LOCAL, "ding"]) {
+        assert.deepEqual(
+          resolveAudioSrc(ref, {[ref]: {kind: "bogus"}}, policy),
+          {kind: "missing", ref},
+        );
+      }
+    }
+  });
+
   it("does not read prototype keys as entries", () => {
     const inherited = Object.create({[LOCAL]: {kind: "url", url: "blob:inherited"}});
 

@@ -100,6 +100,86 @@ describe("buildStoryAudioMounts", () => {
     assert.equal(keyFor(sourcesB), "sfx-1:blob:b");
   });
 
+  it("offsets the volume callback by the track start, through crossfades, ducking and fades", () => {
+    // 5 x 4 s scenes (600 frames), 10 s music: copies at 0, 291 and 582; a ding
+    // in scene 3 (frame 360) ducks the second copy.
+    const musicStory = {
+      title: "Music",
+      music: {src: "calm-loop", fadeOut: 2},
+      scenes: [
+        scene({duration: 4}),
+        scene({duration: 4}),
+        scene({duration: 4}),
+        scene({duration: 4, sfx: {src: "ding"}}),
+        scene({duration: 4}),
+      ],
+    };
+    const durations = {"calm-loop": 10, ding: 1.2};
+    const sources = {
+      "calm-loop": {kind: "url", url: "blob:music"},
+      ding: {kind: "url", url: "blob:ding"},
+    };
+    const plan = compileAudioPlan({
+      story: musicStory,
+      timeline: compileTimeline(musicStory, 30, durations),
+      fps: 30,
+      audioDurations: durations,
+      sourceState: (ref) =>
+        audioSourceState(resolveAudioSrc(ref, sources, "explicit")),
+    });
+    const mounts = buildStoryAudioMounts({
+      plan,
+      sources,
+      policy: "explicit",
+      audioArmed: true,
+    });
+    const mountFor = (key) => {
+      const track = plan.tracks.find((candidate) => candidate.key === key);
+      const mount = mounts.find(
+        (candidate) => candidate.key === `${key}:blob:music`,
+      );
+
+      assert.ok(track !== undefined && mount !== undefined, key);
+
+      return {track, mount};
+    };
+
+    assert.deepEqual(
+      plan.tracks.map((track) => [track.key, track.fromFrame]),
+      [
+        ["music-0", 0],
+        ["music-1", 291],
+        ["music-2", 582],
+        ["sfx-3", 360],
+      ],
+    );
+
+    // Every frame of every music copy reads the plan at the absolute frame.
+    for (const key of ["music-0", "music-1", "music-2"]) {
+      const {track, mount} = mountFor(key);
+
+      for (let frame = 0; frame < track.durationInFrames; frame += 1) {
+        assert.equal(
+          mount.volumeAt(frame),
+          track.gainAt(track.fromFrame + frame),
+          `${key} frame ${frame}`,
+        );
+      }
+    }
+
+    // On the copy that does not start at frame 0 the offset matters: inside the
+    // crossfade window (0-8) and inside the duck ramp (65-69).
+    const {track, mount} = mountFor("music-1");
+
+    for (const frame of [0, 4, 8, 65, 67, 69]) {
+      assert.notEqual(
+        mount.volumeAt(frame),
+        track.gainAt(frame),
+        `the offset must matter at frame ${frame}`,
+      );
+    }
+  });
+
   it("mounts nothing for a bundled sound the Player has no verified source for yet", () => {
     const plan = planFor(story, {}, "explicit");
 
@@ -124,9 +204,17 @@ describe("StoryAudio and the composition (source contract)", () => {
     assert.match(source, /buildStoryAudioMounts\(/);
     assert.match(source, /compileAudioPlan\(/);
     assert.match(source, /layout="none"/);
+    assert.match(source, /key=\{mount\.key\}/);
+    assert.match(source, /from=\{mount\.from\}/);
+    assert.match(source, /durationInFrames=\{mount\.durationInFrames\}/);
+    assert.match(source, /<Audio\s+src=\{mount\.src\}/);
     assert.match(source, /volume=\{\(frame\) => mount\.volumeAt\(frame\)\}/);
     assert.doesNotMatch(source, /compileTimeline/);
-    assert.doesNotMatch(source, /\bloop\b/);
+
+    // No `loop` attribute on any JSX element (comments are ignored).
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    assert.doesNotMatch(code, /\sloop[\s=>/{]/);
   });
 
   it("ToraVideo mounts StoryAudio next to StoryRenderer inside the image provider and passes the same timeline", async () => {
@@ -137,9 +225,17 @@ describe("StoryAudio and the composition (source contract)", () => {
 
     assert.ok(provider >= 0 && renderer > provider && audio > renderer);
     assert.ok(source.indexOf("</LocalAssetSourcesProvider>") > audio);
-    assert.match(source, /<StoryAudio[\s\S]*timeline=\{timeline\}/);
-    assert.match(source, /audioArmed=\{audioArmed\}/);
-    assert.match(source, /bundledAudioPolicy \?\? "static-fallback"/);
+    const element = source.match(/<StoryAudio[\s\S]*?\/>/)?.[0] ?? "";
+    const providerTag =
+      source.match(/<AudioSourcesProvider[\s\S]*?>/)?.[0] ?? "";
+
+    assert.match(element, /story=\{story\}/);
+    assert.match(element, /timeline=\{timeline\}/);
+    assert.match(element, /fps=\{fps\}/);
+    assert.match(element, /audioDurations=\{audioDurations\}/);
+    assert.match(element, /audioArmed=\{audioArmed\}/);
+    assert.match(providerTag, /sources=\{audioSources\}/);
+    assert.match(providerTag, /policy=\{bundledAudioPolicy \?\? "static-fallback"\}/);
     assert.equal((source.match(/compileTimeline\(/g) ?? []).length, 1);
   });
 

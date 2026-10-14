@@ -63,6 +63,9 @@ export const resolveAudioSrc = (
         return {kind: "pending", ref};
       case "unavailable":
         return {kind: "missing", ref};
+      default:
+        // A malformed entry never falls through to the bundled fallback.
+        return {kind: "missing", ref};
     }
   }
 
