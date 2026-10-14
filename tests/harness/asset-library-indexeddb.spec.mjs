@@ -664,3 +664,52 @@ test.describe("IndexedDB asset library", () => {
     }
   });
 });
+
+test.describe("decodeAudioPeaks in real Chrome (AUDIO-003)", () => {
+  const decodes = [
+    ["tone-220-10s.wav", 500, 254],
+    ["tone-220-10s.mp3", 502, 230],
+    ["tone-220-10s.opus.ogg", 501, 250],
+    ["tone-880-0.4s.wav", 20, 254],
+    ["mono-440.wav", 111, 254],
+    ["noise-2s.mp3", 102, 200],
+  ];
+
+  for (const [file, peaks, minimumMax] of decodes) {
+    test(`decodes ${file} to ${peaks} peaks with a complete length`, async ({context}) => {
+      const page = await openHarnessPage(context);
+      const result = await harness(page, "decodeAudioFixture", file);
+
+      expect(result.kind).toBe("decoded");
+      expect(result.peaksLength).toBe(peaks);
+      expect(result.maxPeak).toBeGreaterThanOrEqual(minimumMax);
+      expect(result.complete).toBe(true);
+      expect(Math.abs(result.decodedSeconds - result.metadata.durationSeconds)).toBeLessThan(0.1);
+      expect(page.errors).toEqual([]);
+    });
+  }
+
+  test("the truncated MP3 declares 10 s but decodes about 6 s, so the truncation rule rejects it", async ({context}) => {
+    const page = await openHarnessPage(context);
+    const result = await harness(page, "decodeAudioFixture", "truncated.mp3");
+
+    expect(result.kind).toBe("decoded");
+    expect(result.metadata.durationSeconds).toBeCloseTo(10.031, 2);
+    expect(result.decodedSeconds).toBeLessThan(6.5);
+    expect(result.complete).toBe(false);
+  });
+
+  test("M4A decodes where the browser has AAC and fails with an AudioDecodeError where it does not", async ({context}) => {
+    const page = await openHarnessPage(context);
+    const supported = await harness(page, "aacDecodeSupported");
+    const result = await harness(page, "decodeAudioFixture", "tone-220-10s.m4a");
+
+    if (supported) {
+      expect(result.kind).toBe("decoded");
+      expect(result.complete).toBe(true);
+    } else {
+      expect(result.kind).toBe("decode-failed");
+      expect(result.error.name).toBe("AudioDecodeError");
+    }
+  });
+});

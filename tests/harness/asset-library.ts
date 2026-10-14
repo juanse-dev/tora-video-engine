@@ -5,6 +5,8 @@
 // Nothing in here ships in the production bundle: `vite build` only bundles
 // the root index.html.
 
+import {isDecodeComplete} from "../../src/audio/decodeCheck.ts";
+import {inspectAudio} from "../../src/localAssets/audioInspection.ts";
 import {sha256Hex} from "../../src/localAssets/hash.ts";
 import {inspectImageBytes} from "../../src/localAssets/imageInspection.ts";
 import {
@@ -26,6 +28,7 @@ import {
   type AssetLibraryStatus,
 } from "../../src/web/assetLibrary/coordination.ts";
 import {verifyPayload} from "../../src/web/assetLibrary/integrity.ts";
+import {decodeAudioPeaks} from "../../src/web/assetLibrary/audioPeaks.ts";
 import {importLocalAsset} from "../../src/web/assetLibrary/importAsset.ts";
 import {
   countLocalAssets,
@@ -497,6 +500,64 @@ const toraHarness = {
       fixtureByteSize: bytes.length,
       header: inspected.image,
     };
+  },
+
+  /* ---- real audio decoding (AUDIO-003) ---- */
+
+  /**
+   * Fetches a committed audio fixture, inspects it and runs the REAL
+   * decodeAudioPeaks (WebCodecs) on it. Never throws: failures are returned.
+   */
+  async decodeAudioFixture(name: string) {
+    const response = await fetch(`/tests/fixtures/local-audio/${name}`);
+
+    if (!response.ok) {
+      throw new Error(`Fixture ${name} answered ${response.status}`);
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const inspected = await inspectAudio(bytes);
+
+    if (!inspected.ok) {
+      return {kind: "rejected" as const, message: inspected.message};
+    }
+
+    try {
+      const summary = await decodeAudioPeaks(
+        new Blob([bytes as BlobPart]),
+        inspected.metadata,
+      );
+
+      return {
+        kind: "decoded" as const,
+        metadata: inspected.metadata,
+        decodedSeconds: summary.decodedSeconds,
+        peaksLength: summary.peaks.length,
+        peaksPerSecond: summary.peaksPerSecond,
+        minPeak: Math.min(...summary.peaks),
+        maxPeak: Math.max(...summary.peaks),
+        complete: isDecodeComplete(
+          summary.decodedSeconds,
+          inspected.metadata.durationSeconds,
+        ),
+      };
+    } catch (error) {
+      return {kind: "decode-failed" as const, error: describeError(error)};
+    }
+  },
+
+  async aacDecodeSupported(): Promise<boolean> {
+    if (typeof AudioDecoder === "undefined") {
+      return false;
+    }
+
+    const support = await AudioDecoder.isConfigSupported({
+      codec: "mp4a.40.2",
+      sampleRate: 44_100,
+      numberOfChannels: 2,
+    });
+
+    return support.supported === true;
   },
 
   async displayThumbnail(ref: LocalImageRef) {

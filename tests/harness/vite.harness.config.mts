@@ -3,10 +3,14 @@ import path from "node:path";
 import {defineConfig, type Plugin} from "vite";
 
 // Vite's dev server treats an extensionless URL as a JS module and tries to
-// transform it, which would fail for the extensionless WebP fixture. This
-// harness-only config serves the committed local-asset fixtures as raw bytes,
-// before Vite's own middleware runs. It is not part of the production build.
-const FIXTURE_PREFIX = "/tests/fixtures/local-assets/";
+// transform it, which would fail for the extensionless WebP fixture (and would
+// mangle the audio fixtures). This harness-only config serves the committed
+// local-asset and local-audio fixtures as raw bytes, before Vite's own
+// middleware runs. It is not part of the production build.
+const RAW_FIXTURE_DIRECTORIES = [
+  {prefix: "/tests/fixtures/local-assets/", segments: ["tests", "fixtures", "local-assets"]},
+  {prefix: "/tests/fixtures/local-audio/", segments: ["tests", "fixtures", "local-audio"]},
+];
 const FIXTURE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const serveRawFixtures = (root: string): Plugin => ({
@@ -14,13 +18,16 @@ const serveRawFixtures = (root: string): Plugin => ({
   configureServer(server) {
     server.middlewares.use(async (request, response, next) => {
       const pathname = (request.url ?? "").split("?")[0];
+      const directory = RAW_FIXTURE_DIRECTORIES.find((entry) =>
+        pathname.startsWith(entry.prefix),
+      );
 
-      if (!pathname.startsWith(FIXTURE_PREFIX)) {
+      if (directory === undefined) {
         next();
         return;
       }
 
-      const name = pathname.slice(FIXTURE_PREFIX.length);
+      const name = pathname.slice(directory.prefix.length);
 
       if (!FIXTURE_NAME.test(name)) {
         next();
@@ -28,9 +35,7 @@ const serveRawFixtures = (root: string): Plugin => ({
       }
 
       try {
-        const bytes = await readFile(
-          path.join(root, "tests", "fixtures", "local-assets", name),
-        );
+        const bytes = await readFile(path.join(root, ...directory.segments, name));
 
         response.setHeader("content-type", "application/octet-stream");
         response.setHeader("cache-control", "no-store");
