@@ -11,6 +11,7 @@ import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {Story} from "../story/schema.ts";
 import {withAssetLibraryLock, type AssetLibraryStatus} from "./assetLibrary/coordination.ts";
 import {
+  samePayload,
   verifyPayloadsSequentially,
   type IntegrityCache,
   type VerifiedPayload,
@@ -270,12 +271,6 @@ export const resolveStoryLocalAssetsForPreview = async (
     );
   }
 };
-
-const samePayload = (verified: VerifiedPayload, current: PayloadMetadata) =>
-  verified.mimeType === current.mimeType &&
-  verified.byteSize === current.byteSize &&
-  verified.width === current.width &&
-  verified.height === current.height;
 
 /**
  * Builds the post-lock step for startBrowserRenderTransaction. Under the shared

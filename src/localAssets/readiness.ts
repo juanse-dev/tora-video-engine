@@ -1,8 +1,14 @@
 import type {Story} from "../story/schema.ts";
+import type {
+  AudioCodec,
+  AudioContainer,
+  AudioMimeType,
+} from "./audioInspection.ts";
 import {
   MAX_BROWSER_STORY_LOCAL_ASSET_BYTES,
   MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS,
   MAX_BROWSER_STORY_LOCAL_ASSET_REFS,
+  maxLocalAssetBytes,
 } from "./limits.ts";
 import {
   isImageAssetCategory,
@@ -55,12 +61,39 @@ export const storyHasLocalAssetRefs = (story: Story): boolean =>
       parseLocalAssetRef(scene.background) !== null,
   );
 
-export type PayloadMetadata = {
+export type ImagePayloadMetadata = {
+  /** Absent in every record this build writes and in every v0.3 record; a stored "image" is tolerated and dropped on read. */
+  kind?: "image";
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   byteSize: number;
   width: number;
   height: number;
 };
+
+export type AudioPayloadMetadata = {
+  kind: "audio";
+  mimeType: AudioMimeType;
+  byteSize: number;
+  container: AudioContainer;
+  codec: AudioCodec;
+  durationSeconds: number;
+  sampleRate: number;
+  channels: 1 | 2;
+};
+
+export type PayloadMetadata = ImagePayloadMetadata | AudioPayloadMetadata;
+export type PayloadKind = "image" | "audio";
+
+export const isAudioPayload = (
+  meta: PayloadMetadata,
+): meta is AudioPayloadMetadata => meta.kind === "audio";
+
+export const payloadKindOf = (meta: PayloadMetadata): PayloadKind =>
+  meta.kind === "audio" ? "audio" : "image";
+
+/** The per-payload ceiling (D-8): images 25 MiB, audio 50 MiB. */
+export const maxPayloadBytes = (kind: PayloadKind): number =>
+  maxLocalAssetBytes(kind === "audio" ? "audio" : "pose");
 
 export type LocalAssetBudgetResult =
   | {ok: true; refCount: number; totalBytes: number; totalPixels: number}
@@ -69,7 +102,7 @@ export type LocalAssetBudgetResult =
       refCount: number;
       totalBytes: number;
       totalPixels: number;
-      exceeded: Array<"refs" | "bytes" | "pixels">;
+      exceeded: Array<"refs" | "bytes" | "pixels" | "metadata">;
     };
 
 /**
@@ -84,6 +117,7 @@ export const evaluateLocalAssetBudget = (
   const refCount = usages.length;
   let totalBytes = 0;
   let totalPixels = 0;
+  let nonImageMetadata = false;
 
   for (const digest of new Set(usages.map((usage) => usage.digest))) {
     const metadata = metadataByDigest.get(digest);
@@ -92,11 +126,16 @@ export const evaluateLocalAssetBudget = (
       continue;
     }
 
+    if (isAudioPayload(metadata)) {
+      nonImageMetadata = true;
+      continue;
+    }
+
     totalBytes += metadata.byteSize;
     totalPixels += metadata.width * metadata.height;
   }
 
-  const exceeded: Array<"refs" | "bytes" | "pixels"> = [];
+  const exceeded: Array<"refs" | "bytes" | "pixels" | "metadata"> = [];
 
   if (refCount > MAX_BROWSER_STORY_LOCAL_ASSET_REFS) {
     exceeded.push("refs");
@@ -108,6 +147,10 @@ export const evaluateLocalAssetBudget = (
 
   if (totalPixels > MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS) {
     exceeded.push("pixels");
+  }
+
+  if (nonImageMetadata) {
+    exceeded.push("metadata");
   }
 
   if (exceeded.length === 0) {
@@ -138,10 +181,12 @@ export const describeBudgetFailure = (
       sentences.push(
         `Local assets total ${formatCeil(result.totalBytes / MIB)} MiB (limit ${MAX_BROWSER_STORY_LOCAL_ASSET_BYTES / MIB} MiB).`,
       );
-    } else {
+    } else if (limit === "pixels") {
       sentences.push(
         `Local assets total ${formatCeil(result.totalPixels / MEGAPIXEL)} megapixels (limit ${MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS / MEGAPIXEL} megapixels).`,
       );
+    } else {
+      sentences.push("A local asset's stored details do not match an image.");
     }
   }
 

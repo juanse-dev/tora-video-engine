@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
+import {audioMimeTypeFor, inspectAudio} from "../src/localAssets/audioInspection.ts";
 import {sha256Hex} from "../src/localAssets/hash.ts";
+import {MAX_LOCAL_AUDIO_BYTES} from "../src/localAssets/limits.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {
   IntegrityCache,
+  samePayload,
   verifyPayload,
   verifyPayloadsSequentially,
 } from "../src/web/assetLibrary/integrity.ts";
@@ -11,6 +14,7 @@ import {
   decodeAssetRow,
   decodePayloadMeta,
 } from "../src/web/assetLibrary/records.ts";
+import {fixtureBytes} from "./helpers/audioBytes.mjs";
 import {buildJpeg, buildPng} from "./helpers/imageBytes.mjs";
 import {createMemoryAssetStore} from "./helpers/memoryAssetStore.mjs";
 
@@ -1017,4 +1021,184 @@ test("a stale-hit caller whose metadata check settles after the re-verification 
   assert.equal(store.reads.blobs, 1);
   assert.equal(one.get(digest)?.ok, true);
   assert.equal(two.get(digest)?.ok, true);
+});
+
+const audioMetaFor = async (bytes, overrides = {}) => {
+  const inspected = await inspectAudio(bytes);
+
+  assert.equal(inspected.ok, true);
+
+  const {container, codec, durationSeconds, sampleRate, channels} = inspected.metadata;
+
+  return {
+    kind: "audio",
+    mimeType: audioMimeTypeFor(container),
+    byteSize: bytes.length,
+    container,
+    codec,
+    durationSeconds,
+    sampleRate,
+    channels,
+    ...overrides,
+  };
+};
+
+const putAudio = async (store, bytes, overrides = {}) => {
+  const digest = await sha256Hex(bytes);
+  const meta = await audioMetaFor(bytes, overrides);
+
+  store.setRaw("payloadMeta", digest, meta);
+  store.setRaw("blobs", digest, {blob: new Blob([bytes], {type: "application/octet-stream"})});
+
+  return {digest, meta};
+};
+
+test("an audio payload verifies: SHA-256, size, and inspectAudio of the bytes match the metadata", async () => {
+  for (const name of ["tone-440-2.2s.wav", "tone-440-2.2s.mp3", "tone-440-2.2s.m4a", "tone-440-2.2s.opus.ogg"]) {
+    const store = createMemoryAssetStore();
+    const {digest, meta} = await putAudio(store, fixtureBytes(name));
+    const result = await verifyPayload(store, digest);
+
+    assert.equal(result.ok, true, `${name}: ${result.detail}`);
+    assert.deepEqual(result.payload, {digest, ...meta});
+    assert.equal(result.blob.type, meta.mimeType);
+  }
+});
+
+test("an audio payload with altered bytes is corrupt", async () => {
+  const store = createMemoryAssetStore();
+  const original = fixtureBytes("tone-440-2.2s.wav");
+  const {digest} = await putAudio(store, original);
+  const altered = Uint8Array.from(original);
+
+  altered[altered.length - 5] ^= 0xff;
+  store.setRaw("blobs", digest, {blob: new Blob([altered])});
+
+  const result = await verifyPayload(store, digest);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "corrupt");
+  assert.match(result.detail, /SHA-256/u);
+});
+
+test("each altered audio metadata field is corrupt, and a duration within 1 ms is accepted", async () => {
+  const bytes = fixtureBytes("tone-440-2.2s.mp3");
+  const actual = await audioMetaFor(bytes);
+  const cases = [
+    [{durationSeconds: actual.durationSeconds + 0.01}, /duration/u],
+    [{sampleRate: 48_000}, /sample rate|channels/u],
+    [{channels: 1}, /sample rate|channels/u],
+    [{codec: "aac", container: "mp4", mimeType: "audio/mp4"}, /format/u],
+    [{mimeType: "audio/ogg"}, /format|mimeType/u],
+  ];
+
+  for (const [patch, expected] of cases) {
+    const store = createMemoryAssetStore();
+    const {digest} = await putAudio(store, bytes, patch);
+    const result = await verifyPayload(store, digest);
+
+    assert.equal(result.ok, false, JSON.stringify(patch));
+    assert.match(result.detail, expected, JSON.stringify(patch));
+  }
+
+  const store = createMemoryAssetStore();
+  const {digest} = await putAudio(store, bytes, {durationSeconds: actual.durationSeconds + 0.0005});
+
+  assert.equal((await verifyPayload(store, digest)).ok, true);
+});
+
+test("PNG bytes under audio metadata are corrupt, never decoded", async () => {
+  const store = createMemoryAssetStore();
+  const bytes = pngBytes();
+  const digest = await sha256Hex(bytes);
+
+  store.setRaw("payloadMeta", digest, {
+    kind: "audio", mimeType: "audio/wav", byteSize: bytes.length, container: "wave", codec: "pcm",
+    durationSeconds: 1, sampleRate: 48_000, channels: 2,
+  });
+  store.setRaw("blobs", digest, {blob: new Blob([bytes])});
+
+  const result = await verifyPayload(store, digest);
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /not a supported audio file/u);
+});
+
+test("the byte ceiling is per kind: 30 MiB passes the size gate for audio and fails it for an image", async () => {
+  const size = 30 * 1024 * 1024;
+  const audioDigest = "a".repeat(64);
+  const imageDigest = "b".repeat(64);
+  const audioBlob = fakeBlob({size, bytes: new Uint8Array([1, 2, 3])});
+  const imageBlob = fakeBlob({size, bytes: new Uint8Array([1, 2, 3])});
+
+  // The decoders accept a 30 MiB audio record and reject a 30 MiB image record.
+  const store = createMemoryAssetStore();
+
+  store.setRaw("payloadMeta", audioDigest, {
+    kind: "audio", mimeType: "audio/wav", byteSize: size, container: "wave", codec: "pcm",
+    durationSeconds: 150, sampleRate: 48_000, channels: 2,
+  });
+  store.setRaw("blobs", audioDigest, {blob: audioBlob.blob});
+  store.setRaw("payloadMeta", imageDigest, {mimeType: "image/png", byteSize: size, width: 4, height: 3});
+  store.setRaw("blobs", imageDigest, {blob: imageBlob.blob});
+
+  const audio = await verifyPayload(store, audioDigest);
+  const image = await verifyPayload(store, imageDigest);
+
+  // Audio got past the size gate (it reads the stub bytes and fails the digest check instead).
+  assert.equal(audio.ok, false);
+  assert.match(audio.detail, /SHA-256/u);
+  assert.equal(audioBlob.state.calls, 1);
+  // The image record is rejected by its decoder, and its bytes are never read.
+  assert.equal(image.ok, false);
+  assert.match(image.detail, /payload metadata is corrupt/u);
+  assert.equal(imageBlob.state.calls, 0);
+  assert.equal(MAX_LOCAL_AUDIO_BYTES, 50 * 1024 * 1024);
+});
+
+test("samePayload is discriminated by kind and compares audio fields exactly", () => {
+  const image = {digest: "d", mimeType: "image/png", byteSize: 10, width: 2, height: 3};
+  const audio = {
+    digest: "d", kind: "audio", mimeType: "audio/wav", byteSize: 10, container: "wave", codec: "pcm",
+    durationSeconds: 2.2, sampleRate: 48_000, channels: 2,
+  };
+  const {digest: _imageDigest, ...imageMetaOnly} = image;
+  const {digest: _audioDigest, ...audioMetaOnly} = audio;
+
+  assert.equal(samePayload(image, imageMetaOnly), true);
+  assert.equal(samePayload(audio, audioMetaOnly), true);
+  assert.equal(samePayload(image, {...imageMetaOnly, kind: "image"}), true);
+  // Different kinds fail closed, in both directions.
+  assert.equal(samePayload(image, audioMetaOnly), false);
+  assert.equal(samePayload(audio, imageMetaOnly), false);
+
+  for (const patch of [
+    {mimeType: "audio/mpeg"}, {byteSize: 11}, {container: "mp3"}, {codec: "mp3"},
+    {sampleRate: 44_100}, {channels: 1}, {durationSeconds: 2.2000001},
+  ]) {
+    assert.equal(samePayload(audio, {...audioMetaOnly, ...patch}), false, JSON.stringify(patch));
+  }
+
+  for (const patch of [{mimeType: "image/jpeg"}, {byteSize: 11}, {width: 3}, {height: 4}]) {
+    assert.equal(samePayload(image, {...imageMetaOnly, ...patch}), false, JSON.stringify(patch));
+  }
+});
+
+test("a cached audio payload is served without reading the blob, and re-verified after its metadata changed", async () => {
+  const store = createMemoryAssetStore();
+  const cache = new IntegrityCache();
+  const {digest, meta} = await putAudio(store, fixtureBytes("tone-440-2.2s.wav"));
+
+  assert.equal((await verifyPayloadsSequentially(store, [digest], cache)).get(digest).ok, true);
+  assert.equal(store.reads.blobs, 1);
+  assert.equal((await verifyPayloadsSequentially(store, [digest], cache)).get(digest).ok, true);
+  assert.equal(store.reads.blobs, 1);
+
+  store.setRaw("payloadMeta", digest, {...meta, durationSeconds: meta.durationSeconds + 0.5});
+
+  const result = (await verifyPayloadsSequentially(store, [digest], cache)).get(digest);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "corrupt");
+  assert.equal(store.reads.blobs, 2);
 });

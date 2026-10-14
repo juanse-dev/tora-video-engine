@@ -1,4 +1,7 @@
-import type {PayloadMetadata} from "../../localAssets/readiness.ts";
+import type {
+  ImagePayloadMetadata,
+  PayloadMetadata,
+} from "../../localAssets/readiness.ts";
 import type {
   ImageAssetCategory,
   LocalImageRef,
@@ -14,7 +17,7 @@ export type AssetLibraryMutation =
       defaultLabel: string;
       originalFilename: string;
       createdAt: string;
-      payloadMeta: PayloadMetadata;
+      payloadMeta: ImagePayloadMetadata;
       blob: Blob;
       thumbnail: ThumbnailRecord;
     }

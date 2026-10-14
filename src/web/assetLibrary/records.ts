@@ -1,12 +1,30 @@
+import {MAX_WAVEFORM_PEAKS} from "../../audio/constants.ts";
 import {
-  MAX_LOCAL_ASSET_BYTES,
+  audioCodecs,
+  audioContainers,
+  audioMimeTypeFor,
+  isAcceptedAudioCombination,
+  type AudioCodec,
+  type AudioContainer,
+} from "../../localAssets/audioInspection.ts";
+import {
+  MAX_AUDIO_DURATION_SECONDS,
+  MAX_AUDIO_SAMPLE_RATE,
   MAX_LOCAL_ASSET_DIMENSION,
   MAX_LOCAL_ASSET_PIXELS,
+  MIN_AUDIO_SAMPLE_RATE,
 } from "../../localAssets/limits.ts";
-import type {PayloadMetadata} from "../../localAssets/readiness.ts";
+import {
+  maxPayloadBytes,
+  payloadKindOf,
+  type AudioPayloadMetadata,
+  type ImagePayloadMetadata,
+  type PayloadMetadata,
+} from "../../localAssets/readiness.ts";
 import {
   parseLocalAssetRef,
   SHA256_HEX_PATTERN,
+  type LocalAssetCategory,
   type LocalAssetRef,
 } from "../../localAssets/refs.ts";
 import {
@@ -22,6 +40,7 @@ export type ThumbnailRecord = {
   width: number;
   height: number;
 };
+export type WaveformRecord = {peaksPerSecond: number; peaks: Uint8Array};
 
 export type Decoded<T> =
   | {status: "present"; value: T}
@@ -140,6 +159,90 @@ export const decodeAssetRow = (
   });
 };
 
+const AUDIO_PAYLOAD_KEYS = [
+  "byteSize",
+  "channels",
+  "codec",
+  "container",
+  "durationSeconds",
+  "kind",
+  "mimeType",
+  "sampleRate",
+];
+
+const decodeAudioPayloadMeta = (
+  value: Record<string, unknown>,
+): Decoded<PayloadMetadata> => {
+  const keys = Object.keys(value).sort();
+
+  if (
+    keys.length !== AUDIO_PAYLOAD_KEYS.length ||
+    keys.some((key, index) => key !== AUDIO_PAYLOAD_KEYS[index])
+  ) {
+    return corrupt("audio payload metadata has unexpected fields");
+  }
+
+  const {mimeType, byteSize, container, codec, durationSeconds, sampleRate, channels} = value;
+
+  if (
+    typeof container !== "string" ||
+    !(audioContainers as readonly string[]).includes(container)
+  ) {
+    return corrupt("unknown audio container");
+  }
+
+  if (typeof codec !== "string" || !(audioCodecs as readonly string[]).includes(codec)) {
+    return corrupt("unknown audio codec");
+  }
+
+  if (!isAcceptedAudioCombination(container as AudioContainer, codec as AudioCodec)) {
+    return corrupt("audio container and codec are not an accepted pair");
+  }
+
+  if (mimeType !== audioMimeTypeFor(container as AudioContainer)) {
+    return corrupt("mimeType does not match the audio container");
+  }
+
+  if (!isPositiveInteger(byteSize) || byteSize > maxPayloadBytes("audio")) {
+    return corrupt("byteSize is out of range");
+  }
+
+  if (
+    typeof durationSeconds !== "number" ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0 ||
+    durationSeconds > MAX_AUDIO_DURATION_SECONDS
+  ) {
+    return corrupt("durationSeconds is out of range");
+  }
+
+  if (
+    typeof sampleRate !== "number" ||
+    !Number.isInteger(sampleRate) ||
+    sampleRate < MIN_AUDIO_SAMPLE_RATE ||
+    sampleRate > MAX_AUDIO_SAMPLE_RATE
+  ) {
+    return corrupt("sampleRate is out of range");
+  }
+
+  if (channels !== 1 && channels !== 2) {
+    return corrupt("channels must be 1 or 2");
+  }
+
+  const decoded: AudioPayloadMetadata = {
+    kind: "audio",
+    mimeType: mimeType as AudioPayloadMetadata["mimeType"],
+    byteSize,
+    container: container as AudioContainer,
+    codec: codec as AudioCodec,
+    durationSeconds,
+    sampleRate,
+    channels,
+  };
+
+  return present(decoded);
+};
+
 export const decodePayloadMeta = (
   digest: string,
   value: unknown,
@@ -162,13 +265,21 @@ export const decodePayloadMeta = (
     return corrupt(identityProblem);
   }
 
+  if (value.kind === "audio") {
+    return decodeAudioPayloadMeta(value);
+  }
+
+  if (value.kind !== undefined && value.kind !== "image") {
+    return corrupt("unknown payload kind");
+  }
+
   const {mimeType, byteSize, width, height} = value;
 
   if (typeof mimeType !== "string" || !PAYLOAD_MIME_TYPES.includes(mimeType)) {
     return corrupt("unknown mimeType");
   }
 
-  if (!isPositiveInteger(byteSize) || byteSize > MAX_LOCAL_ASSET_BYTES) {
+  if (!isPositiveInteger(byteSize) || byteSize > maxPayloadBytes("image")) {
     return corrupt("byteSize is out of range");
   }
 
@@ -186,7 +297,7 @@ export const decodePayloadMeta = (
   }
 
   return present({
-    mimeType: mimeType as PayloadMetadata["mimeType"],
+    mimeType: mimeType as ImagePayloadMetadata["mimeType"],
     byteSize,
     width,
     height,
@@ -276,3 +387,53 @@ export const decodeThumbnail = (
 
   return present({blob, mimeType, width, height});
 };
+
+/** The waveform store: the key is the only identity, so any extra key (even a matching `digest`) is invalid. */
+export const decodeWaveform = (
+  digest: string,
+  value: unknown,
+): Decoded<WaveformRecord> => {
+  if (value === undefined) {
+    return absent;
+  }
+
+  if (!SHA256_HEX_PATTERN.test(digest)) {
+    return corrupt("key is not a sha256 digest");
+  }
+
+  if (!isRecord(value)) {
+    return corrupt("waveform record is not an object");
+  }
+
+  const keys = Object.keys(value).sort();
+
+  if (keys.length !== 2 || keys[0] !== "peaks" || keys[1] !== "peaksPerSecond") {
+    return corrupt("waveform record has unexpected fields");
+  }
+
+  const {peaksPerSecond, peaks} = value;
+
+  if (
+    typeof peaksPerSecond !== "number" ||
+    !Number.isFinite(peaksPerSecond) ||
+    peaksPerSecond <= 0
+  ) {
+    return corrupt("peaksPerSecond is out of range");
+  }
+
+  if (
+    !(peaks instanceof Uint8Array) ||
+    peaks.length < 1 ||
+    peaks.length > MAX_WAVEFORM_PEAKS
+  ) {
+    return corrupt("peaks is not a Uint8Array of 1 to MAX_WAVEFORM_PEAKS values");
+  }
+
+  return present({peaksPerSecond, peaks});
+};
+
+/** An audio row must point at audio metadata and an image row at image metadata. */
+export const payloadMatchesCategory = (
+  meta: PayloadMetadata,
+  category: LocalAssetCategory,
+): boolean => (payloadKindOf(meta) === "audio") === (category === "audio");

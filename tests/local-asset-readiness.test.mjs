@@ -250,3 +250,15 @@ test("describeBudgetFailure writes one sentence per exceeded limit", () => {
   assert.match(sentences[1], /257 MiB.*limit 256 MiB/u);
   assert.match(sentences[2], /201 megapixels.*limit 200 megapixels/u);
 });
+
+test("the budget fails closed on non-image metadata and names it", () => {
+  const audio = {
+    kind: "audio", mimeType: "audio/wav", byteSize: 1000, container: "wave", codec: "pcm",
+    durationSeconds: 1, sampleRate: 48_000, channels: 2,
+  };
+  const result = evaluateLocalAssetBudget([usageOf(1)], new Map([[digestOf(1), audio]]));
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.exceeded, ["metadata"]);
+  assert.equal(describeBudgetFailure(result), "A local asset's stored details do not match an image.");
+});

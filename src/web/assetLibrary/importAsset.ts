@@ -5,7 +5,7 @@ import {
   inspectImageBytes,
   type ImageRejection,
 } from "../../localAssets/imageInspection.ts";
-import type {PayloadMetadata} from "../../localAssets/readiness.ts";
+import type {ImagePayloadMetadata} from "../../localAssets/readiness.ts";
 import {
   buildLocalAssetRef,
   type ImageAssetCategory,
@@ -55,7 +55,7 @@ export type PreparedLocalAssetImport = {
   ref: LocalImageRef;
   defaultLabel: string;
   originalFilename: string;
-  payloadMeta: PayloadMetadata;
+  payloadMeta: ImagePayloadMetadata;
   blob: Blob;
   thumbnail: ThumbnailRecord;
 };
