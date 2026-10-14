@@ -40,20 +40,21 @@ Depends on: AUDIO-002, AUDIO-003, and AUDIO-004 for the bundled-audio store (`sr
 ## Interfaces
 
 ```ts
+// src/localAssets/readiness.ts (AUDIO-003, not defined here)
+export const splitUsagesByCategory: (usages: readonly LocalAssetUsage[]) => {image: LocalImageUsage[]; audio: LocalAudioUsage[]};
 // src/audio/readiness.ts
 export const collectStoryAudioRefs: (story: Story) => Array<{ref: AudioRef; role: AudioRole; sceneIndex: number | null}>;
-export const splitUsagesByCategory: (usages: LocalAssetUsage[]) => {image: LocalAssetUsage[]; audio: LocalAssetUsage[]};
-export const evaluateAudioBudget: (usages: LocalAssetUsage[], metadata: ReadonlyMap<LocalAssetRef, PayloadMetadata>) => LocalAssetBudgetResult; // audio usages only; non-audio metadata fails closed
+export const evaluateAudioBudget: (usages: readonly LocalAudioUsage[], metadataByDigest: ReadonlyMap<string, PayloadMetadata>) => LocalAssetBudgetResult; // audio usages only, metadata keyed by digest like evaluateLocalAssetBudget; non-audio metadata fails closed
 // src/web/browserRender.ts
 export type BrowserRenderCapability = /* existing */ | {kind: "audio-unsupported"; message: string};
 ```
 
 ## Tasks
 
-1. [ ] Readiness: audio usages, audio budget, acceptance lower bound + exact frame budget at readiness, and the pre-click readiness source state (local-asset state + AUDIO-004's `useBundledAudioStates()`) blocking on `missing-audio`/`pending-audio` with the messages above; inside the transaction, frozen `audioSources` from verified payloads and ready bundled blobs, then the final zero-`pending`/`missing` check before OPFS.
+1. [ ] Readiness: audio usages, audio budget, acceptance lower bound + exact frame budget at readiness, and the pre-click readiness source state (local-asset state + AUDIO-004's `useBundledAudioStates()`) blocking on `missing-audio`/`pending-audio` with the messages above; inside the transaction, frozen `audioSources` from verified payloads and ready bundled blobs, then the final zero-`pending`/`missing` check before OPFS. After AUDIO-003 the local-asset gate in `src/web/App.tsx` (browser render resolves and prepares local assets only when `storyHasLocalAssetRefs`) is image-only, because `storyHasLocalAssetRefs` stays image-only (it drives persistence version 2); widen the gate to any local ref (images or `local:audio:`) when the interim block is removed, with a test for a Story whose only local ref is audio.
 2. [ ] Capability with audio (AAC native or WASM, cached per `storyHasAudio`).
-3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check.
-4. [ ] CLI: durations, staging, missing-audio error, `buildRenderArgs` audio flags and props file contents. For a Story with audio the props file carries `audioDurations` (from `storyAudioDurations`), `audioSources`, `bundledAudioPolicy: "explicit"` and `audioArmed: true` (AUDIO-002 left the CLI props as `{story}` because the interim block made them unreachable); a Story without audio keeps exactly `{story}` (AINV-6). Both renderers decide `disallowFallbackToHtml5Audio` on `@remotion/media` `<Audio>` (AUDIO-002 leaves the Player at the default): a render must not silently switch to a different decode path.
+3. [ ] Preparation + preflight (metadata + session decode, `AudioDecodeCache`) + `delayRenderTimeoutInMilliseconds` + `renderMediaOnWeb` audio options + post-render metadata check. After AUDIO-003 the INV-5 "no resolved source" check in `renderStoryMediaOnWeb` covers images only; the frozen-map re-check must also cover every `local:audio:` and bundled ref.
+4. [ ] CLI: durations, staging, missing-audio error, `buildRenderArgs` audio flags and props file contents. For a Story with audio the props file carries `audioDurations` (from `storyAudioDurations`), `audioSources`, `bundledAudioPolicy: "explicit"` and `audioArmed: true` (AUDIO-002 left the CLI props as `{story}` because the interim block made them unreachable); a Story without audio keeps exactly `{story}` (AINV-6). Both renderers decide `disallowFallbackToHtml5Audio` on `@remotion/media` `<Audio>` (AUDIO-002 leaves the Player at the default): a render must not silently switch to a different decode path. After AUDIO-003 the local-asset gate in `scripts/renderStory.ts` (it stages local assets only when `storyHasLocalAssetRefs`) is image-only, because `storyHasLocalAssetRefs` stays image-only; widen it to any local ref (images or `local:audio:`) when the interim block is removed, with a test for a Story whose only local ref is audio. `stageLocalAssetsForStory` returns only `{sources}`: the CLI's local audio durations come from re-inspecting the staged copies.
 5. [ ] Remove the AUDIO-001 interim render block: the `AUDIO_RENDER_BLOCK_MESSAGE` ("This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.") refusal in `renderStoryMediaOnWeb` (with its `bypassAudioBlockForTest` option), `scripts/renderStory.ts` and App.tsx's Render MP4 disabled reason (`audioRenderBlock`, `data-audio-block`), the constant in `src/audio/storyAudio.ts`, and the tests that assert it.
 
 ## Tests
