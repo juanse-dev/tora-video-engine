@@ -299,7 +299,8 @@ export const MyAssetsSection = ({
               selected={false}
               canManage={ready}
               {...cardActions(entry)}
-              onSelect={() => onSelect(entry.ref)}
+              // This section lists the image categories only.
+              onSelect={() => onSelect(entry.ref as LocalImageRef)}
             />
           ))}
         </div>

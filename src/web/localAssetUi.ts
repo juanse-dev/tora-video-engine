@@ -1,7 +1,7 @@
 import {
   parseLocalAssetRef,
-  type ImageAssetCategory,
-  type LocalImageRef,
+  type LocalAssetCategory,
+  type LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {shortAssetId} from "../localAssets/sources.ts";
 
@@ -19,7 +19,7 @@ export type SceneAssetValues = {pose: string; background: string};
  */
 export const sceneNumbersUsingRef = (
   story: {readonly scenes: readonly SceneAssetValues[]},
-  ref: LocalImageRef,
+  ref: LocalAssetRef,
 ): number[] =>
   story.scenes.flatMap((scene, index) =>
     scene.pose === ref || scene.background === ref ? [index + 1] : [],
@@ -28,16 +28,16 @@ export const sceneNumbersUsingRef = (
 /** Number of scenes (not fields) that use ref; see sceneNumbersUsingRef for which scenes to pass. */
 export const countScenesUsingRef = (
   story: {readonly scenes: readonly SceneAssetValues[]},
-  ref: LocalImageRef,
+  ref: LocalAssetRef,
 ): number => sceneNumbersUsingRef(story, ref).length;
 
 export type MatchingFileResult =
   | {kind: "match"} // same category + same digest
-  | {kind: "different"; candidateRef: LocalImageRef};
+  | {kind: "different"; candidateRef: LocalAssetRef};
 
 export const evaluateMatchingFile = (
-  missingRef: LocalImageRef,
-  candidateRef: LocalImageRef,
+  missingRef: LocalAssetRef,
+  candidateRef: LocalAssetRef,
 ): MatchingFileResult =>
   missingRef === candidateRef
     ? {kind: "match"}
@@ -53,7 +53,7 @@ const scenesNoun = (count: number): string =>
 
 export const deleteConfirmationText = (
   label: string,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   sceneCount: number,
 ): string =>
   sceneCount === 0
@@ -83,7 +83,7 @@ export const describeMissingLocalAsset = ({
   sceneNumbers,
   damaged,
 }: {
-  ref: LocalImageRef;
+  ref: LocalAssetRef;
   sceneNumbers: readonly number[];
   damaged: boolean;
 }): MissingLocalAssetCopy => {
@@ -104,7 +104,7 @@ export const describeMissingLocalAsset = ({
   };
 };
 
-export const mismatchDialogText = (candidateRef: LocalImageRef): string =>
+export const mismatchDialogText = (candidateRef: LocalAssetRef): string =>
   `This file is a different image (${shortAssetId(candidateRef)}), so it can't restore the missing one.`;
 
 export type AssetDialogCallbackResult =

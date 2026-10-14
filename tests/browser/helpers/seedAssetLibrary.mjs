@@ -2,7 +2,7 @@ import {createHash} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {crc32, deflateSync} from "node:zlib";
 
-// Writes fixture records straight into IndexedDB (ASSET-002 v1 layout) from
+// Writes fixture records straight into IndexedDB (ASSET-002 layout, database version 2: waveforms is empty unless a record seeds it) from
 // page.evaluate, so browser tests can run without the ASSET-003 import UI.
 //
 // Layout (all stores use out-of-line keys):
@@ -13,7 +13,7 @@ import {crc32, deflateSync} from "node:zlib";
 //                record carries `thumbnail` (preview/render do not need them).
 
 export const ASSET_DB_NAME = "tora-video-engine-assets";
-export const ASSET_DB_VERSION = 1;
+export const ASSET_DB_VERSION = 2;
 
 const FIXTURE_DIR = new URL("../../fixtures/local-assets/", import.meta.url);
 
@@ -131,7 +131,7 @@ export const seedAssetLibrary = async (page, records) => {
       const request = indexedDB.open(dbName, dbVersion);
 
       request.onupgradeneeded = () => {
-        for (const name of ["assets", "payloadMeta", "blobs", "thumbnails"]) {
+        for (const name of ["assets", "payloadMeta", "blobs", "thumbnails", "waveforms"]) {
           if (!request.result.objectStoreNames.contains(name)) {
             request.result.createObjectStore(name);
           }

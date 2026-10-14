@@ -59,6 +59,10 @@ export const localAssetRefPrefix = (category: LocalAssetCategory): string =>
 
 /** Throws if digest is not 64 lowercase hex. */
 export function buildLocalAssetRef(
+  category: "audio",
+  digest: string,
+): LocalAudioRef;
+export function buildLocalAssetRef(
   category: ImageAssetCategory,
   digest: string,
 ): LocalImageRef;

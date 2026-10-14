@@ -100,7 +100,7 @@ test("library constants match the README table", () => {
   assert.equal(constants.LOCAL_ASSET_PAGE_SIZE, 50);
   assert.equal(constants.MAX_LOCAL_ASSET_LABEL_LENGTH, 80);
   assert.equal(constants.ASSET_DB_NAME, "tora-video-engine-assets");
-  assert.equal(constants.ASSET_DB_VERSION, 1);
+  assert.equal(constants.ASSET_DB_VERSION, 2);
   assert.equal(constants.ASSET_LIBRARY_LOCK, "tora-video-engine:asset-library");
   assert.equal(
     constants.ASSET_LIBRARY_CHANNEL,

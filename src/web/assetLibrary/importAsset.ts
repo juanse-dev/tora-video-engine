@@ -330,7 +330,7 @@ export const commitPreparedLocalAssetImport = async (
   // must never delay a successful import. It never rejects.
   void requestPersistentStorageOnce(deps);
 
-  return {ref: result.ref, created: result.created};
+  return {ref: prepared.ref, created: result.created};
 };
 
 /** prepareLocalAssetImport + onPhase("storing") + commitPreparedLocalAssetImport. */

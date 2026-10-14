@@ -1,14 +1,22 @@
 import type {
+  AudioPayloadMetadata,
   ImagePayloadMetadata,
   PayloadMetadata,
 } from "../../localAssets/readiness.ts";
 import type {
-  ImageAssetCategory,
+  LocalAssetCategory,
+  LocalAssetRef,
+  LocalAudioRef,
   LocalImageRef,
 } from "../../localAssets/refs.ts";
-import type {AssetRow, Decoded, ThumbnailRecord} from "./records.ts";
+import type {
+  AssetRow,
+  Decoded,
+  ThumbnailRecord,
+  WaveformRecord,
+} from "./records.ts";
 
-export type AssetPageCursor = {after?: LocalImageRef; before?: LocalImageRef};
+export type AssetPageCursor = {after?: LocalAssetRef; before?: LocalAssetRef};
 
 export type AssetLibraryMutation =
   | {
@@ -21,14 +29,24 @@ export type AssetLibraryMutation =
       blob: Blob;
       thumbnail: ThumbnailRecord;
     }
-  | {kind: "rename"; ref: LocalImageRef; label: string}
-  | {kind: "delete"; ref: LocalImageRef};
+  | {
+      kind: "import-audio";
+      ref: LocalAudioRef;
+      defaultLabel: string;
+      originalFilename: string;
+      createdAt: string;
+      payloadMeta: AudioPayloadMetadata;
+      blob: Blob;
+      waveform: WaveformRecord;
+    }
+  | {kind: "rename"; ref: LocalAssetRef; label: string}
+  | {kind: "delete"; ref: LocalAssetRef};
 
 export type AssetLibraryMutationResult =
-  | {kind: "imported"; ref: LocalImageRef; created: boolean} // created=false: existing row reused/repaired
-  | {kind: "renamed"; ref: LocalImageRef}
-  | {kind: "deleted"; ref: LocalImageRef; payloadRemoved: boolean}
-  | {kind: "not-found"; ref: LocalImageRef}; // rename/delete of a row that no longer exists
+  | {kind: "imported"; ref: LocalAssetRef; created: boolean} // created=false: existing row reused/repaired
+  | {kind: "renamed"; ref: LocalAssetRef}
+  | {kind: "deleted"; ref: LocalAssetRef; payloadRemoved: boolean}
+  | {kind: "not-found"; ref: LocalAssetRef}; // rename/delete of a row that no longer exists
 
 export type LocalAssetLibraryErrorCode = "storage-full" | "storage-error";
 
@@ -57,10 +75,11 @@ export class LocalAssetLibraryError extends Error {
 }
 
 export interface AssetLibraryStore {
-  getAssetRow(ref: LocalImageRef): Promise<Decoded<AssetRow>>;
+  getAssetRow(ref: LocalAssetRef): Promise<Decoded<AssetRow>>;
   getPayloadMeta(digest: string): Promise<Decoded<PayloadMetadata>>;
   getBlob(digest: string): Promise<Decoded<Blob>>;
   getThumbnail(digest: string): Promise<Decoded<ThumbnailRecord>>;
+  getWaveform(digest: string): Promise<Decoded<WaveformRecord>>;
   /**
    * Ordered by primary key inside the category prefix; at most `limit` rows.
    * Keys that are not canonical refs of `category` are skipped and never count
@@ -69,12 +88,12 @@ export interface AssetLibraryStore {
    * whose key is `> after` (or from the start of the category).
    */
   listAssets(
-    category: ImageAssetCategory,
+    category: LocalAssetCategory,
     cursor: AssetPageCursor,
     limit: number,
-  ): Promise<Array<{ref: LocalImageRef; row: Decoded<AssetRow>}>>;
-  countAssets(category: ImageAssetCategory): Promise<number>;
-  /** Applies one mutation in ONE read-write transaction over all four stores. */
+  ): Promise<Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}>>;
+  countAssets(category: LocalAssetCategory): Promise<number>;
+  /** Applies one mutation in ONE read-write transaction over all five stores. */
   apply(mutation: AssetLibraryMutation): Promise<AssetLibraryMutationResult>;
   close(): void;
 }

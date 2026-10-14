@@ -1,30 +1,32 @@
 import {
   parseLocalAssetRef,
-  buildLocalAssetRef,
   localAssetRefPrefix,
 } from "../../src/localAssets/refs.ts";
+import {deletionScope} from "../../src/web/assetLibrary/payloadScope.ts";
 import {
   decodeAssetRow,
   decodeBlobRecord,
   decodePayloadMeta,
   decodeThumbnail,
+  decodeWaveform,
 } from "../../src/web/assetLibrary/records.ts";
 
 /**
  * In-memory `AssetLibraryStore` for Node tests (ASSET-002 D-5).
  *
- * Raw values live in four Maps keyed exactly like the IndexedDB stores
- * (`assets`: full ref; `payloadMeta` / `blobs` / `thumbnails`: digest) and are
+ * Raw values live in five Maps keyed exactly like the IndexedDB stores
+ * (`assets`: full ref; `payloadMeta` / `blobs` / `thumbnails` / `waveforms`: digest) and are
  * decoded on every read with the real decoders, so injected corrupt values
  * behave like corrupt rows in IndexedDB.
  *
  * Public API (besides the `AssetLibraryStore` methods):
- * - `stores`: `{assets, payloadMeta, blobs, thumbnails}` raw Maps (inspect freely).
+ * - `stores`: `{assets, payloadMeta, blobs, thumbnails, waveforms}` raw Maps (inspect freely).
  * - `reads`: `{assets, payloadMeta, blobs, thumbnails}` counters, incremented by
  *   `getAssetRow` / `getPayloadMeta` / `getBlob` / `getThumbnail` (one per call)
  *   and by `listAssets` (one per row RETURNED in `reads.assets`; skipped
  *   non-canonical keys are not counted). Reads done inside `apply` and
- *   `countAssets` are NOT counted. `resetReads()` zeroes all counters.
+ *   `countAssets` are NOT counted, and neither are `getWaveform` reads (the
+ *   counters keep their four v0.3 entries). `resetReads()` zeroes all counters.
  * - `setRaw(storeName, key, value)` / `getRaw` / `deleteRaw` / `hasRaw` /
  *   `keys(storeName)`: raw injection and inspection, bypassing the decoders.
  * - `failNextApply(error?, count = 1)`: the next `count` `apply` calls reject
@@ -32,11 +34,12 @@ import {
  *   transaction has run, and leave every store unchanged (all-or-nothing).
  *   `clearApplyFailure()` cancels pending failures.
  * - `applyCalls`: array of the mutations passed to `apply` (successful or not).
- * - `snapshot()`: plain object copy of the four Maps (for "unchanged" asserts).
+ * - `snapshot()`: plain object copy of the five Maps (for "unchanged" asserts).
  * - `closed`: true after `close()`; every operation then rejects.
  */
 
 export const STORE_NAMES = ["assets", "payloadMeta", "blobs", "thumbnails"];
+export const ALL_STORE_NAMES = [...STORE_NAMES, "waveforms"];
 
 export const createQuotaExceededError = () =>
   new DOMException("The quota has been exceeded.", "QuotaExceededError");
@@ -57,6 +60,7 @@ export const createMemoryAssetStore = () => {
     payloadMeta: new Map(),
     blobs: new Map(),
     thumbnails: new Map(),
+    waveforms: new Map(),
   };
   const reads = {assets: 0, payloadMeta: 0, blobs: 0, thumbnails: 0};
   const applyCalls = [];
@@ -70,7 +74,7 @@ export const createMemoryAssetStore = () => {
   };
 
   const assertStoreName = (name) => {
-    if (!STORE_NAMES.includes(name)) {
+    if (!ALL_STORE_NAMES.includes(name)) {
       throw new Error(`Unknown store: ${String(name)}`);
     }
   };
@@ -92,14 +96,18 @@ export const createMemoryAssetStore = () => {
   const runTransaction = (mutation) => {
     const staged = {};
 
-    for (const name of STORE_NAMES) {
+    for (const name of ALL_STORE_NAMES) {
       staged[name] = new Map(stores[name]);
     }
 
     const {digest, category} = mutationDigest(mutation.ref);
     let result;
 
-    if (mutation.kind === "import") {
+    if (mutation.kind === "import" || mutation.kind === "import-audio") {
+      if ((mutation.kind === "import-audio") !== (category === "audio")) {
+        throw new Error(`${mutation.kind} does not accept a ${category} ref`);
+      }
+
       const existing = decodeAssetRow(mutation.ref, staged.assets.get(mutation.ref));
       const keep = existing.status === "present" ? existing.value : null;
 
@@ -110,12 +118,17 @@ export const createMemoryAssetStore = () => {
       });
       staged.payloadMeta.set(digest, {...mutation.payloadMeta});
       staged.blobs.set(digest, {blob: mutation.blob});
-      staged.thumbnails.set(digest, {...mutation.thumbnail});
-      result = {
-        kind: "imported",
-        ref: mutation.ref,
-        created: existing.status === "absent",
-      };
+
+      if (mutation.kind === "import") {
+        staged.thumbnails.set(digest, {...mutation.thumbnail});
+      } else {
+        staged.waveforms.set(digest, {
+          peaksPerSecond: mutation.waveform.peaksPerSecond,
+          peaks: mutation.waveform.peaks,
+        });
+      }
+
+      result = {kind: "imported", ref: mutation.ref, created: existing.status === "absent"};
     } else if (mutation.kind === "rename") {
       const existing = decodeAssetRow(mutation.ref, staged.assets.get(mutation.ref));
 
@@ -140,14 +153,16 @@ export const createMemoryAssetStore = () => {
       } else {
         staged.assets.delete(mutation.ref);
 
-        const otherCategory = category === "pose" ? "background" : "pose";
-        const otherRef = buildLocalAssetRef(otherCategory, digest);
-        const payloadRemoved = !staged.assets.has(otherRef);
+        const {protectingRefs, derivedStores} = deletionScope(category, digest);
+        const payloadRemoved = !protectingRefs.some((otherRef) => staged.assets.has(otherRef));
 
         if (payloadRemoved) {
           staged.payloadMeta.delete(digest);
           staged.blobs.delete(digest);
-          staged.thumbnails.delete(digest);
+
+          for (const name of derivedStores) {
+            staged[name].delete(digest);
+          }
         }
 
         result = {kind: "deleted", ref: mutation.ref, payloadRemoved};
@@ -201,7 +216,7 @@ export const createMemoryAssetStore = () => {
 
     snapshot() {
       return Object.fromEntries(
-        STORE_NAMES.map((name) => [name, new Map(stores[name])]),
+        ALL_STORE_NAMES.map((name) => [name, new Map(stores[name])]),
       );
     },
 
@@ -235,6 +250,11 @@ export const createMemoryAssetStore = () => {
       assertOpen();
       reads.thumbnails += 1;
       return decodeThumbnail(digest, stores.thumbnails.get(digest));
+    },
+
+    async getWaveform(digest) {
+      assertOpen();
+      return decodeWaveform(digest, stores.waveforms.get(digest));
     },
 
     async listAssets(category, cursor, limit) {
@@ -278,7 +298,7 @@ export const createMemoryAssetStore = () => {
         throw failure;
       }
 
-      for (const name of STORE_NAMES) {
+      for (const name of ALL_STORE_NAMES) {
         stores[name].clear();
 
         for (const [key, value] of staged[name]) {

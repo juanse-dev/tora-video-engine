@@ -6,13 +6,18 @@
 // the root index.html.
 
 import {isDecodeComplete} from "../../src/audio/decodeCheck.ts";
-import {inspectAudio} from "../../src/localAssets/audioInspection.ts";
+import {
+  audioMimeTypeFor,
+  inspectAudio,
+} from "../../src/localAssets/audioInspection.ts";
 import {sha256Hex} from "../../src/localAssets/hash.ts";
 import {inspectImageBytes} from "../../src/localAssets/imageInspection.ts";
 import {
   buildLocalAssetRef,
   parseLocalAssetRef,
   type ImageAssetCategory,
+  type LocalAssetCategory,
+  type LocalAudioRef,
   type LocalImageRef,
 } from "../../src/localAssets/refs.ts";
 import {
@@ -46,13 +51,19 @@ import type {ThumbnailRecord} from "../../src/web/assetLibrary/records.ts";
 
 type StatusSummary = {kind: AssetLibraryStatus["kind"]; message?: string};
 type ThumbnailKind = "valid" | "claims-300" | "oversized" | "bytes-4000";
-type StoreName = "assets" | "payloadMeta" | "blobs" | "thumbnails";
+type StoreName =
+  | "assets"
+  | "payloadMeta"
+  | "blobs"
+  | "thumbnails"
+  | "waveforms";
 
 const STORE_NAMES: StoreName[] = [
   "assets",
   "payloadMeta",
   "blobs",
   "thumbnails",
+  "waveforms",
 ];
 
 /* ------------------------------------------------------------ spies/state */
@@ -284,6 +295,47 @@ const describeError = (error: unknown) => {
 
 /* -------------------------------------------------------------- the hooks */
 
+const buildAudioImportMutation = async (options: {
+  fixture: string;
+  label?: string;
+}): Promise<Extract<AssetLibraryMutation, {kind: "import-audio"}>> => {
+  const response = await fetch(`/tests/fixtures/local-audio/${options.fixture}`);
+
+  if (!response.ok) {
+    throw new Error(`Fixture ${options.fixture} answered ${response.status}`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const inspected = await inspectAudio(bytes);
+
+  if (!inspected.ok) {
+    throw new Error(`Harness audio rejected: ${inspected.message}`);
+  }
+
+  const digest = await sha256Hex(bytes);
+  const {container, codec, durationSeconds, sampleRate, channels} = inspected.metadata;
+
+  return {
+    kind: "import-audio",
+    ref: buildLocalAssetRef("audio", digest),
+    defaultLabel: options.label ?? options.fixture,
+    originalFilename: options.fixture,
+    createdAt: new Date().toISOString(),
+    payloadMeta: {
+      kind: "audio",
+      mimeType: audioMimeTypeFor(container),
+      byteSize: bytes.length,
+      container,
+      codec,
+      durationSeconds,
+      sampleRate,
+      channels,
+    },
+    blob: new Blob([bytes as BlobPart], {type: audioMimeTypeFor(container)}),
+    waveform: {peaksPerSecond: 50, peaks: Uint8Array.from([1, 2, 3, 255])},
+  };
+};
+
 const toraHarness = {
   /* ---- library lifecycle ---- */
 
@@ -437,7 +489,7 @@ const toraHarness = {
 
   pendingMutation: (): unknown => pendingMutation,
 
-  async listPage(category: ImageAssetCategory, cursor: AssetPageCursor = {}) {
+  async listPage(category: LocalAssetCategory, cursor: AssetPageCursor = {}) {
     const page = await listLocalAssetPage(
       requireLibrary().store,
       category,
@@ -453,7 +505,7 @@ const toraHarness = {
   },
 
   async listStore(
-    category: ImageAssetCategory,
+    category: LocalAssetCategory,
     cursor: AssetPageCursor,
     limit: number,
   ) {
@@ -466,7 +518,7 @@ const toraHarness = {
     return rows.map(({ref, row}) => ({ref, status: row.status}));
   },
 
-  count: (category: ImageAssetCategory) =>
+  count: (category: LocalAssetCategory) =>
     countLocalAssets(requireLibrary().store, category),
 
   /* ---- the real import pipeline (default decode + thumbnail) ---- */
@@ -620,6 +672,141 @@ const toraHarness = {
     }
 
     return card.dataset.state;
+  },
+
+  /* ---- audio rows (AUDIO-003) ---- */
+
+  /** Imports a committed audio fixture with a tiny synthetic waveform (decoding has its own specs). */
+  async seedAudio(options: {fixture: string; label?: string}) {
+    const mutation = await buildAudioImportMutation(options);
+    const lib = requireLibrary();
+    const result = await withAssetLibraryLock(lib.locks, "exclusive", () =>
+      lib.store.apply(mutation),
+    );
+
+    channel.post({
+      type: "asset-library-changed",
+      refs: [mutation.ref],
+      digests: [mutation.ref.slice(-64)],
+    });
+
+    return {result, ref: mutation.ref, digest: mutation.ref.slice(-64)};
+  },
+
+  /** An audio import whose blob IndexedDB cannot clone: the transaction aborts after earlier writes. */
+  async applyBrokenAudioImport(fixture: string) {
+    const mutation = await buildAudioImportMutation({fixture});
+
+    try {
+      await requireLibrary().store.apply({
+        ...mutation,
+        blob: (() => undefined) as unknown as Blob,
+      });
+      return {ok: true as const};
+    } catch (error) {
+      return {ok: false as const, error: describeError(error)};
+    }
+  },
+
+  async inspectAudioRef(ref: LocalAudioRef) {
+    const store = requireLibrary().store;
+    const parsed = parseLocalAssetRef(ref);
+
+    if (parsed === null) {
+      throw new Error("not a ref");
+    }
+
+    const [row, meta, blob, waveform] = await Promise.all([
+      store.getAssetRow(ref),
+      store.getPayloadMeta(parsed.digest),
+      store.getBlob(parsed.digest),
+      store.getWaveform(parsed.digest),
+    ]);
+
+    return {
+      row,
+      meta,
+      blob:
+        blob.status === "present"
+          ? {
+              status: "present" as const,
+              size: blob.value.size,
+              sha256: await sha256Hex(new Uint8Array(await blob.value.arrayBuffer())),
+            }
+          : blob,
+      waveform:
+        waveform.status === "present"
+          ? {
+              status: "present" as const,
+              peaksPerSecond: waveform.value.peaksPerSecond,
+              peaks: Array.from(waveform.value.peaks),
+            }
+          : waveform,
+    };
+  },
+
+  async getWaveform(digest: string) {
+    const record = await requireLibrary().store.getWaveform(digest);
+
+    return record.status === "present"
+      ? {status: "present" as const, peaks: Array.from(record.value.peaks)}
+      : record;
+  },
+
+  /**
+   * Creates a version 1 database (the four v0.3 stores) holding one pose and
+   * one background in the v0.3 record shapes, then closes it. Run before the
+   * library is opened, so the production open performs the 1 -> 2 upgrade.
+   */
+  async seedVersion1Database() {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(ASSET_DB_NAME, 1);
+
+      request.onupgradeneeded = () => {
+        for (const name of ["assets", "payloadMeta", "blobs", "thumbnails"]) {
+          request.result.createObjectStore(name);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const seeded: Record<string, {ref: string; digest: string; byteSize: number}> = {};
+
+    try {
+      for (const [category, color] of [
+        ["pose", "#cc3366"],
+        ["background", "#3366cc"],
+      ] as const) {
+        const {bytes, blob} = await makePng(16, 16, color);
+        const digest = await sha256Hex(bytes);
+        const ref = buildLocalAssetRef(category, digest);
+        const thumbnail = await buildThumbnail("valid");
+        const transaction = database.transaction(
+          ["assets", "payloadMeta", "blobs", "thumbnails"],
+          "readwrite",
+        );
+
+        transaction.objectStore("assets").put(
+          {
+            label: `Legacy ${category}`,
+            originalFilename: `legacy-${category}.png`,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          ref,
+        );
+        transaction
+          .objectStore("payloadMeta")
+          .put({mimeType: "image/png", byteSize: bytes.length, width: 16, height: 16}, digest);
+        transaction.objectStore("blobs").put({blob}, digest);
+        transaction.objectStore("thumbnails").put(thumbnail, digest);
+        await transactionDone(transaction);
+        seeded[category] = {ref, digest, byteSize: bytes.length};
+      }
+    } finally {
+      database.close();
+    }
+
+    return seeded;
   },
 
   /* ---- raw IndexedDB access (separate short-lived connections) ---- */
