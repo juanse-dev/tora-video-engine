@@ -4,6 +4,7 @@ import {buildAudioSourceMap} from "../../src/audio/sources.ts";
 import type {LocalAudioRef, LocalPoseRef} from "../../src/localAssets/refs.ts";
 import type {LocalAssetSourceMap} from "../../src/localAssets/sources.ts";
 import type {Story} from "../../src/story/types.ts";
+import type {ToraVideoProps} from "../../src/Video.tsx";
 
 // The Player marks a failed bundled sound as unavailable.
 export const playerSources: AudioSourceMap = {ding: {kind: "unavailable"}};
@@ -36,3 +37,17 @@ export const fromImageMap = buildAudioSourceMap(story, imageMap, () => undefined
 export const fromNothing = buildAudioSourceMap(story, undefined, () => ({
   kind: "unavailable",
 }));
+
+// The composition accepts the audio props (Player, renderers and Studio).
+export const compositionProps: ToraVideoProps = {
+  story,
+  audioSources: playerSources,
+  bundledAudioPolicy: "explicit",
+  audioArmed: false,
+};
+export const studioProps: ToraVideoProps = {story};
+export const badPolicy: ToraVideoProps = {
+  story,
+  // @ts-expect-error only "explicit" and "static-fallback" exist
+  bundledAudioPolicy: "always",
+};
