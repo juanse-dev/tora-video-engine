@@ -5,7 +5,11 @@ import {
   toraPoseAssets,
 } from "../assets.ts";
 import type {Background, Pose} from "../story/types.ts";
-import type {ImageAssetCategory, LocalImageRef} from "./refs.ts";
+import type {
+  ImageAssetCategory,
+  LocalAssetRef,
+  LocalImageRef,
+} from "./refs.ts";
 import {isLocalAssetRef} from "./refs.ts";
 
 export const STAGED_LOCAL_ASSETS_DIR = "__local-assets";
@@ -20,11 +24,11 @@ export type LocalAssetSource =
   | {kind: "pending"}; // browser preview: still resolving (never passed to a render)
 
 export type LocalAssetSourceMap = Readonly<
-  Partial<Record<LocalImageRef, LocalAssetSource>>
+  Partial<Record<LocalAssetRef, LocalAssetSource>>
 >;
 
 /** "abcd…7890": first 4 and last 4 hex chars of the digest. */
-export const shortAssetId = (ref: LocalImageRef): string =>
+export const shortAssetId = (ref: LocalAssetRef): string =>
   `${ref.slice(ref.length - 64, ref.length - 60)}…${ref.slice(ref.length - 4)}`;
 
 export type VisualAssetResolution =

@@ -5,6 +5,7 @@ import {
   describeBudgetFailure,
   evaluateLocalAssetBudget,
   collectStoryLocalAssetUsages,
+  splitUsagesByCategory,
   storyHasLocalAssetRefs,
 } from "../src/localAssets/readiness.ts";
 import {
@@ -249,4 +250,66 @@ test("describeBudgetFailure writes one sentence per exceeded limit", () => {
   assert.equal(sentences[0], "Uses 70 local assets (limit 64).");
   assert.match(sentences[1], /257 MiB.*limit 256 MiB/u);
   assert.match(sentences[2], /201 megapixels.*limit 200 megapixels/u);
+});
+
+test("the budget fails closed on non-image metadata and names it", () => {
+  const audio = {
+    kind: "audio", mimeType: "audio/wav", byteSize: 1000, container: "wave", codec: "pcm",
+    durationSeconds: 1, sampleRate: 48_000, channels: 2,
+  };
+  const result = evaluateLocalAssetBudget([usageOf(1)], new Map([[digestOf(1), audio]]));
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.exceeded, ["metadata"]);
+  assert.equal(describeBudgetFailure(result), "A local asset's stored details do not match an image.");
+});
+
+const audioRefOf = (n) => `local:audio:sha256:${digestOf(n)}`;
+const withScenes = (story, patches) => ({
+  ...story,
+  scenes: story.scenes.map((scene, index) => ({...scene, ...patches[index]})),
+});
+
+test("the collector lists audio usages after the image usages, with roles and scene indexes", () => {
+  const story = withScenes(
+    {
+      ...storyOf([[poseRef(1), "office"], ["formal", backgroundRef(2)], ["formal", "office"]]),
+      music: {src: audioRefOf(9)},
+    },
+    [
+      {sfx: {src: audioRefOf(3)}, voice: {src: audioRefOf(4)}},
+      {sfx: {src: audioRefOf(9)}},
+      {voice: {src: audioRefOf(4)}, sfx: {src: "boom"}},
+    ],
+  );
+
+  assert.deepEqual(collectStoryLocalAssetUsages(story), [
+    {ref: poseRef(1), category: "pose", digest: digestOf(1), sceneIndexes: [0]},
+    {ref: backgroundRef(2), category: "background", digest: digestOf(2), sceneIndexes: [1]},
+    {ref: audioRefOf(9), category: "audio", digest: digestOf(9), sceneIndexes: [1], roles: ["music", "sfx"]},
+    {ref: audioRefOf(3), category: "audio", digest: digestOf(3), sceneIndexes: [0], roles: ["sfx"]},
+    {ref: audioRefOf(4), category: "audio", digest: digestOf(4), sceneIndexes: [0, 2], roles: ["voice"]},
+  ]);
+});
+
+test("bundled sounds are not local usages and an audio-only Story has no local image refs", () => {
+  const story = withScenes(storyOf([["formal", "office"]]), [{sfx: {src: "boom"}, voice: {src: audioRefOf(1)}}]);
+
+  assert.deepEqual(collectStoryLocalAssetUsages(story).map((usage) => usage.ref), [audioRefOf(1)]);
+  assert.equal(storyHasLocalAssetRefs(story), false);
+  assert.deepEqual(collectStoryLocalAssetUsages(withScenes(storyOf([["formal", "office"]]), [{sfx: {src: "boom"}}])), []);
+});
+
+test("splitUsagesByCategory feeds the image budget with image usages only", () => {
+  const usages = collectStoryLocalAssetUsages(
+    withScenes(storyOf([[poseRef(1), "office"]]), [{voice: {src: audioRefOf(2)}}]),
+  );
+  const split = splitUsagesByCategory(usages);
+
+  assert.deepEqual(split.image.map((usage) => usage.ref), [poseRef(1)]);
+  assert.deepEqual(split.audio.map((usage) => usage.ref), [audioRefOf(2)]);
+
+  const result = evaluateLocalAssetBudget(split.image, new Map([[digestOf(1), metadata(100, 4, 5)]]));
+
+  assert.deepEqual(result, {ok: true, refCount: 1, totalBytes: 100, totalPixels: 20});
 });

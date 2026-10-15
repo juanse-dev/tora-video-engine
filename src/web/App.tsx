@@ -71,10 +71,10 @@ import {
 } from "./persistence.ts";
 import {
   AUDIO_RENDER_BLOCK_MESSAGE,
-  storyAudioDurations,
   storyHasAudio,
 } from "../audio/storyAudio.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
+import {useStoryAudioDurations} from "./useStoryAudioDurations.ts";
 import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
 import {
@@ -305,10 +305,14 @@ export const App = () => {
     objectUrlPool,
     assetRefreshToken,
   );
-  const previewConfig = getWebPlayerConfig(
+  // ONE duration map for the page: the Player's outer length, its inputProps and
+  // the audio plan inside Preview all use this exact object.
+  const audioDurations = useStoryAudioDurations(
     activeStory,
-    storyAudioDurations(activeStory),
+    assetLibrary,
+    assetRefreshToken,
   );
+  const previewConfig = getWebPlayerConfig(activeStory, audioDurations);
 
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
@@ -2088,6 +2092,7 @@ export const App = () => {
             story={activeStory}
             localAssetSources={localAssets.sources}
             localAssetState={localAssets.state}
+            audioDurations={audioDurations}
           />
         </section>
       </main>

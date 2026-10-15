@@ -439,6 +439,10 @@ h1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.audio-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .asset-card {
   position: relative;
   overflow: hidden;
@@ -616,6 +620,10 @@ h1 {
   cursor: pointer;
 }
 
+.local-asset-static {
+  cursor: default;
+}
+
 .local-asset-thumbnail-fallback {
   display: flex;
   align-items: center;
@@ -633,6 +641,12 @@ h1 {
 
 .background-grid .local-asset-thumbnail-fallback {
   aspect-ratio: 16 / 9;
+}
+
+/* An audio card has no picture: a short note block instead of a square. */
+.audio-grid .local-asset-thumbnail-fallback {
+  aspect-ratio: 16 / 5;
+  font-size: 24px;
 }
 
 .local-badge {
@@ -703,6 +717,10 @@ h1 {
 }
 
 @media (max-width: 620px) {
+  .audio-grid {
+    grid-template-columns: 1fr;
+  }
+
   .asset-catalog-heading {
     align-items: flex-start;
     flex-direction: column;

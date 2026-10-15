@@ -66,13 +66,13 @@ const u32be = (value) =>
 /* ----------------------------------------------------- byte size check */
 
 test("checkLocalAssetByteSize accepts 1 byte and the 25 MiB maximum", () => {
-  assert.deepEqual(checkLocalAssetByteSize(1), {ok: true});
-  assert.deepEqual(checkLocalAssetByteSize(MAX_LOCAL_ASSET_BYTES), {ok: true});
+  assert.deepEqual(checkLocalAssetByteSize(1, "pose"), {ok: true});
+  assert.deepEqual(checkLocalAssetByteSize(MAX_LOCAL_ASSET_BYTES, "pose"), {ok: true});
 });
 
 test("checkLocalAssetByteSize rejects zero as empty and one over the maximum as too-large", () => {
-  assert.deepEqual(checkLocalAssetByteSize(0), {ok: false, reason: "empty"});
-  assert.deepEqual(checkLocalAssetByteSize(MAX_LOCAL_ASSET_BYTES + 1), {
+  assert.deepEqual(checkLocalAssetByteSize(0, "pose"), {ok: false, reason: "empty"});
+  assert.deepEqual(checkLocalAssetByteSize(MAX_LOCAL_ASSET_BYTES + 1, "pose"), {
     ok: false,
     reason: "too-large",
   });

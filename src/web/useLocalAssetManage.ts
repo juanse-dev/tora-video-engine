@@ -1,7 +1,7 @@
 import {useCallback, useContext, useRef, useState} from "react";
 import type {
-  ImageAssetCategory,
-  LocalImageRef,
+  LocalAssetCategory,
+  LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {AssetLibraryContext} from "./assetLibraryContext.ts";
 import {
@@ -28,7 +28,7 @@ export type LocalAssetManage = {
    * rename waits for the library lock (see MutationCancelable).
    */
   rename: (
-    ref: LocalImageRef,
+    ref: LocalAssetRef,
     label: string,
     onCancelable?: MutationCancelable,
   ) => Promise<string | null>;
@@ -38,10 +38,14 @@ export type LocalAssetManage = {
    * it is fixed now because the Story is frozen while the dialog is open.
    */
   requestDelete: (asset: {
-    ref: LocalImageRef;
+    ref: LocalAssetRef;
     label: string;
-    category: ImageAssetCategory;
+    category: LocalAssetCategory;
     sceneCount: number;
+    /** Audio only: the Story's music uses the ref. */
+    usesMusic?: boolean;
+    /** Audio only: 1-based numbers of the scenes using the ref. */
+    sceneNumbers?: readonly number[];
   }) => void;
 };
 
@@ -61,7 +65,7 @@ export const useLocalAssetManage = (): LocalAssetManage => {
 
   const rename = useCallback(
     async (
-      ref: LocalImageRef,
+      ref: LocalAssetRef,
       label: string,
       onCancelable?: MutationCancelable,
     ) => {
@@ -108,11 +112,15 @@ export const useLocalAssetManage = (): LocalAssetManage => {
       label,
       category,
       sceneCount,
+      usesMusic,
+      sceneNumbers,
     }: {
-      ref: LocalImageRef;
+      ref: LocalAssetRef;
       label: string;
-      category: ImageAssetCategory;
+      category: LocalAssetCategory;
       sceneCount: number;
+      usesMusic?: boolean;
+      sceneNumbers?: readonly number[];
     }) => {
       const current = contextRef.current;
       const library = current === null ? null : libraryFromContext(current);
@@ -129,6 +137,8 @@ export const useLocalAssetManage = (): LocalAssetManage => {
         label,
         category,
         sceneCount,
+        usesMusic,
+        sceneNumbers,
         onConfirm: async (onCancelable) => {
           const result = await deleteAssetFlow(library, ref, {onCancelable});
 

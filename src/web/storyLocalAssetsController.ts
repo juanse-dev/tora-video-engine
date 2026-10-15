@@ -2,6 +2,7 @@ import {
   collectStoryLocalAssetUsages,
   describeBudgetFailure,
   evaluateLocalAssetBudget,
+  splitUsagesByCategory,
   type LocalAssetUsage,
 } from "../localAssets/readiness.ts";
 import type {LocalAssetRef} from "../localAssets/refs.ts";
@@ -63,6 +64,9 @@ export type SettledLocalAssets = {
   library: AssetLibraryStatus;
 };
 
+const rolesOf = (usage: LocalAssetUsage): string =>
+  usage.category === "audio" ? usage.roles.join(",") : "";
+
 const sameUsages = (
   first: readonly LocalAssetUsage[],
   second: readonly LocalAssetUsage[],
@@ -73,6 +77,8 @@ const sameUsages = (
 
     return (
       usage.ref === other.ref &&
+      usage.category === other.category &&
+      rolesOf(usage) === rolesOf(other) &&
       usage.sceneIndexes.length === other.sceneIndexes.length &&
       usage.sceneIndexes.every(
         (sceneIndex, position) => sceneIndex === other.sceneIndexes[position],
@@ -105,7 +111,10 @@ export const selectVisibleLocalAssets = (input: {
     return {state: {kind: "none"}, sources: undefined};
   }
 
-  const refBudget = evaluateLocalAssetBudget(usages, new Map());
+  const refBudget = evaluateLocalAssetBudget(
+    splitUsagesByCategory(usages).image,
+    new Map(),
+  );
 
   if (!refBudget.ok) {
     return {

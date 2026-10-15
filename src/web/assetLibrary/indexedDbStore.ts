@@ -1,11 +1,9 @@
 import {
-  buildLocalAssetRef,
   parseLocalAssetRef,
   localAssetRefPrefix,
-  type ImageAssetCategory,
-  type LocalImageRef,
+  type LocalAssetCategory,
+  type LocalAssetRef,
 } from "../../localAssets/refs.ts";
-import type {PayloadMetadata} from "../../localAssets/readiness.ts";
 import {
   ASSET_DB_NAME,
   ASSET_DB_VERSION,
@@ -16,10 +14,12 @@ import {
   decodeBlobRecord,
   decodePayloadMeta,
   decodeThumbnail,
+  decodeWaveform,
   type AssetRow,
   type Decoded,
   type ThumbnailRecord,
 } from "./records.ts";
+import {deletionScope} from "./payloadScope.ts";
 import {
   LocalAssetLibraryError,
   type AssetLibraryMutation,
@@ -57,13 +57,19 @@ export const toLocalAssetLibraryError = (
   );
 };
 
-type StoreName = "assets" | "payloadMeta" | "blobs" | "thumbnails";
+type StoreName =
+  | "assets"
+  | "payloadMeta"
+  | "blobs"
+  | "thumbnails"
+  | "waveforms";
 
 const STORE_NAMES: StoreName[] = [
   "assets",
   "payloadMeta",
   "blobs",
   "thumbnails",
+  "waveforms",
 ];
 
 export type IndexedDbAssetStoreDeps = {
@@ -139,7 +145,7 @@ const openConnection = (
   ) as Promise<IDBDatabase>;
 
 const buildRange = (
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   cursor: AssetPageCursor,
 ): IDBKeyRange | null => {
   const prefix = localAssetRefPrefix(category);
@@ -167,8 +173,8 @@ const buildRange = (
 
 const isCanonicalKeyOf = (
   key: IDBValidKey,
-  category: ImageAssetCategory,
-): key is LocalImageRef =>
+  category: LocalAssetCategory,
+): key is LocalAssetRef =>
   typeof key === "string" && parseLocalAssetRef(key)?.category === category;
 
 const refParts = (ref: string) => {
@@ -282,6 +288,7 @@ export const openIndexedDbAssetStore = async (
 
     if (
       mutation.kind !== "import" &&
+      mutation.kind !== "import-audio" &&
       mutation.kind !== "rename" &&
       mutation.kind !== "delete"
     ) {
@@ -290,17 +297,23 @@ export const openIndexedDbAssetStore = async (
       );
     }
 
+    // A programming error, not a storage failure: nothing is opened or written.
+    if (
+      (mutation.kind === "import" && category === "audio") ||
+      (mutation.kind === "import-audio" && category !== "audio")
+    ) {
+      throw new Error(`${mutation.kind} does not accept ${category === "audio" ? "an" : "a"} ${category} ref`);
+    }
+
     return transact(STORE_NAMES, "readwrite", async (transaction) => {
       const assets = transaction.objectStore("assets");
 
-      if (mutation.kind === "import") {
+      if (mutation.kind === "import" || mutation.kind === "import-audio") {
         const existing = decodeAssetRow(
           mutation.ref,
           await requestToPromise<unknown>(assets.get(mutation.ref)),
         );
         const keep = existing.status === "present" ? existing.value : null;
-        const payloadMeta: PayloadMetadata = {...mutation.payloadMeta};
-        const thumbnail: ThumbnailRecord = {...mutation.thumbnail};
 
         await requestToPromise(
           assets.put(
@@ -313,14 +326,29 @@ export const openIndexedDbAssetStore = async (
           ),
         );
         await requestToPromise(
-          transaction.objectStore("payloadMeta").put(payloadMeta, digest),
+          transaction.objectStore("payloadMeta").put({...mutation.payloadMeta}, digest),
         );
         await requestToPromise(
           transaction.objectStore("blobs").put({blob: mutation.blob}, digest),
         );
-        await requestToPromise(
-          transaction.objectStore("thumbnails").put(thumbnail, digest),
-        );
+
+        if (mutation.kind === "import") {
+          const thumbnail: ThumbnailRecord = {...mutation.thumbnail};
+
+          await requestToPromise(
+            transaction.objectStore("thumbnails").put(thumbnail, digest),
+          );
+        } else {
+          await requestToPromise(
+            transaction.objectStore("waveforms").put(
+              {
+                peaksPerSecond: mutation.waveform.peaksPerSecond,
+                peaks: mutation.waveform.peaks,
+              },
+              digest,
+            ),
+          );
+        }
 
         return {
           kind: "imported",
@@ -362,18 +390,24 @@ export const openIndexedDbAssetStore = async (
 
       await requestToPromise(assets.delete(mutation.ref));
 
-      const otherRef = buildLocalAssetRef(
-        category === "pose" ? "background" : "pose",
-        digest,
-      );
+      const {protectingRefs, derivedStores} = deletionScope(category, digest);
+      let payloadRemoved = true;
+
       // A corrupt row in the other category still protects the shared payload.
-      const payloadRemoved =
-        (await requestToPromise<IDBValidKey | undefined>(
-          assets.getKey(otherRef),
-        )) === undefined;
+      for (const otherRef of protectingRefs) {
+        if (
+          (await requestToPromise<IDBValidKey | undefined>(
+            assets.getKey(otherRef),
+          )) !== undefined
+        ) {
+          payloadRemoved = false;
+        }
+      }
 
       if (payloadRemoved) {
-        for (const name of ["payloadMeta", "blobs", "thumbnails"] as const) {
+        const names: StoreName[] = ["payloadMeta", "blobs", ...derivedStores];
+
+        for (const name of names) {
           await requestToPromise(transaction.objectStore(name).delete(digest));
         }
       }
@@ -399,6 +433,10 @@ export const openIndexedDbAssetStore = async (
       return decodeThumbnail(digest, await getValue("thumbnails", digest));
     },
 
+    async getWaveform(digest) {
+      return decodeWaveform(digest, await getValue("waveforms", digest));
+    },
+
     async listAssets(category, cursor, limit) {
       assertUsable();
 
@@ -410,9 +448,9 @@ export const openIndexedDbAssetStore = async (
 
       const backwards = cursor.before !== undefined;
       const rows = await transact("assets", "readonly", (transaction) =>
-        new Promise<Array<{ref: LocalImageRef; row: Decoded<AssetRow>}>>(
+        new Promise<Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}>>(
           (resolve, reject) => {
-            const found: Array<{ref: LocalImageRef; row: Decoded<AssetRow>}> =
+            const found: Array<{ref: LocalAssetRef; row: Decoded<AssetRow>}> =
               [];
             const request = transaction
               .objectStore("assets")

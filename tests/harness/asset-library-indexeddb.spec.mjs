@@ -3,7 +3,7 @@ import {expect, test} from "@playwright/test";
 const HARNESS_URL = "/tests/harness/asset-library.html";
 const LOCK_NAME = "tora-video-engine:asset-library";
 const BLOCKED_MESSAGE = "Close other Tora tabs to finish updating My assets.";
-const STORE_NAMES = ["assets", "blobs", "payloadMeta", "thumbnails"];
+const STORE_NAMES = ["assets", "blobs", "payloadMeta", "thumbnails", "waveforms"];
 
 const openHarnessPage = async (context) => {
   const page = await context.newPage();
@@ -31,7 +31,7 @@ const validRow = (index) => ({
 });
 
 test.describe("IndexedDB asset library", () => {
-  test("open creates exactly the four out-of-line-key stores", async ({
+  test("open creates exactly the five out-of-line-key stores", async ({
     context,
   }) => {
     const page = await openHarnessPage(context);
@@ -40,7 +40,7 @@ test.describe("IndexedDB asset library", () => {
 
     const schema = await harness(page, "rawSchema");
 
-    expect(schema.version).toBe(1);
+    expect(schema.version).toBe(2);
     expect(schema.stores.map((store) => store.name).sort()).toEqual(
       STORE_NAMES,
     );
@@ -189,8 +189,8 @@ test.describe("IndexedDB asset library", () => {
 
     const pose = await harness(pageA, "seedImage", {category: "pose"});
 
-    // Page B opens version 2 directly. It is not blocked: A closes on versionchange.
-    expect(await harness(pageB, "upgradeDatabaseTo", 2)).toBe(2);
+    // Page B opens version 3 directly (the production build asks for 2). It is not blocked: A closes on versionchange.
+    expect(await harness(pageB, "upgradeDatabaseTo", 3)).toBe(3);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const probe = await harness(pageA, "probeRead", pose.ref);
@@ -226,9 +226,9 @@ test.describe("IndexedDB asset library", () => {
 
     // A keeps a raw connection that ignores versionchange.
     await harness(pageA, "closeLibrary");
-    expect(await harness(pageA, "holdStubbornConnection")).toBe(1);
+    expect(await harness(pageA, "holdStubbornConnection")).toBe(2);
 
-    const first = await harness(pageB, "openLibrary", {version: 2});
+    const first = await harness(pageB, "openLibrary", {version: 3});
 
     expect(first).toEqual({kind: "unavailable", message: BLOCKED_MESSAGE});
 
@@ -253,7 +253,7 @@ test.describe("IndexedDB asset library", () => {
     await harness(pageA, "releaseStubbornConnection");
     await harness(pageB, "waitForStatus", "ready");
 
-    expect((await harness(pageB, "rawSchema")).version).toBe(2);
+    expect((await harness(pageB, "rawSchema")).version).toBe(3);
     await expect
       .poll(() => harness(pageB, "lockState"))
       .toEqual({held: [], pending: []});
@@ -661,6 +661,175 @@ test.describe("IndexedDB asset library", () => {
         expect(await harness(page, "count", fixture.category)).toBe(1);
         expect(page.errors).toEqual([]);
       });
+    }
+  });
+
+  test("a seeded version 1 database upgrades to 2 and keeps every v0.3 pose and background row and payload", async ({context}) => {
+    const page = await openHarnessPage(context);
+    const seeded = await harness(page, "seedVersion1Database");
+
+    expect((await harness(page, "rawSchema")).version).toBe(1);
+    expect(await harness(page, "openLibrary")).toEqual({kind: "ready"});
+
+    const schema = await harness(page, "rawSchema");
+
+    expect(schema.version).toBe(2);
+    expect(schema.stores.map((store) => store.name).sort()).toEqual(STORE_NAMES);
+
+    for (const category of ["pose", "background"]) {
+      const stored = await harness(page, "inspectRef", seeded[category].ref);
+
+      expect(stored.row.value).toMatchObject({label: `Legacy ${category}`, originalFilename: `legacy-${category}.png`});
+      expect(stored.meta).toEqual({status: "present", value: {mimeType: "image/png", byteSize: seeded[category].byteSize, width: 16, height: 16}});
+      expect(stored.blob).toMatchObject({status: "present", type: "image/png", sha256: seeded[category].digest});
+      expect(stored.thumbnail.status).toBe("present");
+      expect((await harness(page, "verify", seeded[category].ref)).ok).toBe(true);
+    }
+
+    expect((await harness(page, "listPage", "pose")).refs).toEqual([seeded.pose.ref]);
+    expect((await harness(page, "listPage", "background")).refs).toEqual([seeded.background.ref]);
+    expect(await harness(page, "rawKeys", "waveforms")).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a version 1 connection in a second page blocks the 1 to 2 upgrade until it closes, then the data is intact", async ({context}) => {
+    const pageA = await openHarnessPage(context);
+    const pageB = await openHarnessPage(context);
+    const seeded = await harness(pageA, "seedVersion1Database");
+
+    expect(await harness(pageA, "holdStubbornConnection")).toBe(1);
+
+    const first = await harness(pageB, "openLibrary");
+
+    expect(first).toEqual({kind: "unavailable", message: BLOCKED_MESSAGE});
+    expect(await harness(pageB, "lockState")).toEqual({held: ["exclusive"], pending: []});
+
+    await harness(pageA, "releaseStubbornConnection");
+    await harness(pageB, "waitForStatus", "ready");
+
+    expect((await harness(pageB, "rawSchema")).version).toBe(2);
+    expect((await harness(pageB, "inspectRef", seeded.pose.ref)).row.status).toBe("present");
+    expect((await harness(pageB, "inspectRef", seeded.background.ref)).blob.status).toBe("present");
+    expect(pageA.errors).toEqual([]);
+    expect(pageB.errors).toEqual([]);
+  });
+
+  test("an audio import round-trips through real IndexedDB in one transaction and a delete removes every record", async ({context}) => {
+    const page = await openHarnessPage(context);
+
+    await harness(page, "openLibrary");
+
+    const image = await harness(page, "seedImage", {category: "pose"});
+    const audio = await harness(page, "seedAudio", {fixture: "tone-440-2.2s.wav", label: "Voice"});
+
+    expect(audio.result).toEqual({kind: "imported", ref: audio.ref, created: true});
+
+    const stored = await harness(page, "inspectAudioRef", audio.ref);
+
+    expect(stored.row.value).toMatchObject({label: "Voice", originalFilename: "tone-440-2.2s.wav"});
+    expect(stored.meta.value).toMatchObject({kind: "audio", mimeType: "audio/wav", container: "wave", codec: "pcm", sampleRate: 48000, channels: 2});
+    expect(stored.meta.value.durationSeconds).toBeCloseTo(2.2, 3);
+    expect(stored.blob).toMatchObject({status: "present", sha256: audio.digest});
+    expect(stored.waveform).toEqual({status: "present", peaksPerSecond: 50, peaks: [1, 2, 3, 255]});
+
+    const snapshot = await harness(page, "rawKeySnapshot");
+
+    expect(snapshot.waveforms).toEqual([audio.digest]);
+    expect(snapshot.thumbnails).toEqual([image.digest]);
+    expect(await harness(page, "count", "audio")).toBe(1);
+    expect(await harness(page, "count", "pose")).toBe(1);
+
+    expect(await harness(page, "remove", audio.ref)).toEqual({kind: "deleted", ref: audio.ref, payloadRemoved: true});
+
+    const after = await harness(page, "rawKeySnapshot");
+
+    expect(after.waveforms).toEqual([]);
+    expect(after.blobs).toEqual([image.digest]);
+    expect(after.thumbnails).toEqual([image.digest]);
+    expect(after.payloadMeta).toEqual([image.digest]);
+    expect((await harness(page, "inspectRef", image.ref)).row.status).toBe("present");
+  });
+
+  test("a throwing audio transaction leaves no partial row, payload or waveform", async ({context}) => {
+    const page = await openHarnessPage(context);
+
+    await harness(page, "openLibrary");
+
+    const before = await harness(page, "rawKeySnapshot");
+    const broken = await harness(page, "applyBrokenAudioImport", "tone-440-2.2s.wav");
+
+    expect(broken.ok).toBe(false);
+    expect(broken.error).toMatchObject({code: "storage-error"});
+    expect(await harness(page, "rawKeySnapshot")).toEqual(before);
+  });
+
+  test("a waveform carrying a foreign digest is corrupt in real IndexedDB and never redirects", async ({context}) => {
+    const page = await openHarnessPage(context);
+
+    await harness(page, "openLibrary");
+
+    const a = digestFor(0xa1);
+    const b = digestFor(0xb2);
+
+    await page.evaluate(
+      ([first, second]) =>
+        window.toraHarness.rawPut("waveforms", [
+          [first, {peaksPerSecond: 50, peaks: new Uint8Array([1, 2]), digest: second}],
+          [second, {peaksPerSecond: 50, peaks: new Uint8Array([9, 9])}],
+        ]),
+      [a, b],
+    );
+
+    expect((await harness(page, "getWaveform", a)).status).toBe("corrupt");
+    expect(await harness(page, "getWaveform", b)).toEqual({status: "present", peaks: [9, 9]});
+  });
+});
+
+test.describe("decodeAudioPeaks in real Chrome (AUDIO-003)", () => {
+  const decodes = [
+    ["tone-220-10s.wav", 500, 254],
+    ["tone-220-10s.mp3", 502, 230],
+    ["tone-220-10s.opus.ogg", 501, 250],
+    ["tone-880-0.4s.wav", 20, 254],
+    ["mono-440.wav", 111, 254],
+    ["noise-2s.mp3", 102, 200],
+  ];
+
+  for (const [file, peaks, minimumMax] of decodes) {
+    test(`decodes ${file} to ${peaks} peaks with a complete length`, async ({context}) => {
+      const page = await openHarnessPage(context);
+      const result = await harness(page, "decodeAudioFixture", file);
+
+      expect(result.kind).toBe("decoded");
+      expect(result.peaksLength).toBe(peaks);
+      expect(result.maxPeak).toBeGreaterThanOrEqual(minimumMax);
+      expect(result.complete).toBe(true);
+      expect(Math.abs(result.decodedSeconds - result.metadata.durationSeconds)).toBeLessThan(0.1);
+      expect(page.errors).toEqual([]);
+    });
+  }
+
+  test("the truncated MP3 declares 10 s but decodes about 6 s, so the truncation rule rejects it", async ({context}) => {
+    const page = await openHarnessPage(context);
+    const result = await harness(page, "decodeAudioFixture", "truncated.mp3");
+
+    expect(result.kind).toBe("decoded");
+    expect(result.metadata.durationSeconds).toBeCloseTo(10.031, 2);
+    expect(result.decodedSeconds).toBeLessThan(6.5);
+    expect(result.complete).toBe(false);
+  });
+
+  test("M4A decodes where the browser has AAC and fails with an AudioDecodeError where it does not", async ({context}) => {
+    const page = await openHarnessPage(context);
+    const supported = await harness(page, "aacDecodeSupported");
+    const result = await harness(page, "decodeAudioFixture", "tone-220-10s.m4a");
+
+    if (supported) {
+      expect(result.kind).toBe("decoded");
+      expect(result.complete).toBe(true);
+    } else {
+      expect(result.kind).toBe("decode-failed");
+      expect(result.error.name).toBe("AudioDecodeError");
     }
   });
 });

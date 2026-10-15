@@ -10,6 +10,7 @@ export default defineConfig({
     "local-asset-render-race.spec.mjs",
     "my-assets-render.spec.mjs",
     "render-cancel-cleanup.spec.mjs",
+    "my-audio-m4a.spec.mjs",
   ],
   timeout: 240_000,
   workers: 1,

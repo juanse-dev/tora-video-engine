@@ -2,6 +2,8 @@ import {
   collectStoryLocalAssetUsages,
   describeBudgetFailure,
   evaluateLocalAssetBudget,
+  payloadKindOf,
+  splitUsagesByCategory,
   type LocalAssetBudgetResult,
   type LocalAssetUsage,
   type PayloadMetadata,
@@ -11,10 +13,12 @@ import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {Story} from "../story/schema.ts";
 import {withAssetLibraryLock, type AssetLibraryStatus} from "./assetLibrary/coordination.ts";
 import {
+  samePayload,
   verifyPayloadsSequentially,
   type IntegrityCache,
   type VerifiedPayload,
 } from "./assetLibrary/integrity.ts";
+import {payloadMatchesCategory} from "./assetLibrary/records.ts";
 import type {AssetLibraryStore} from "./assetLibrary/store.ts";
 
 export type LocalAssetRefState = {
@@ -104,8 +108,10 @@ export const resolveStoryLocalAssets = async (
     return {kind: "none"};
   }
 
-  // 2. The ref cap is checked first and independent of storage.
-  const refBudget = evaluateLocalAssetBudget(usages, new Map());
+  // 2. The ref cap counts images only (the audio budget is AUDIO-005's) and is
+  // checked first, independent of storage.
+  const imageUsages = splitUsagesByCategory(usages).image;
+  const refBudget = evaluateLocalAssetBudget(imageUsages, new Map());
 
   if (!refBudget.ok) {
     return {
@@ -161,7 +167,24 @@ export const resolveStoryLocalAssets = async (
     const metaRecord = await store.getPayloadMeta(digest);
 
     if (metaRecord.status === "present") {
-      metadataByDigest.set(digest, metaRecord.value);
+      // An audio row must point at audio metadata and an image row at image metadata.
+      for (const usage of candidates) {
+        if (!payloadMatchesCategory(metaRecord.value, usage.category)) {
+          statusByRef.set(usage.ref, {
+            status: "corrupt",
+            detail: "payload metadata does not match the asset category",
+          });
+        }
+      }
+
+      if (
+        candidates.some((usage) =>
+          payloadMatchesCategory(metaRecord.value, usage.category),
+        )
+      ) {
+        metadataByDigest.set(digest, metaRecord.value);
+      }
+
       continue;
     }
 
@@ -179,7 +202,15 @@ export const resolveStoryLocalAssets = async (
   }
 
   // 5. D-10: over-budget is decided from metadata alone, before any blob read.
-  const budget = evaluateLocalAssetBudget(usages, metadataByDigest);
+  // Only image digests with image metadata take part (audio has its own budget later).
+  const imageDigests = new Set(imageUsages.map((usage) => usage.digest));
+  const imageMetadata = new Map(
+    [...metadataByDigest].filter(
+      ([digest, metadata]) =>
+        imageDigests.has(digest) && payloadKindOf(metadata) === "image",
+    ),
+  );
+  const budget = evaluateLocalAssetBudget(imageUsages, imageMetadata);
 
   if (!budget.ok) {
     return {
@@ -270,12 +301,6 @@ export const resolveStoryLocalAssetsForPreview = async (
     );
   }
 };
-
-const samePayload = (verified: VerifiedPayload, current: PayloadMetadata) =>
-  verified.mimeType === current.mimeType &&
-  verified.byteSize === current.byteSize &&
-  verified.width === current.width &&
-  verified.height === current.height;
 
 /**
  * Builds the post-lock step for startBrowserRenderTransaction. Under the shared

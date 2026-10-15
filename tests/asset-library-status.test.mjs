@@ -184,14 +184,14 @@ test("a successful open creates only missing stores and releases the lock", asyn
   const created = [];
 
   assert.equal(request.name, "tora-video-engine-assets");
-  assert.equal(request.version, 1);
+  assert.equal(request.version, 2);
   assert.equal(locks.held(ASSET_LIBRARY_LOCK).exclusive, true);
   request.result = {
     objectStoreNames: {contains: (name) => existing.has(name)},
     createObjectStore: (name) => created.push(name),
   };
   request.onupgradeneeded();
-  assert.deepEqual(created, ["payloadMeta", "blobs", "thumbnails"]);
+  assert.deepEqual(created, ["payloadMeta", "blobs", "thumbnails", "waveforms"]);
 
   request.result = createFakeDatabase("complete");
   request.onsuccess();

@@ -1,6 +1,6 @@
 import type {
-  ImageAssetCategory,
-  LocalImageRef,
+  LocalAssetCategory,
+  LocalAssetRef,
 } from "../localAssets/refs.ts";
 import {parseLocalAssetRef} from "../localAssets/refs.ts";
 import type {AssetPageCursor, AssetLibraryStore} from "./assetLibrary/store.ts";
@@ -10,10 +10,13 @@ import {
   loadThumbnailForDisplay,
   type LocalAssetEntry,
 } from "./assetLibrary/library.ts";
+import {isAudioPayload, type AudioPayloadMetadata} from "../localAssets/readiness.ts";
 import {ObjectUrlPool} from "./objectUrlPool.ts";
 
 export type LocalAssetPageEntry = LocalAssetEntry & {
   thumbnailUrl: string | null;
+  /** The stored audio metadata of a present audio entry (its card shows the duration). */
+  audio?: AudioPayloadMetadata;
 };
 
 /** State of the pinned (currently selected) ref, which may not be on the visible page. */
@@ -35,7 +38,7 @@ export type LocalAssetPageSnapshot = {
   /** Set when the last load failed; the previous page (if any) is kept. */
   error: string | null;
   /** The ref that `pinned` describes, so a stale state is never shown for a newer ref. */
-  pinnedFor: LocalImageRef | null;
+  pinnedFor: LocalAssetRef | null;
   pinned: PinnedLocalAsset;
 };
 
@@ -77,9 +80,13 @@ export const EMPTY_LOCAL_ASSET_PAGE: LocalAssetPageSnapshot = {
 export const createLocalAssetPageController = (options: {
   store: Pick<
     AssetLibraryStore,
-    "listAssets" | "countAssets" | "getAssetRow" | "getThumbnail"
+    | "listAssets"
+    | "countAssets"
+    | "getAssetRow"
+    | "getThumbnail"
+    | "getPayloadMeta"
   >;
-  category: ImageAssetCategory;
+  category: LocalAssetCategory;
   loadThumbnail?: (digest: string) => Promise<ThumbnailResult>;
   createUrl?: (blob: Blob) => string;
   revokeUrl?: (url: string) => void;
@@ -95,6 +102,7 @@ export const createLocalAssetPageController = (options: {
   });
   // digest -> URL currently held in the pool.
   const urls = new Map<string, string>();
+  const audioByDigest = new Map<string, AudioPayloadMetadata>();
   const listeners = new Set<(snapshot: LocalAssetPageSnapshot) => void>();
   let snapshot: LocalAssetPageSnapshot = EMPTY_LOCAL_ASSET_PAGE;
   let cursor: AssetPageCursor = {};
@@ -102,8 +110,8 @@ export const createLocalAssetPageController = (options: {
   // Cursor state of the last page that was committed, restored when a load fails.
   let committedCursor: AssetPageCursor = {};
   let committedStack: AssetPageCursor[] = [];
-  let pinnedRef: LocalImageRef | null = null;
-  let pinnedLoadedFor: LocalImageRef | null = null;
+  let pinnedRef: LocalAssetRef | null = null;
+  let pinnedLoadedFor: LocalAssetRef | null = null;
   let generation = 0;
   let disposed = false;
 
@@ -115,13 +123,43 @@ export const createLocalAssetPageController = (options: {
     }
   };
 
-  const withUrl = (entry: LocalAssetEntry): LocalAssetPageEntry => ({
-    ...entry,
-    thumbnailUrl: urls.get(entry.digest) ?? null,
-  });
+  const withUrl = (entry: LocalAssetEntry): LocalAssetPageEntry => {
+    const audio = audioByDigest.get(entry.digest);
 
+    return {
+      ...entry,
+      thumbnailUrl: urls.get(entry.digest) ?? null,
+      ...(audio === undefined ? {} : {audio}),
+    };
+  };
+
+  // Audio has no thumbnail; its card shows the stored duration instead.
   const wantsThumbnail = (entry: LocalAssetEntry) =>
-    entry.row.status === "present";
+    category !== "audio" && entry.row.status === "present";
+
+  const loadAudioDetails = async (entries: readonly LocalAssetEntry[]) => {
+    if (category !== "audio") {
+      return;
+    }
+
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (entry.row.status !== "present" || audioByDigest.has(entry.digest)) {
+          return;
+        }
+
+        try {
+          const meta = await store.getPayloadMeta(entry.digest);
+
+          if (meta.status === "present" && isAudioPayload(meta.value)) {
+            audioByDigest.set(entry.digest, meta.value);
+          }
+        } catch {
+          // The card simply shows no duration.
+        }
+      }),
+    );
+  };
 
   const releaseExcept = (visible: ReadonlySet<string>) => {
     for (const digest of [...urls.keys()]) {
@@ -133,7 +171,7 @@ export const createLocalAssetPageController = (options: {
   };
 
   const readPinned = async (
-    ref: LocalImageRef,
+    ref: LocalAssetRef,
   ): Promise<
     {kind: "missing"} | {kind: "present"; entry: LocalAssetEntry}
   > => {
@@ -241,6 +279,15 @@ export const createLocalAssetPageController = (options: {
         });
       };
 
+      await loadAudioDetails([
+        ...visibleEntries,
+        ...(pinnedEntry === null ? [] : [pinnedEntry]),
+      ]);
+
+      if (isStale()) {
+        return;
+      }
+
       pinnedLoadedFor = pinnedForThisLoad;
       committedCursor = cursor;
       committedStack = [...cursorStack];
@@ -305,7 +352,7 @@ export const createLocalAssetPageController = (options: {
     },
 
     /** Sets the pinned ref and (re)loads the current page. */
-    sync(ref: LocalImageRef | null): Promise<void> {
+    sync(ref: LocalAssetRef | null): Promise<void> {
       pinnedRef = ref;
 
       return load();

@@ -1,10 +1,22 @@
+import {
+  audioMimeTypeFor,
+  inspectAudio,
+} from "../../localAssets/audioInspection.ts";
 import {sha256Hex} from "../../localAssets/hash.ts";
 import {inspectImageBytes} from "../../localAssets/imageInspection.ts";
-import {MAX_LOCAL_ASSET_BYTES} from "../../localAssets/limits.ts";
-import type {PayloadMetadata} from "../../localAssets/readiness.ts";
+import {
+  isAudioPayload,
+  maxPayloadBytes,
+  payloadKindOf,
+  type AudioPayloadMetadata,
+  type ImagePayloadMetadata,
+  type PayloadMetadata,
+} from "../../localAssets/readiness.ts";
 import type {AssetLibraryStore} from "./store.ts";
 
-export type VerifiedPayload = {digest: string} & PayloadMetadata;
+export type VerifiedPayload =
+  | ({digest: string} & ImagePayloadMetadata)
+  | ({digest: string} & AudioPayloadMetadata);
 
 export type PayloadVerification =
   | {ok: true; payload: VerifiedPayload; blob: Blob}
@@ -21,6 +33,44 @@ const corrupt = (detail: string): PayloadVerification => ({
   reason: "corrupt",
   detail,
 });
+
+/** The metadata duration may differ from `inspectAudio` of the bytes by at most this much. */
+const AUDIO_DURATION_TOLERANCE_SECONDS = 0.001;
+
+/** Never decodes: compares the container metadata of the bytes with the stored record. */
+const checkAudioBytes = async (
+  bytes: Uint8Array,
+  meta: AudioPayloadMetadata,
+): Promise<string | null> => {
+  const inspected = await inspectAudio(bytes);
+
+  if (!inspected.ok) {
+    return `stored bytes are not a supported audio file (${inspected.message})`;
+  }
+
+  const {metadata} = inspected;
+
+  if (
+    metadata.container !== meta.container ||
+    metadata.codec !== meta.codec ||
+    audioMimeTypeFor(metadata.container) !== meta.mimeType
+  ) {
+    return "stored bytes do not match the recorded format";
+  }
+
+  if (metadata.sampleRate !== meta.sampleRate || metadata.channels !== meta.channels) {
+    return "stored bytes do not match the recorded sample rate or channels";
+  }
+
+  if (
+    Math.abs(metadata.durationSeconds - meta.durationSeconds) >
+    AUDIO_DURATION_TOLERANCE_SECONDS
+  ) {
+    return "stored bytes do not match the recorded duration";
+  }
+
+  return null;
+};
 
 /**
  * Reads and checks the bytes. Kept in its own function so the `bytes` buffer
@@ -43,6 +93,10 @@ const checkBytes = async (
 
   if ((await sha256Hex(bytes, subtle)) !== digest) {
     return "stored bytes do not match their SHA-256 digest";
+  }
+
+  if (isAudioPayload(meta)) {
+    return checkAudioBytes(bytes, meta);
   }
 
   const inspected = inspectImageBytes(bytes);
@@ -97,7 +151,7 @@ export const verifyPayload = async (
   const blob = blobRecord.value;
 
   // Decided from `blob.size` alone: nothing is read for an oversized record.
-  if (blob.size !== meta.byteSize || blob.size > MAX_LOCAL_ASSET_BYTES) {
+  if (blob.size !== meta.byteSize || blob.size > maxPayloadBytes(payloadKindOf(meta))) {
     return corrupt("stored size does not match the recorded size");
   }
 
@@ -109,23 +163,44 @@ export const verifyPayload = async (
 
   return {
     ok: true,
-    payload: {
-      digest,
-      mimeType: meta.mimeType,
-      byteSize: meta.byteSize,
-      width: meta.width,
-      height: meta.height,
-    },
+    payload: {digest, ...meta},
     // The stored Blob.type is untrusted; the bytes were just checked against meta.
     blob: blob.slice(0, blob.size, meta.mimeType),
   };
 };
 
-const samePayload = (a: VerifiedPayload, b: PayloadMetadata): boolean =>
-  a.mimeType === b.mimeType &&
-  a.byteSize === b.byteSize &&
-  a.width === b.width &&
-  a.height === b.height;
+/**
+ * The comparison between a verified payload and the current stored metadata,
+ * used for cache hits and again after the shared lock (render preparation).
+ * Different kinds are never the same; audio fields are compared exactly (both
+ * sides are stored values, so any difference is a change; the 1 ms tolerance
+ * only applies when `inspectAudio` of the bytes is compared with the record).
+ */
+export const samePayload = (
+  verified: VerifiedPayload,
+  current: PayloadMetadata,
+): boolean => {
+  if (isAudioPayload(verified)) {
+    return (
+      isAudioPayload(current) &&
+      verified.mimeType === current.mimeType &&
+      verified.byteSize === current.byteSize &&
+      verified.container === current.container &&
+      verified.codec === current.codec &&
+      verified.sampleRate === current.sampleRate &&
+      verified.channels === current.channels &&
+      verified.durationSeconds === current.durationSeconds
+    );
+  }
+
+  return (
+    !isAudioPayload(current) &&
+    verified.mimeType === current.mimeType &&
+    verified.byteSize === current.byteSize &&
+    verified.width === current.width &&
+    verified.height === current.height
+  );
+};
 
 /** A verification that is queued or running, shared by every caller of a digest. */
 type InFlight = {

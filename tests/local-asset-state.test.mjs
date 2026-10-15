@@ -6,6 +6,7 @@ import {
   MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS,
   MAX_BROWSER_STORY_LOCAL_ASSET_REFS,
 } from "../src/localAssets/limits.ts";
+import {inspectAudio, audioMimeTypeFor} from "../src/localAssets/audioInspection.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {ASSET_LIBRARY_LOCK} from "../src/web/assetLibrary/constants.ts";
 import {IntegrityCache} from "../src/web/assetLibrary/integrity.ts";
@@ -15,6 +16,7 @@ import {
   resolveStoryLocalAssets,
   resolveStoryLocalAssetsForPreview,
 } from "../src/web/localAssetState.ts";
+import {fixtureBytes} from "./helpers/audioBytes.mjs";
 import {buildPng} from "./helpers/imageBytes.mjs";
 import {
   createMemoryAssetStore,
@@ -875,4 +877,199 @@ test("render preparation releases already acquired urls when acquiring fails", a
     /pool exploded/u,
   );
   assert.equal(pool.calls.release.length, 1);
+});
+
+const audioRefOf = (digest) => buildLocalAssetRef("audio", digest);
+
+/** Seeds one real audio fixture (row, metadata from inspectAudio, bytes). */
+const seedAudio = async (store, name) => {
+  const bytes = fixtureBytes(name);
+  const digest = await sha256Hex(bytes);
+  const inspected = await inspectAudio(bytes);
+
+  assert.equal(inspected.ok, true);
+
+  const {container, codec, durationSeconds, sampleRate, channels} = inspected.metadata;
+  const meta = {
+    kind: "audio",
+    mimeType: audioMimeTypeFor(container),
+    byteSize: bytes.length,
+    container,
+    codec,
+    durationSeconds,
+    sampleRate,
+    channels,
+  };
+  const ref = audioRefOf(digest);
+
+  store.setRaw("assets", ref, row());
+  store.setRaw("payloadMeta", digest, meta);
+  store.setRaw("blobs", digest, {blob: new Blob([bytes])});
+
+  return {digest, ref, meta, bytes};
+};
+
+const audioStoryOf = (...sources) => ({
+  title: "Audio",
+  scenes: sources.map((src) => ({pose: "formal", background: "office", duration: 3, caption: "x", voice: {src}})),
+});
+
+test("a local voice is resolved and verified like an image and keeps its role", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, ref, meta} = await seedAudio(store, "tone-440-2.2s.wav");
+  const state = await resolve(audioStoryOf(ref), store);
+
+  assert.equal(state.kind, "resolved");
+  assert.equal(state.allReady, true);
+  assert.deepEqual(
+    state.refs.map((entry) => [entry.usage.ref, entry.usage.category, entry.usage.roles, entry.status]),
+    [[ref, "audio", ["voice"], "ready"]],
+  );
+  assert.deepEqual(state.verified.get(digest), {digest, ...meta});
+  assert.equal(state.blobs.get(digest).type, "audio/wav");
+});
+
+test("audio refs never count against the image ref cap, with a ready or a disabled library", async () => {
+  const many = Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS + 6}, (_, index) => audioRefOf(digestOf(1000 + index)));
+  const story = audioStoryOf(...many);
+  const ready = await resolve(story, createMemoryAssetStore());
+  const disabled = await resolve(story, createMemoryAssetStore(), {library: {kind: "disabled", message: DISABLED_MESSAGE}});
+
+  assert.equal(ready.kind, "resolved");
+  assert.equal(ready.refs.every((entry) => entry.status === "missing"), true);
+  assert.equal(disabled.kind, "resolved");
+  assert.equal(disabled.refs.every((entry) => entry.status === "unavailable"), true);
+
+  const images = storyOf(Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS}, (_, index) => [poseRef(index + 1), "office"]));
+  const withAudio = {...images, scenes: images.scenes.map((scene, index) => (index === 0 ? {...scene, voice: {src: many[0]}} : scene))};
+  const tooMany = storyOf(Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS + 1}, (_, index) => [poseRef(index + 1), "office"]));
+
+  assert.equal((await resolve(withAudio, createMemoryAssetStore())).kind, "resolved");
+  assert.equal((await resolve(tooMany, createMemoryAssetStore())).kind, "over-budget");
+});
+
+test("audio bytes never count against the image byte budget", async () => {
+  const store = createMemoryAssetStore();
+  const refs = [];
+
+  for (let n = 1; n <= 6; n += 1) {
+    store.setRaw("assets", audioRefOf(digestOf(n)), row());
+    store.setRaw("payloadMeta", digestOf(n), {
+      kind: "audio", mimeType: "audio/wav", byteSize: 50 * MIB, container: "wave", codec: "pcm",
+      durationSeconds: 100, sampleRate: 48_000, channels: 2,
+    });
+    refs.push(audioRefOf(digestOf(n)));
+  }
+
+  // 300 MiB of audio is over the 256 MiB image limit, which is not an audio concern (AUDIO-005 adds the audio budget).
+  assert.equal((await resolve(audioStoryOf(...refs), store)).kind, "resolved");
+});
+
+test("an audio row pointing at image metadata, and an image row pointing at audio metadata, are corrupt and their bytes are never read", async () => {
+  const store = createMemoryAssetStore();
+  const image = await seedImage(store, 4);
+  const audio = await seedAudio(store, "tone-440-2.2s.wav");
+  const audioRowForImage = audioRefOf(image.digest);
+  const poseRowForAudio = buildLocalAssetRef("pose", audio.digest);
+
+  store.setRaw("assets", audioRowForImage, row());
+  store.setRaw("assets", poseRowForAudio, row());
+  store.resetReads();
+
+  const story = {...storyOf([[poseRowForAudio, "office"]]), music: {src: audioRowForImage}};
+  const state = await resolve(story, store);
+
+  assert.equal(state.kind, "resolved");
+  assert.deepEqual(state.refs.map((entry) => [entry.usage.ref, entry.status]), [
+    [poseRowForAudio, "corrupt"],
+    [audioRowForImage, "corrupt"],
+  ]);
+  assert.match(state.refs[0].detail, /does not match the asset category/u);
+  assert.equal(store.reads.blobs, 0);
+});
+
+test("a stored audio file whose bytes changed is corrupt", async () => {
+  const store = createMemoryAssetStore();
+  const {digest, ref, bytes} = await seedAudio(store, "tone-440-2.2s.wav");
+  const altered = Uint8Array.from(bytes);
+
+  altered[altered.length - 3] ^= 0xff;
+  store.setRaw("blobs", digest, {blob: new Blob([altered])});
+
+  const state = await resolve(audioStoryOf(ref), store);
+
+  assert.deepEqual(state.refs.map((entry) => entry.status), ["corrupt"]);
+  assert.match(state.refs[0].detail, /SHA-256/u);
+});
+
+const resolvedAudio = async (store) => {
+  const audio = await seedAudio(store, "tone-440-2.2s.wav");
+  const resolved = await resolve(audioStoryOf(audio.ref), store);
+
+  assert.equal(resolved.kind, "resolved");
+  assert.equal(resolved.allReady, true);
+
+  return {...audio, resolved};
+};
+
+test("render preparation with an unchanged audio payload passes and leases its blob URL", async () => {
+  const store = createMemoryAssetStore();
+  const pool = createFakePool();
+  const {resolved, ref, digest} = await resolvedAudio(store);
+  const result = await prepare(resolved, store, createMemoryLockManager(), pool);
+
+  assert.equal(result.ok, true);
+  assert.equal(Object.isFrozen(result.localAssetSources), true);
+  assert.deepEqual(result.localAssetSources[ref], {kind: "url", url: `blob:fake/${digest.slice(-8)}`});
+  assert.deepEqual(pool.calls.acquire.map((call) => call.digest), [digest]);
+  result.release();
+  assert.deepEqual(pool.calls.release, [digest]);
+});
+
+for (const [title, patch] of [
+  ["only durationSeconds", {durationSeconds: 99}],
+  ["only sampleRate", {sampleRate: 44_100}],
+  ["only channels", {channels: 1}],
+  ["only codec (an invalid pair, so the record turns corrupt)", {codec: "mp3"}],
+  ["only container (an invalid pair)", {container: "mp3"}],
+]) {
+  test(`render preparation returns the changed message before any URL when audio payloadMeta changes: ${title}`, async () => {
+    const store = createMemoryAssetStore();
+    const pool = createFakePool();
+    const {resolved, digest, meta} = await resolvedAudio(store);
+
+    // mimeType and byteSize stay as they were.
+    store.setRaw("payloadMeta", digest, {...meta, ...patch});
+
+    const result = await prepare(resolved, store, createMemoryLockManager(), pool);
+
+    assert.equal(result.ok, false);
+    assert.equal(result.message, "Local assets changed while preparing the render. Try again.");
+    assert.equal(pool.calls.acquire.length, 0);
+  });
+}
+
+test("a payloadMeta whose kind changed from audio to image, or from image to audio, fails closed", async () => {
+  const audioStore = createMemoryAssetStore();
+  const audioPool = createFakePool();
+  const audio = await resolvedAudio(audioStore);
+
+  audioStore.setRaw("payloadMeta", audio.digest, {mimeType: "image/png", byteSize: audio.meta.byteSize, width: 2, height: 2});
+
+  const toImage = await prepare(audio.resolved, audioStore, createMemoryLockManager(), audioPool);
+
+  assert.equal(toImage.ok, false);
+  assert.equal(audioPool.calls.acquire.length, 0);
+
+  const imageStore = createMemoryAssetStore();
+  const imagePool = createFakePool();
+  const {resolved, digest} = await resolvedTwoRefs(imageStore);
+  const sample = await seedAudio(createMemoryAssetStore(), "tone-440-2.2s.wav");
+
+  imageStore.setRaw("payloadMeta", digest, sample.meta);
+
+  const toAudio = await prepare(resolved, imageStore, createMemoryLockManager(), imagePool);
+
+  assert.equal(toAudio.ok, false);
+  assert.equal(imagePool.calls.acquire.length, 0);
 });

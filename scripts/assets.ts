@@ -3,9 +3,11 @@ import {
   categoryFolderExists,
   displayRoot,
   getLocalAssetsRoot,
+  inventoryAudioAssets,
   inventoryLocalAssets,
 } from "./localAssets.ts";
-import type {InventoryLine} from "./localAssets.ts";
+import type {AudioInventoryLine, InventoryLine} from "./localAssets.ts";
+import {formatAudioDuration} from "../src/audio/formatDuration.ts";
 import type {ImageAssetCategory} from "../src/localAssets/refs.ts";
 
 const formatLines = (
@@ -19,6 +21,28 @@ const formatLines = (
     output.push(
       `${displayRoot(root)}/${categoryFolder[category]}/${line.relativePath}`,
       "ref" in line ? `  ${line.ref}` : `  skipped: ${line.rejected}`,
+      "",
+    );
+  }
+
+  return output;
+};
+
+const formatAudioLines = (
+  root: string,
+  lines: AudioInventoryLine[],
+): string[] => {
+  const output: string[] = [];
+
+  for (const line of lines) {
+    output.push(
+      `${displayRoot(root)}/${categoryFolder.audio}/${line.relativePath}`,
+      ...("ref" in line
+        ? [
+            `  ${line.ref}`,
+            `  duration: ${formatAudioDuration(line.durationSeconds)} (${line.durationSeconds.toFixed(2)} s)`,
+          ]
+        : [`  skipped: ${line.rejected}`]),
       "",
     );
   }
@@ -59,6 +83,17 @@ const main = async (): Promise<void> => {
         "",
       );
     }
+  }
+
+  const audio = await inventoryAudioAssets(root);
+
+  // Printed only when the folder exists, so every v0.3 output stays identical.
+  if (audio.folderExists) {
+    output.push(
+      ...(audio.lines.length === 0
+        ? [`${displayRoot(root)}/${categoryFolder.audio}/ (no files)`, ""]
+        : formatAudioLines(root, audio.lines)),
+    );
   }
 
   process.stdout.write(output.join("\n"));

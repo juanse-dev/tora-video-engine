@@ -8,14 +8,20 @@ is uploaded anywhere.
 local-assets/
   poses/         images usable as local:pose:sha256:...
   backgrounds/   images usable as local:background:sha256:...
+  audio/         sounds usable as local:audio:sha256:...
 ```
 
 1. Copy the exact original image files into the matching folder. Create the
    folder if it does not exist. Subfolders are fine; symbolic links are skipped.
 2. Run `npm run assets` to print the `local:...` ref for every file.
-3. Render with `npm run video -- stories/my-story.yaml`. If a referenced image is
-   missing, the render stops before it starts and says which ref and which folder.
+3. Render with `npm run video -- stories/my-story.yaml`. If a referenced image or
+   audio file is missing, the render stops before it starts and says which ref and
+   which folder.
 
 Files are matched by content (SHA-256), not by name or extension, so a renamed
 copy of the same image works. Only static PNG, JPEG and WebP images up to
 25 MiB, 8192 pixels per side and 50 million pixels in total are supported.
+
+Audio goes in `audio/` (MP3, WAV, M4A with AAC, or Ogg Opus; one audio track, mono or
+stereo, up to 50 MiB and 300 seconds). `npm run assets` lists each file's ref and
+duration. The CLI cannot render Stories that use audio yet (v0.4 in progress).

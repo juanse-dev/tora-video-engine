@@ -102,7 +102,10 @@ export const MyAssetsSection = ({
   const currentRef = currentLocalRef(category, selectedValue);
   const page = useLocalAssetPage(category, currentRef);
   // Importing applies the new ref to the selected scene like clicking a card.
-  const imports = useLocalAssetImport(category, onSelect);
+  // This section lists the image categories only, so an imported ref is an image ref.
+  const imports = useLocalAssetImport(category, (ref) =>
+    onSelect(ref as LocalImageRef),
+  );
   const manage = useLocalAssetManage();
 
   if (context === null) {
@@ -299,7 +302,8 @@ export const MyAssetsSection = ({
               selected={false}
               canManage={ready}
               {...cardActions(entry)}
-              onSelect={() => onSelect(entry.ref)}
+              // This section lists the image categories only.
+              onSelect={() => onSelect(entry.ref as LocalImageRef)}
             />
           ))}
         </div>

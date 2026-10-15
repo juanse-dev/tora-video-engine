@@ -1,8 +1,14 @@
+import type {AudioDurationMap} from "../../audio/catalog.ts";
 import {inspectImageBytes} from "../../localAssets/imageInspection.ts";
 import {
+  isAudioPayload,
+  type AudioPayloadMetadata,
+} from "../../localAssets/readiness.ts";
+import {
   parseLocalAssetRef,
-  type ImageAssetCategory,
-  type LocalImageRef,
+  type LocalAssetCategory,
+  type LocalAssetRef,
+  type LocalAudioRef,
 } from "../../localAssets/refs.ts";
 import {
   LOCAL_ASSET_PAGE_SIZE,
@@ -14,7 +20,7 @@ import {
   withAssetLibraryLock,
   type AssetLibraryMessage,
 } from "./coordination.ts";
-import type {AssetRow, Decoded} from "./records.ts";
+import type {AssetRow, Decoded, WaveformRecord} from "./records.ts";
 import type {
   AssetLibraryMutation,
   AssetLibraryMutationResult,
@@ -23,8 +29,8 @@ import type {
 } from "./store.ts";
 
 export type LocalAssetEntry = {
-  ref: LocalImageRef;
-  category: ImageAssetCategory;
+  ref: LocalAssetRef;
+  category: LocalAssetCategory;
   digest: string;
   row: Decoded<AssetRow>; // corrupt rows are listed so they can be repaired/deleted, never applied
 };
@@ -38,7 +44,7 @@ export type AssetLibrary = {
 // The opposite-direction flag is inferred from the cursor, so callers must handle an empty page.
 export const listLocalAssetPage = async (
   store: AssetLibraryStore,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
   cursor: AssetPageCursor = {},
 ): Promise<{
   entries: LocalAssetEntry[];
@@ -80,7 +86,7 @@ export const listLocalAssetPage = async (
 
 export const countLocalAssets = (
   store: AssetLibraryStore,
-  category: ImageAssetCategory,
+  category: LocalAssetCategory,
 ): Promise<number> => store.countAssets(category);
 
 export const normalizeLocalAssetLabel = (
@@ -185,7 +191,7 @@ const mutateLibrary = async (
  */
 export const renameLocalAsset = (
   library: AssetLibrary,
-  ref: LocalImageRef,
+  ref: LocalAssetRef,
   label: string,
   options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> => {
@@ -206,10 +212,75 @@ export const renameLocalAsset = (
 /** `options` can cancel the wait for the lock (see LibraryMutationOptions). */
 export const deleteLocalAsset = (
   library: AssetLibrary,
-  ref: LocalImageRef,
+  ref: LocalAssetRef,
   options?: LibraryMutationOptions,
 ): Promise<AssetLibraryMutationResult> =>
   mutateLibrary(library, {kind: "delete", ref}, true, options);
+
+/**
+ * The stored metadata of a local audio ref, or null when the ref is not usable:
+ * its row is absent or corrupt, or its metadata is absent, corrupt or not audio.
+ * The ref is the key; nothing stored redirects it (INV-11).
+ */
+export const readAudioMetadata = async (
+  store: Pick<AssetLibraryStore, "getAssetRow" | "getPayloadMeta">,
+  ref: LocalAudioRef,
+): Promise<AudioPayloadMetadata | null> => {
+  const parsed = parseLocalAssetRef(ref);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  const row = await store.getAssetRow(ref);
+
+  if (row.status !== "present") {
+    return null;
+  }
+
+  const meta = await store.getPayloadMeta(parsed.digest);
+
+  return meta.status === "present" && isAudioPayload(meta.value)
+    ? meta.value
+    : null;
+};
+
+/** The waveform stored under `digest`, or null when absent or corrupt. */
+export const readWaveform = async (
+  store: Pick<AssetLibraryStore, "getWaveform">,
+  digest: string,
+): Promise<WaveformRecord | null> => {
+  const record = await store.getWaveform(digest);
+
+  return record.status === "present" ? record.value : null;
+};
+
+/**
+ * The durations of exactly these refs (the Story's refs, never the visible
+ * library page, which holds LOCAL_ASSET_PAGE_SIZE rows at a time). Refs that are
+ * absent stay out of the map (they remain `missing`); a duration that is not
+ * finite and greater than 0 never enters it.
+ */
+export const readAudioDurations = async (
+  store: Pick<AssetLibraryStore, "getAssetRow" | "getPayloadMeta">,
+  refs: Iterable<LocalAudioRef>,
+): Promise<AudioDurationMap> => {
+  const durations: Partial<Record<LocalAudioRef, number>> = {};
+
+  for (const ref of new Set(refs)) {
+    const metadata = await readAudioMetadata(store, ref);
+
+    if (
+      metadata !== null &&
+      Number.isFinite(metadata.durationSeconds) &&
+      metadata.durationSeconds > 0
+    ) {
+      durations[ref] = metadata.durationSeconds;
+    }
+  }
+
+  return durations;
+};
 
 /**
  * Record metadata does not bound what the Blob really encodes, so the bytes are

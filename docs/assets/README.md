@@ -48,7 +48,7 @@ Define each constant exactly once, in the file listed. Import it everywhere else
 | `LOCAL_ASSET_PAGE_SIZE` | `50` | `src/web/assetLibrary/constants.ts` |
 | `MAX_LOCAL_ASSET_LABEL_LENGTH` | `80` (code points, after trim) | `src/web/assetLibrary/constants.ts` |
 | `ASSET_DB_NAME` | `"tora-video-engine-assets"` | `src/web/assetLibrary/constants.ts` |
-| `ASSET_DB_VERSION` | `1` | `src/web/assetLibrary/constants.ts` |
+| `ASSET_DB_VERSION` | `2` (version 2 adds the `waveforms` store, AUDIO-003) | `src/web/assetLibrary/constants.ts` |
 | `ASSET_LIBRARY_LOCK` | `"tora-video-engine:asset-library"` | `src/web/assetLibrary/constants.ts` |
 | `ASSET_LIBRARY_CHANNEL` | `"tora-video-engine:asset-library"` | `src/web/assetLibrary/constants.ts` |
 | `LOCAL_ASSETS_ROOT` | `"local-assets"` | `scripts/localAssets.ts` |

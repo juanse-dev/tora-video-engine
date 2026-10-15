@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from "react";
+import {formatAudioDuration} from "../../audio/formatDuration.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
 import type {MutationCancelable} from "../localAssetManageFlow.ts";
 import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
@@ -12,7 +13,8 @@ type LocalAssetCardProps = {
   canManage: boolean;
   /** An App transition panel is open, so a dialog cannot open now. */
   deleteDisabled?: boolean;
-  onSelect: () => void;
+  /** Absent: the card is not selectable (My audio, until AUDIO-004's pickers). */
+  onSelect?: () => void;
   /**
    * Resolves to an inline error message, or null once the rename is done (or
    * cancelled). It calls `onCancelable` with a function while the rename waits
@@ -193,40 +195,64 @@ export const LocalAssetCard = ({
     );
   }
 
-  return (
-    <div className={className} data-local-asset-card={entry.ref}>
-      <button
-        type="button"
-        className="local-asset-select"
-        aria-pressed={selected}
-        onClick={onSelect}
-      >
-        {entry.thumbnailUrl === null ? (
-          <span className="local-asset-thumbnail-fallback" aria-hidden="true">
-            {label}
-          </span>
-        ) : (
-          // Editor chrome thumbnail, not Remotion composition media.
-          // eslint-disable-next-line @remotion/warn-native-media-tag
-          <img
-            src={entry.thumbnailUrl}
-            alt=""
-            className={`asset-thumbnail ${
-              entry.category === "pose"
-                ? "pose-thumbnail"
-                : "background-thumbnail"
-            }`}
-          />
-        )}
-        <span className="asset-card-copy">
-          <strong>{label}</strong>
-          <span className="local-badge">Local</span>
-          {current ? <span className="local-badge">Current</span> : null}
+  const isAudio = entry.category === "audio";
+  const body = (
+    <>
+      {isAudio ? (
+        <span className="local-asset-thumbnail-fallback" aria-hidden="true">
+          ♪
+        </span>
+      ) : entry.thumbnailUrl === null ? (
+        <span className="local-asset-thumbnail-fallback" aria-hidden="true">
+          {label}
+        </span>
+      ) : (
+        // Editor chrome thumbnail, not Remotion composition media.
+        // eslint-disable-next-line @remotion/warn-native-media-tag
+        <img
+          src={entry.thumbnailUrl}
+          alt=""
+          className={`asset-thumbnail ${
+            entry.category === "pose"
+              ? "pose-thumbnail"
+              : "background-thumbnail"
+          }`}
+        />
+      )}
+      <span className="asset-card-copy">
+        <strong>{label}</strong>
+        <span className="local-badge">Local</span>
+        {isAudio ? (
+          <small data-audio-duration="">
+            {entry.audio === undefined
+              ? "–:––"
+              : formatAudioDuration(entry.audio.durationSeconds)}
+          </small>
+        ) : null}
+        {current ? <span className="local-badge">Current</span> : null}
+        {onSelect === undefined ? null : (
           <span className="asset-selection-mark" aria-hidden="true">
             {selected ? "✓ Selected" : "Select"}
           </span>
-        </span>
-      </button>
+        )}
+      </span>
+    </>
+  );
+
+  return (
+    <div className={className} data-local-asset-card={entry.ref}>
+      {onSelect === undefined ? (
+        <div className="local-asset-select local-asset-static">{body}</div>
+      ) : (
+        <button
+          type="button"
+          className="local-asset-select"
+          aria-pressed={selected}
+          onClick={onSelect}
+        >
+          {body}
+        </button>
+      )}
       {canManage ? (
         // Each button names its asset, so a screen reader can tell the cards apart.
         <div className="local-asset-actions">
