@@ -24,8 +24,9 @@ export type Timeline = {
   durationInFrames: number;
 };
 
-const sceneFrames = (
-  scene: StoryScene,
+/** The frames of one scene, the single rule `compileTimeline` and the editor's `auto` text share. */
+export const sceneFrames = (
+  scene: Pick<StoryScene, "duration" | "voice">,
   fps: number,
   audioDurations: AudioDurationMap,
 ): {
