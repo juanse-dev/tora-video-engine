@@ -940,3 +940,62 @@ h1 {
   width: min(220px, 100%);
   height: 10px;
 }
+
+/* AUDIO-004: music panel, scene audio and the Auto checkbox. */
+.music-panel {
+  margin-top: 20px;
+  padding: 4px 14px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.music-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.scene-audio {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.range-field .range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-field input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  accent-color: #94a3b8;
+}
+
+.range-field output {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: #d7dfeb;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 620px) {
+  .music-settings,
+  .scene-audio {
+    grid-template-columns: 1fr;
+  }
+}

@@ -290,7 +290,7 @@ test("an automatic scene duration is shown as read-only text and survives visual
   const autoDuration = page
     .locator("label.field")
     .filter({hasText: "Duration (seconds)"});
-  await expect(autoDuration.locator("output")).toHaveText("auto (from voice)");
+  await expect(autoDuration.locator("output")).toHaveText("auto · 1.7 s");
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
   await expect(duration).toHaveCount(1);
   await expect(duration).not.toHaveAttribute("type", "number");
@@ -300,7 +300,7 @@ test("an automatic scene duration is shown as read-only text and survives visual
     "data-visual-state",
     "clean",
   );
-  await expect(autoDuration.locator("output")).toHaveText("auto (from voice)");
+  await expect(autoDuration.locator("output")).toHaveText("auto · 1.7 s");
   const source = await yamlSource(page);
   expect(source).toContain("duration: auto");
   expect(source).toContain("Auto scene edited");

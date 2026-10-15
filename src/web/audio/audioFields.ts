@@ -46,6 +46,12 @@ export type LibraryAudioOption = {
   durationSeconds?: number;
 };
 
+/** The My audio rows for the selects, and whether the read that produced them has settled. */
+export type LibraryAudioChoices = {
+  rows: readonly LibraryAudioOption[];
+  settled: boolean;
+};
+
 export type AudioSelectOption = {value: string; label: string};
 
 export type AudioSelectGroups = {
@@ -94,10 +100,15 @@ const libraryOptionTexts = (rows: readonly LibraryAudioOption[]): string[] => {
   );
 };
 
-const unavailableLabel = (value: string): string =>
+/** Shown for a held local ref until the library read has settled: it may well be in the library. */
+export const LOADING_AUDIO_LABEL = "Loading audio…";
+
+const unavailableLabel = (value: string, librarySettled: boolean): string =>
   isBundledAudio(value)
     ? `${bundledAudioCatalog[value].label} (not available)`
-    : `Missing audio ${shortAssetId(value as LocalAudioRef)}`;
+    : librarySettled
+      ? `Missing audio ${shortAssetId(value as LocalAudioRef)}`
+      : LOADING_AUDIO_LABEL;
 
 /**
  * The options of one sound select. Bundled entries with `file: null` are
@@ -106,11 +117,14 @@ const unavailableLabel = (value: string): string =>
  * distinct), then by ref, and rows that share a label are told apart (see
  * `libraryOptionTexts`). A value the
  * Story already holds that is in neither group stays selectable, so the select
- * never shows a different sound than the Story has (AINV-5).
+ * never shows a different sound than the Story has (AINV-5); a local ref reads
+ * `Loading audio…` (not `Missing audio …`) until the library read has settled.
  */
 export const audioSelectOptions = (input: {
   current: string | undefined;
   library: readonly LibraryAudioOption[];
+  /** False while the library read has not settled (default true). */
+  librarySettled?: boolean;
   catalog?: Readonly<Record<BundledAudio, BundledAudioEntry>>;
 }): AudioSelectGroups => {
   const entries = Object.values(input.catalog ?? bundledAudioCatalog).filter(
@@ -130,7 +144,10 @@ export const audioSelectOptions = (input: {
   const current =
     input.current === undefined || offered.has(input.current)
       ? null
-      : {value: input.current, label: unavailableLabel(input.current)};
+      : {
+          value: input.current,
+          label: unavailableLabel(input.current, input.librarySettled ?? true),
+        };
 
   return {bundled, library, current};
 };

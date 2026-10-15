@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {
+  LOADING_AUDIO_LABEL,
   MUSIC_DEFAULTS,
   NO_AUDIO_VALUE,
   audioSelectOptions,
@@ -22,6 +24,11 @@ import {
   replaceVisualScene,
   storyToVisualDraft,
 } from "../src/web/visualDraft.ts";
+import {OPENING_ASSET_LIBRARY} from "../src/web/assetLibraryContext.ts";
+import {
+  libraryAudioChoices,
+  startLibraryAudioRead,
+} from "../src/web/audio/useLibraryAudioOptions.ts";
 import {createMemoryAssetStore} from "./helpers/memoryAssetStore.mjs";
 
 const digestOf = (n) => n.toString(16).padStart(64, "0");
@@ -132,6 +139,28 @@ describe("audioSelectOptions", () => {
 
     assert.deepEqual(missing.current, {value: audioRef(9), label: "Missing audio 0000…0009"});
     assert.deepEqual(noFile.current, {value: "calm-loop", label: "Calm loop (not available)"});
+  });
+
+  it("says Loading audio… instead of Missing audio … for a local ref while the library read has not settled", () => {
+    const loading = audioSelectOptions({current: audioRef(9), library: [], librarySettled: false});
+
+    assert.equal(LOADING_AUDIO_LABEL, "Loading audio…");
+    assert.deepEqual(loading.current, {value: audioRef(9), label: "Loading audio…"});
+    // A ref that turns out to be in the library is offered by the library group, with no extra option.
+    assert.equal(
+      audioSelectOptions({current: audioRef(3), library, librarySettled: false}).current,
+      null,
+    );
+    // A bundled id without a file is known to be unavailable whatever the library says.
+    assert.equal(
+      audioSelectOptions({current: "calm-loop", library: [], librarySettled: false}).current.label,
+      "Calm loop (not available)",
+    );
+    // Settled, or unspecified: the original label.
+    assert.equal(
+      audioSelectOptions({current: audioRef(9), library: [], librarySettled: true}).current.label,
+      "Missing audio 0000…0009",
+    );
   });
 
   it("does not repeat a value a group already offers", () => {
@@ -413,5 +442,157 @@ describe("readLibraryAudioOptions", () => {
     seed(store, 1);
     controller.abort();
     await assert.rejects(readLibraryAudioOptions(store, controller.signal), {name: "AbortError"});
+  });
+});
+
+describe("libraryAudioChoices: when the select may say Missing audio", () => {
+  const rows = [{ref: audioRef(1), label: "Voice"}];
+  const store = {name: "store"};
+  const ready = {kind: "ready", store};
+
+  it("is not settled while the library is still opening, so a persisted local voice reads Loading audio…, never Missing audio …", () => {
+    const choices = libraryAudioChoices(OPENING_ASSET_LIBRARY, null);
+
+    assert.equal(choices.settled, false);
+    assert.deepEqual(choices.rows, []);
+    assert.equal(
+      audioSelectOptions({current: audioRef(9), library: choices.rows, librarySettled: choices.settled}).current.label,
+      "Loading audio…",
+    );
+  });
+
+  it("is not settled from the moment the library is ready until its first read finishes", () => {
+    assert.equal(libraryAudioChoices(ready, null).settled, false);
+    // A read of a previous store (the library was reopened) does not count either.
+    assert.equal(libraryAudioChoices(ready, {forStore: {name: "old"}, rows}).settled, false);
+  });
+
+  it("is settled with the rows once the read of the current store has finished, and keeps them", () => {
+    const choices = libraryAudioChoices(ready, {forStore: store, rows});
+
+    assert.equal(choices.settled, true);
+    assert.equal(choices.rows, rows);
+  });
+
+  it("is settled, with no rows, for a library that is unavailable for good", () => {
+    const choices = libraryAudioChoices({kind: "unavailable", message: "IndexedDB is not available."}, null);
+
+    assert.equal(choices.settled, true);
+    assert.deepEqual(choices.rows, []);
+    assert.equal(
+      audioSelectOptions({current: audioRef(9), library: choices.rows, librarySettled: choices.settled}).current.label,
+      "Missing audio 0000…0009",
+    );
+  });
+});
+
+describe("startLibraryAudioRead (the hook's effect)", () => {
+  const seedRow = (store, n, label) =>
+    store.setRaw("assets", audioRef(n), {
+      label,
+      originalFilename: `s${n}.wav`,
+      createdAt: "2026-01-02T03:04:05.000Z",
+    });
+  const flush = async () => {
+    for (let index = 0; index < 20; index += 1) {
+      await Promise.resolve();
+    }
+  };
+  /** Holds the store's first listing until `release()`. */
+  const gatedStore = (store) => {
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+
+    return {
+      release,
+      store: {
+        getPayloadMeta: (digest) => store.getPayloadMeta(digest),
+        listAssets: async (...args) => {
+          if (first) {
+            first = false;
+            await gate;
+          }
+
+          return store.listAssets(...args);
+        },
+      },
+    };
+  };
+
+  it("settles once with every row of the library", async () => {
+    const store = createMemoryAssetStore();
+
+    seedRow(store, 1, "One");
+    seedRow(store, 2, "Two");
+
+    const settled = [];
+
+    startLibraryAudioRead(store, (rows) => settled.push(rows));
+    await flush();
+    assert.equal(settled.length, 1);
+    assert.deepEqual(settled[0].map((row) => row.label), ["One", "Two"]);
+  });
+
+  it("a superseded read never settles over a newer one: the late first result is discarded", async () => {
+    const store = createMemoryAssetStore();
+
+    seedRow(store, 1, "Old");
+
+    const first = gatedStore(store);
+    const settled = [];
+    const cancelFirst = startLibraryAudioRead(first.store, (rows) => settled.push(["first", rows.map((row) => row.label)]));
+
+    await flush();
+    // The library changes and the effect re-runs: cleanup, then a new read of the same library.
+    seedRow(store, 2, "New");
+    cancelFirst();
+    startLibraryAudioRead(store, (rows) => settled.push(["second", rows.map((row) => row.label)]));
+    await flush();
+    assert.deepEqual(settled, [["second", ["Old", "New"]]]);
+
+    first.release();
+    await flush();
+    assert.deepEqual(settled, [["second", ["Old", "New"]]]);
+  });
+
+  it("a read that fails after it was cancelled settles nothing, while a live failing read settles no rows", async () => {
+    const broken = {
+      listAssets: async () => {
+        throw new Error("the connection was closed");
+      },
+      getPayloadMeta: async () => ({status: "absent"}),
+    };
+    const cancelled = [];
+    const live = [];
+    const cancel = startLibraryAudioRead(broken, (rows) => cancelled.push(rows));
+
+    cancel();
+    startLibraryAudioRead(broken, (rows) => live.push(rows));
+    await flush();
+    assert.deepEqual(cancelled, []);
+    assert.deepEqual(live, [[]]);
+  });
+
+  it("cancelling before the result discards it, and without a library nothing is read or settled", async () => {
+    const store = createMemoryAssetStore();
+
+    seedRow(store, 1, "One");
+
+    const settled = [];
+
+    startLibraryAudioRead(store, (rows) => settled.push(rows))();
+    startLibraryAudioRead(null, (rows) => settled.push(rows))();
+    await flush();
+    assert.deepEqual(settled, []);
+  });
+
+  it("the hook runs it as its effect, restarted when the library or the refresh token change", () => {
+    const source = readFileSync("src/web/audio/useLibraryAudioOptions.ts", "utf8");
+
+    assert.match(source, /startLibraryAudioRead\(store, \(rows\) =>/u);
+    assert.match(source, /\[store, refreshToken\]/u);
   });
 });

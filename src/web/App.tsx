@@ -2056,6 +2056,8 @@ export const App = () => {
             <VisualEditor
               key={visualRevision}
               activeStory={activeStory}
+              audioDurations={audioDurations}
+              fps={previewConfig.fps}
               onEvaluationChange={onVisualEvaluationChange}
             />
           ) : yamlState !== null ? (
