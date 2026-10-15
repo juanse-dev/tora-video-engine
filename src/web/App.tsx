@@ -25,6 +25,8 @@ import {
   type AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
+import {audioPreview, type AcquirePreviewUrl} from "./audio/previewPlayback.ts";
+import {acquireAudioPreviewUrl} from "./audio/previewSource.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {
   AssetDialogHost,
@@ -357,6 +359,14 @@ export const App = () => {
   // An open asset dialog also freezes the Story so its scene count cannot go stale.
   const authoringLocked =
     renderAuthoringLocked || assetImportInFlight || assetDialog !== null;
+
+  // The preview's Stop button is an authoring control, so a preview that is
+  // still sounding when the lock engages would have no way to be stopped.
+  useEffect(() => {
+    if (authoringLocked) {
+      audioPreview().stop();
+    }
+  }, [authoringLocked]);
   const localAssetRenderBlock = describeLocalAssetRenderBlock(
     localAssets.state,
     assetLibrary ?? OPENING_ASSET_LIBRARY,
@@ -524,6 +534,17 @@ export const App = () => {
     [],
   );
   const transitionPending = transition !== null;
+  const acquirePreviewUrl = useCallback<AcquirePreviewUrl>(
+    (ref, signal) =>
+      acquireAudioPreviewUrl({
+        library: assetLibrary,
+        cache: integrityCache,
+        pool: objectUrlPool,
+        ref,
+        signal,
+      }),
+    [assetLibrary, integrityCache, objectUrlPool],
+  );
   const assetLibraryContext = useMemo<AssetLibraryContextValue>(
     () => ({
       status: assetLibrary ?? OPENING_ASSET_LIBRARY,
@@ -537,6 +558,7 @@ export const App = () => {
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
+      acquirePreviewUrl,
     }),
     [
       assetLibrary,
@@ -549,6 +571,7 @@ export const App = () => {
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
+      acquirePreviewUrl,
     ],
   );
 

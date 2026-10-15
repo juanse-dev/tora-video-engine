@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {formatAudioDuration} from "../src/audio/formatDuration.ts";
+import {collectStoryLocalAssetUsages} from "../src/localAssets/readiness.ts";
 import {
+  activeStoryAudioUsage,
   audioRefUsesMusic,
   deleteConfirmationText,
   deleteConfirmButtonLabel,
@@ -91,5 +93,53 @@ describe("copy for audio", () => {
     assert.match(mismatchDialogText(ref(7)), /^This file is a different audio file \(/u);
     assert.equal(fileAcceptFor("pose"), "image/png,image/jpeg,image/webp");
     assert.match(fileAcceptFor("audio"), /\.mp3.*\.wav.*\.m4a.*\.ogg/u);
+  });
+});
+
+describe("a missing card counts the Active Story's usage (AUDIO-003 follow-up)", () => {
+  const scene = (extra = {}) => ({type: "intro", pose: "formal", background: "office", text: "Hi", duration: 3, ...extra});
+  const active = {
+    title: "Active",
+    music: {src: ref(1)},
+    scenes: [scene({voice: {src: ref(1)}}), scene(), scene({sfx: {src: ref(1)}, voice: {src: ref(2)}})],
+  };
+  const usageOf = (story, audioRef) =>
+    collectStoryLocalAssetUsages(story).find((usage) => usage.ref === audioRef);
+
+  it("reads the scene numbers and the music from the collector's usage", () => {
+    assert.deepEqual(activeStoryAudioUsage(usageOf(active, ref(1))), {sceneNumbers: [1, 3], usesMusic: true});
+    assert.deepEqual(activeStoryAudioUsage(usageOf(active, ref(2))), {sceneNumbers: [3], usesMusic: false});
+  });
+
+  it("feeds the existing copy: music and 2 scenes, scene 3, and the image case stays empty", () => {
+    const text = (audioRef) =>
+      describeMissingLocalAsset({ref: audioRef, damaged: false, ...activeStoryAudioUsage(usageOf(active, audioRef))}).usedBy;
+
+    assert.equal(text(ref(1)), "Used by the music and 2 scenes.");
+    assert.equal(text(ref(2)), "Used by scene 3.");
+
+    const pose = usageOf({title: "T", scenes: [scene({pose: poseRef})]}, poseRef);
+
+    assert.deepEqual(activeStoryAudioUsage(pose), {sceneNumbers: [], usesMusic: false});
+  });
+
+  it("a pending visual draft changes the delete warning of a card but never the missing card", () => {
+    // The draft dropped the music and the voice of scene 1 (pending, so the Active Story is unchanged).
+    const draft = {music: undefined, scenes: [scene(), scene(), scene({sfx: {src: ref(1)}})]};
+    const deleteWarning = deleteConfirmationText(
+      "Voice",
+      "audio",
+      sceneNumbersUsingAudioRef(draft, ref(1)).length,
+      audioRefUsesMusic(draft, ref(1)),
+      sceneNumbersUsingAudioRef(draft, ref(1)),
+    );
+    const missing = describeMissingLocalAsset({
+      ref: ref(1),
+      damaged: false,
+      ...activeStoryAudioUsage(usageOf(active, ref(1))),
+    }).usedBy;
+
+    assert.match(deleteWarning, /Used by scene 3\./u);
+    assert.equal(missing, "Used by the music and 2 scenes.");
   });
 });

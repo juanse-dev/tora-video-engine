@@ -999,3 +999,24 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* AUDIO-004: My audio card waveform thumbnail and preview error. */
+.audio-grid .waveform-thumbnail {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 5 / 1;
+  background: #070a0f;
+}
+
+.audio-preview-error {
+  display: block;
+  padding: 0 8px 8px;
+  color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.audio-preview-error:empty {
+  padding: 0;
+}

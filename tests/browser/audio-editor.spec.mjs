@@ -337,3 +337,255 @@ test("while authoring is locked every audio control is disabled", async ({page})
     await expect(control).toBeEnabled();
   }
 });
+
+// ---------------------------------------------------------------------------
+// My audio cards: waveform thumbnail, preview, single-preview rule (AUDIO-004 task 3)
+// ---------------------------------------------------------------------------
+
+const card = (page, label) =>
+  page.locator(`${SECTION} [data-local-asset-card]`).filter({hasText: label});
+const playButton = (page, label) => page.getByRole("button", {name: `Play ${label}`, exact: true});
+const stopButton = (page, label) => page.getByRole("button", {name: `Stop ${label}`, exact: true});
+const trackPlayedAudio = (page) =>
+  page.addInitScript(() => {
+    window.__played = [];
+
+    const original = HTMLMediaElement.prototype.play;
+
+    HTMLMediaElement.prototype.play = function play(...args) {
+      if (this.src.startsWith("blob:")) {
+        window.__played.push(this);
+      }
+
+      return original.apply(this, args);
+    };
+  });
+const soundingPreviews = (page) =>
+  page.evaluate(
+    () => new Set(window.__played.filter((element) => !element.paused && !element.ended)).size,
+  );
+
+test("a card draws its waveform from the stored peaks", async ({page}) => {
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-440-2.2s.wav"));
+
+  const canvas = card(page, "tone-440-2.2s").locator("canvas[data-waveform-thumbnail]");
+
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-hidden", "true");
+  // A full-scale tone fills the canvas height: bars cover most of the middle row.
+  await expect
+    .poll(() =>
+      canvas.evaluate((element) => {
+        const {data} = element.getContext("2d").getImageData(0, 0, element.width, element.height);
+        let painted = 0;
+
+        for (let index = 3; index < data.length; index += 4) {
+          if (data[index] > 0) {
+            painted += 1;
+          }
+        }
+
+        return painted;
+      }),
+    )
+    .toBeGreaterThan(1000);
+});
+
+test("Play and Stop toggle one preview on the verified payload, and only one card plays at a time", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await expect(card(page, "tone-220-10s")).toHaveCount(1);
+  await importInput(page).setInputFiles(upload("tone-880-0.4s.wav"));
+  await expect(card(page, "tone-880-0.4s")).toHaveCount(1);
+  await importInput(page).setInputFiles(upload("tone-220-12s.wav"));
+  await expect(card(page, "tone-220-12s")).toHaveCount(1);
+
+  await playButton(page, "tone-220-10s").click();
+  await expect(stopButton(page, "tone-220-10s")).toBeVisible();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+  expect(await page.evaluate(() => window.__played[0].src.startsWith("blob:"))).toBe(true);
+
+  // Another card takes over: the first goes back to Play.
+  await playButton(page, "tone-220-12s").click();
+  await expect(stopButton(page, "tone-220-12s")).toBeVisible();
+  await expect(playButton(page, "tone-220-10s")).toBeVisible();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await stopButton(page, "tone-220-12s").click();
+  await expect(playButton(page, "tone-220-12s")).toBeVisible();
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+});
+
+test("starting a preview pauses the Player and starting the Player stops the preview", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await expect(card(page, "tone-220-10s")).toHaveCount(1);
+
+  const frame = async () => Number(await page.locator(".preview-frame").getAttribute("data-tora-frame"));
+
+  await page.getByRole("button", {name: "Play video"}).click();
+  await expect(page.getByRole("button", {name: "Pause video"})).toBeVisible();
+  await expect.poll(frame).toBeGreaterThan(2);
+
+  await playButton(page, "tone-220-10s").click();
+  await expect(stopButton(page, "tone-220-10s")).toBeVisible();
+  await expect(page.getByRole("button", {name: "Play video"})).toBeVisible();
+
+  const paused = await frame();
+
+  await page.waitForTimeout(400);
+  expect(await frame()).toBe(paused);
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.getByRole("button", {name: "Play video"}).click();
+  await expect(playButton(page, "tone-220-10s")).toBeVisible();
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+  await expect.poll(frame).toBeGreaterThan(paused);
+});
+
+test("leaving the visual editor (Open YAML unmounts My audio) stops a preview that is playing", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await playButton(page, "tone-220-10s").click();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.getByRole("button", {name: "Open YAML"}).click();
+  await expect(page.getByLabel("YAML source")).toBeVisible();
+  await expect(page.locator(SECTION)).toHaveCount(0);
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+});
+
+test("a preview that cannot play says so in a status region that is already on the card", async ({page}) => {
+  await trackPlayedAudio(page);
+  await page.addInitScript(() => {
+    const original = HTMLMediaElement.prototype.play;
+
+    // The verified blob: URL is refused; the silent primer (a data: URL) is not.
+    HTMLMediaElement.prototype.play = function play(...args) {
+      return this.src.startsWith("blob:")
+        ? Promise.reject(new DOMException("blocked", "NotAllowedError"))
+        : original.apply(this, args);
+    };
+  });
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+
+  const message = card(page, "tone-220-10s").locator("[data-audio-preview-error]");
+
+  // Mounted before anything fails, and empty.
+  await expect(message).toHaveCount(1);
+  await expect(message).toHaveAttribute("role", "status");
+  await expect(message).toHaveText("");
+
+  await playButton(page, "tone-220-10s").click();
+  await expect(message).toHaveText("This audio could not be played.");
+  await expect(playButton(page, "tone-220-10s")).toBeVisible();
+});
+
+test("deleting the sound that is playing stops it", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await playButton(page, "tone-220-10s").click();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.getByRole("button", {name: "Delete tone-220-10s", exact: true}).click();
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+  await page.getByRole("dialog").getByRole("button", {name: "Delete asset"}).click();
+  await expect(card(page, "tone-220-10s")).toHaveCount(0);
+});
+
+test("the preview controls are disabled while authoring is locked, and a preview that is playing is stopped when the lock engages", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await expect(playButton(page, "tone-220-10s")).toBeEnabled();
+  await playButton(page, "tone-220-10s").click();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.evaluate(() => {
+    const nativeDigest = crypto.subtle.digest.bind(crypto.subtle);
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    window.__heldDigests = 0;
+    window.__releaseDigest = () => release();
+    crypto.subtle.digest = async (...args) => {
+      window.__heldDigests += 1;
+      await gate;
+
+      return nativeDigest(...args);
+    };
+  });
+  await importInput(page).setInputFiles(upload("tone-440-2.2s.wav"));
+  await expect.poll(() => page.evaluate(() => window.__heldDigests)).toBeGreaterThan(0);
+  await expect(appShell(page)).toHaveAttribute("data-authoring-locked", "true");
+  await expect(playButton(page, "tone-220-10s")).toBeDisabled();
+  // The lock stopped the preview (its Stop button is disabled, so nothing else could).
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+  await page.evaluate(() => window.__releaseDigest());
+  await expect(appShell(page)).toHaveAttribute("data-authoring-locked", "false");
+  await expect(playButton(page, "tone-220-10s")).toBeEnabled();
+});
+
+const GHOST = `local:audio:sha256:${"b".repeat(64)}`;
+const ghostStoryYaml = [
+  "title: Ghost usage",
+  "scenes:",
+  ...[1, 2].flatMap((number) => [
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    `    text: Scene ${number}`,
+    "    voice:",
+    `      src: ${GHOST}`,
+    "    duration: 3",
+  ]),
+  "",
+].join("\n");
+
+test("a missing card counts the Active Story's usage even while a pending draft has dropped one", async ({page}) => {
+  await openApp(page);
+  await applyYaml(page, ghostStoryYaml);
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+
+  const missing = page.locator(`[data-missing-local-asset-card="${GHOST}"]`);
+
+  await expect(missing).toContainText("Used by scenes 1, 2.");
+
+  // A pending draft: the music fade is out of range, and scene 2 loses its voice.
+  await music(page).selectOption("ding");
+  await page.getByLabel("Fade in (seconds)").fill("11");
+  await expect(appShell(page)).toHaveAttribute("data-visual-pending", "true");
+  await page.locator(".scene-list-item").nth(1).click();
+  await voice(page).selectOption("");
+  await expect(appShell(page)).toHaveAttribute("data-visual-pending", "true");
+  await expect(missing).toContainText("Used by scenes 1, 2.");
+});
+
+test("a card's delete warning counts the pending draft, so a pending change is never under-counted", async ({page}) => {
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-440-2.2s.wav"));
+  await expect(card(page, "tone-440-2.2s")).toHaveCount(1);
+
+  const ref = await card(page, "tone-440-2.2s").getAttribute("data-local-asset-card");
+
+  await applyYaml(page, ghostStoryYaml.replaceAll(GHOST, ref));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await music(page).selectOption("ding");
+  await page.getByLabel("Fade in (seconds)").fill("11");
+  await expect(appShell(page)).toHaveAttribute("data-visual-pending", "true");
+  await page.locator(".scene-list-item").nth(1).click();
+  await voice(page).selectOption("");
+
+  await page.getByRole("button", {name: "Delete tone-440-2.2s", exact: true}).click();
+  await expect(page.getByRole("dialog")).toContainText("Used by scene 1.");
+  await expect(page.getByRole("dialog")).not.toContainText("scenes 1, 2");
+  await page.getByRole("dialog").getByRole("button", {name: "Cancel"}).click();
+});

@@ -14,7 +14,8 @@ import {applyYaml, openSeeded, waitForOwner} from "./helpers/localAssetPage.mjs"
 const MIB = 1024 * 1024;
 const section = (page) => page.locator("[data-my-audio]");
 const importInput = (page) => section(page).locator('.my-assets-toolbar input[type="file"]');
-const statusLine = (page) => section(page).getByRole("status");
+// The import/rename status line only: each card also has an always-mounted preview-error status region.
+const statusLine = (page) => section(page).locator('[role="status"]:not([data-audio-preview-error])');
 const alertLine = (page) => section(page).getByRole("alert");
 const cards = (page) => section(page).locator("[data-local-asset-card]");
 const cardFor = (page, ref) => page.locator(`[data-local-asset-card="${ref}"]`);

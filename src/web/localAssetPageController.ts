@@ -11,12 +11,15 @@ import {
   type LocalAssetEntry,
 } from "./assetLibrary/library.ts";
 import {isAudioPayload, type AudioPayloadMetadata} from "../localAssets/readiness.ts";
+import type {WaveformRecord} from "./assetLibrary/records.ts";
 import {ObjectUrlPool} from "./objectUrlPool.ts";
 
 export type LocalAssetPageEntry = LocalAssetEntry & {
   thumbnailUrl: string | null;
   /** The stored audio metadata of a present audio entry (its card shows the duration). */
   audio?: AudioPayloadMetadata;
+  /** The stored peaks of a present audio entry (its card draws them); absent when none are stored or readable. */
+  waveform?: WaveformRecord;
 };
 
 /** State of the pinned (currently selected) ref, which may not be on the visible page. */
@@ -85,6 +88,7 @@ export const createLocalAssetPageController = (options: {
     | "getAssetRow"
     | "getThumbnail"
     | "getPayloadMeta"
+    | "getWaveform"
   >;
   category: LocalAssetCategory;
   loadThumbnail?: (digest: string) => Promise<ThumbnailResult>;
@@ -103,6 +107,7 @@ export const createLocalAssetPageController = (options: {
   // digest -> URL currently held in the pool.
   const urls = new Map<string, string>();
   const audioByDigest = new Map<string, AudioPayloadMetadata>();
+  const waveformByDigest = new Map<string, WaveformRecord>();
   const listeners = new Set<(snapshot: LocalAssetPageSnapshot) => void>();
   let snapshot: LocalAssetPageSnapshot = EMPTY_LOCAL_ASSET_PAGE;
   let cursor: AssetPageCursor = {};
@@ -125,11 +130,13 @@ export const createLocalAssetPageController = (options: {
 
   const withUrl = (entry: LocalAssetEntry): LocalAssetPageEntry => {
     const audio = audioByDigest.get(entry.digest);
+    const waveform = waveformByDigest.get(entry.digest);
 
     return {
       ...entry,
       thumbnailUrl: urls.get(entry.digest) ?? null,
       ...(audio === undefined ? {} : {audio}),
+      ...(waveform === undefined ? {} : {waveform}),
     };
   };
 
@@ -156,6 +163,16 @@ export const createLocalAssetPageController = (options: {
           }
         } catch {
           // The card simply shows no duration.
+        }
+
+        try {
+          const waveform = await store.getWaveform(entry.digest);
+
+          if (waveform.status === "present") {
+            waveformByDigest.set(entry.digest, waveform.value);
+          }
+        } catch {
+          // The card simply draws no waveform.
         }
       }),
     );

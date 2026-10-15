@@ -10,6 +10,7 @@ import type {Story} from "../../story/types.ts";
 import type {StoryLocalAssetState} from "../localAssetState.ts";
 import {describeLocalAssetPreviewStatus} from "../localAssetPreviewStatus.ts";
 import {applyArmingAction, nextArmingAction} from "../audioArming.ts";
+import {audioPreview} from "../audio/previewPlayback.ts";
 import {readStoredPlayerVolume, storePlayerVolume} from "../playerVolume.ts";
 import {getWebPlayerConfig} from "../previewConfig.ts";
 
@@ -94,6 +95,9 @@ export const Preview = ({
     const onVolumeChange = ({detail}: {detail: {volume: number}}) => {
       storePlayerVolume(detail.volume);
     };
+    // The Player and a My audio preview never sound together: starting either
+    // stops the other (the preview pauses the Player it is handed here).
+    const onPlay = () => audioPreview().playerStarted();
 
     if (frameProbeRef.current !== null) {
       frameProbeRef.current.dataset.toraMuted = String(player.isMuted());
@@ -102,8 +106,12 @@ export const Preview = ({
     player.addEventListener("frameupdate", onFrameUpdate);
     player.addEventListener("mutechange", onMuteChange);
     player.addEventListener("volumechange", onVolumeChange);
+    player.addEventListener("play", onPlay);
+    audioPreview().setPlayerPause(() => player.pause());
 
     return () => {
+      audioPreview().setPlayerPause(null);
+      player.removeEventListener("play", onPlay);
       player.removeEventListener("frameupdate", onFrameUpdate);
       player.removeEventListener("mutechange", onMuteChange);
       player.removeEventListener("volumechange", onVolumeChange);
