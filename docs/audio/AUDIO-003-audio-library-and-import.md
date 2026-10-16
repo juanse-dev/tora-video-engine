@@ -97,7 +97,7 @@ Audio imports, deduplicates, survives reload, verifies, deletes and recovers lik
 - Image `payloadMeta` records keep the v0.3 shape (no `kind` field); `kind: "audio"` marks audio, a stored `kind: "image"` is tolerated and dropped on read.
 - The library read API takes the store first: `readAudioMetadata(store, ref)`, `readWaveform(store, digest)`, `readAudioDurations(store, refs)`. Peaks are laid over the container duration by timestamp.
 - Import: one read of the file, then inspect, decode (peaks and truncation rule), hash, commit. M4A needs a browser that decodes AAC (system Chrome); elsewhere it is refused with `This audio file could not be decoded.`
-- "Import matching file" with a different audio file is refused with the mismatch text and writes nothing; the replacement dialog arrives with AUDIO-004's scene-field pickers.
+- "Import matching file" with a different audio file is refused with the mismatch text and writes nothing; no replacement dialog exists: a missing audio ref is replaced by choosing another sound in the Music, Sound effect or Voice select (AUDIO-004).
 - `npm run assets` prints the audio section only when `local-assets/audio/` exists. "Staged by `renderStory`" is tested through `stageLocalAssetsForStory`, because the AUDIO-001 interim render block refuses Stories with audio until AUDIO-005.
 - Fixtures: the repository ffmpeg has no `anoisesrc`, filters or Vorbis encoder; the noise fixture is a seeded sum of sine partials below 2 kHz (`scripts/generateAudioFixtures.mjs`).
 - The real M4A import is verified only in system Chrome (`playwright.browser-render.config.mjs`, `tests/browser/my-audio-m4a.spec.mjs`); bundled Chromium cannot decode AAC and its spec asserts the "could not be decoded" outcome instead.

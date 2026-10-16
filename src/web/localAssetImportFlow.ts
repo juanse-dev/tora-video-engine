@@ -382,8 +382,8 @@ export const runMatchingFileImport = ({
       }
 
       if (category === "audio") {
-        // Replacing an audio ref needs the scene-field pickers of AUDIO-004:
-        // refuse the file, write nothing, open no dialog.
+        // Audio refs are replaced through the sound selects (AUDIO-004), not a
+        // dialog: refuse the file, write nothing, open no dialog.
         return {
           kind: "failed",
           message: mismatchDialogText(evaluation.candidateRef),
