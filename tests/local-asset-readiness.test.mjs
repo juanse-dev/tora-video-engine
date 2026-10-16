@@ -6,6 +6,7 @@ import {
   evaluateLocalAssetBudget,
   collectStoryLocalAssetUsages,
   splitUsagesByCategory,
+  storyHasAnyLocalAssetRef,
   storyHasLocalAssetRefs,
 } from "../src/localAssets/readiness.ts";
 import {
@@ -450,4 +451,21 @@ test("image metadata without finite dimensions fails closed instead of making th
     assert.deepEqual(result.exceeded, ["metadata"]);
     assert.equal(Number.isNaN(result.totalPixels), false);
   }
+});
+
+test("storyHasAnyLocalAssetRef is true for a Story whose only local ref is audio, while storyHasLocalAssetRefs stays image-only", () => {
+  const silent = storyOf([["formal", "office"]]);
+  const voiceOnly = withScenes(silent, [{voice: {src: audioRefOf(1)}}]);
+  const musicOnly = {...silent, music: {src: audioRefOf(2)}};
+  const bundledOnly = withScenes(silent, [{sfx: {src: "ding"}, voice: {src: "boom"}}]);
+
+  assert.equal(storyHasAnyLocalAssetRef(silent), false);
+  assert.equal(storyHasAnyLocalAssetRef(bundledOnly), false);
+  assert.equal(storyHasAnyLocalAssetRef(voiceOnly), true);
+  assert.equal(storyHasAnyLocalAssetRef(musicOnly), true);
+  assert.equal(storyHasAnyLocalAssetRef(storyOf([[poseRef(1), "office"]])), true);
+
+  // It drives persistence version 2, so audio refs must not count.
+  assert.equal(storyHasLocalAssetRefs(voiceOnly), false);
+  assert.equal(storyHasLocalAssetRefs(musicOnly), false);
 });

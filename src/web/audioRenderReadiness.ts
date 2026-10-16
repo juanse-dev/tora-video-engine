@@ -44,6 +44,13 @@ export type BundledAudioStateLike =
 
 export type AudioRefReadiness = "ready" | "pending" | "missing";
 
+const EMPTY_AUDIO_PLAN: AudioPlan = {
+  tracks: [],
+  issues: [],
+  maxSimultaneousGain: 0,
+  musicEnvelopeAt: null,
+};
+
 export type AudioRenderReadiness = {
   /** Why Render MP4 is blocked by the audio, or null. */
   block: string | null;
@@ -140,6 +147,12 @@ const evaluateWithDurations = (
   input: ReadinessInput,
 ): Omit<AudioRenderReadiness, "audioDurations"> => {
   const {story, audioDurations, localState, bundledStates} = input;
+
+  // A Story without audio is never blocked by audio and pays nothing for it.
+  if (!storyHasAudio(story)) {
+    return {block: null, plan: EMPTY_AUDIO_PLAN};
+  }
+
   const timeline = compileTimeline(story, VIDEO_FPS, audioDurations);
   const readinessOf = (ref: AudioRef): AudioRefReadiness =>
     isBundledAudio(ref)
@@ -152,10 +165,6 @@ const evaluateWithDurations = (
     audioDurations,
     sourceState: readinessOf,
   });
-
-  if (!storyHasAudio(story)) {
-    return {block: null, plan};
-  }
 
   // Terminal problems first (the person must act), then a failed fetch, then
   // plain loading, and only then the length: a fallback scene would make the

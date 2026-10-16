@@ -482,11 +482,25 @@ export const describeLocalAssetRenderBlock = (
     case "resolved": {
       const unavailable = state.refs.filter(
         (entry) => entry.status !== "ready",
+      );
+      const audio = unavailable.filter(
+        (entry) => entry.usage.category === "audio",
       ).length;
+      const images = unavailable.length - audio;
 
-      return unavailable === 0
-        ? null
-        : `Browser render is blocked because ${unavailable} local asset(s) are unavailable in this browser.`;
+      if (unavailable.length === 0) {
+        return null;
+      }
+
+      // Images keep the v0.3 sentence; audio is named as audio, never as an "asset".
+      const what =
+        audio === 0
+          ? `${images} local asset(s)`
+          : images === 0
+            ? `${audio} audio file(s)`
+            : `${images} local asset(s) and ${audio} audio file(s)`;
+
+      return `Browser render is blocked because ${what} are unavailable in this browser.`;
     }
   }
 };

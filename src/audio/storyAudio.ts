@@ -40,7 +40,3 @@ export const storyAudioDurations = (
   localDurations: AudioDurationMap = {},
 ): AudioDurationMap =>
   buildAudioDurationMap(storyAudioRefs(story), localDurations);
-
-// TEMPORARY (AUDIO-001): AUDIO-005 removes this block and its call sites.
-export const AUDIO_RENDER_BLOCK_MESSAGE =
-  "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.";

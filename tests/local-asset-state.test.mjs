@@ -1151,3 +1151,42 @@ test("a payloadMeta whose kind changed from audio to image, or from image to aud
   assert.equal(toAudio.ok, false);
   assert.equal(imagePool.calls.acquire.length, 0);
 });
+
+const resolvedWith = (...entries) => ({
+  kind: "resolved",
+  refs: entries.map(([usage, status]) => ({usage, status, detail: null})),
+  verified: new Map(),
+  blobs: new Map(),
+  allReady: entries.every(([, status]) => status === "ready"),
+  failureMessage: null,
+});
+const imageUsage = (n) => ({ref: poseRef(n), category: "pose", digest: digestOf(n), sceneIndexes: [0]});
+const audioUsage = (n) => ({
+  ref: audioRefOf(digestOf(n)),
+  category: "audio",
+  digest: digestOf(n),
+  sceneIndexes: [0],
+  roles: ["voice"],
+});
+
+test("describeLocalAssetRenderBlock says audio when the unavailable refs are audio, and keeps the image sentence for images", () => {
+  const library = readyLibrary(createMemoryAssetStore());
+
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([imageUsage(1), "missing"], [imageUsage(2), "corrupt"], [imageUsage(3), "ready"]), library),
+    "Browser render is blocked because 2 local asset(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "missing"], [imageUsage(1), "ready"]), library),
+    "Browser render is blocked because 1 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "unavailable"], [audioUsage(2), "corrupt"]), library),
+    "Browser render is blocked because 2 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([imageUsage(1), "missing"], [audioUsage(1), "missing"], [audioUsage(2), "missing"]), library),
+    "Browser render is blocked because 1 local asset(s) and 2 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "ready"]), library), null);
+});
