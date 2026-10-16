@@ -5,12 +5,17 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
-import {OUTPUT_AUDIO_BITRATE} from "../audio/constants.ts";
+import type {AudioDurationMap} from "../audio/catalog.ts";
 import {
-  AUDIO_RENDER_BLOCK_MESSAGE,
-  storyAudioDurations,
-  storyHasAudio,
-} from "../audio/storyAudio.ts";
+  OUTPUT_AUDIO_BITRATE,
+  OUTPUT_AUDIO_SAMPLE_RATE,
+} from "../audio/constants.ts";
+import {
+  compileFrozenAudioPlan,
+  storyTooLongWithVoicesMessage,
+} from "../audio/readiness.ts";
+import type {AudioSourceMap} from "../audio/sources.ts";
+import {storyAudioDurations, storyHasAudio} from "../audio/storyAudio.ts";
 import {
   collectStoryLocalAssetUsages,
   splitUsagesByCategory,
@@ -48,6 +53,12 @@ export const OPFS_CLEANUP_BACKOFF_MS = [
   1_600,
   3_200,
 ] as const;
+
+/**
+ * A source that still stalls fails with a clear timeout instead of hanging
+ * (S-9): every audio source was preflighted, so this is the last line of defense.
+ */
+export const AUDIO_DELAY_RENDER_TIMEOUT_MS = 30_000;
 
 export const BROWSER_FRAME_DURATION_MICROSECONDS = Math.round(
   1_000_000 / VIDEO_FPS,
@@ -535,17 +546,14 @@ export const renderStoryMediaOnWeb = async (
     licenseKey?: string | null;
     render?: RenderFunction;
     localAssetSources?: LocalAssetSourceMap;
+    /** The frozen audio sources of a Story with audio: lease URLs (local) and render-owned URLs (bundled). */
+    audioSources?: AudioSourceMap;
+    /** The verified durations of the Story's local audio (the catalog supplies the bundled ones). */
+    localAudioDurations?: AudioDurationMap;
     component?: ComponentType<ToraVideoProps>;
     getDirectory?: () => Promise<RenderDirectory>;
-    /** TEMPORARY (AUDIO-001), tests only: keeps the exact-timeline path of AUDIO-005 testable. */
-    bypassAudioBlockForTest?: boolean;
   },
 ): Promise<RenderMediaOnWebResult> => {
-  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
-  if (storyHasAudio(story) && options.bypassAudioBlockForTest !== true) {
-    throw new Error(AUDIO_RENDER_BLOCK_MESSAGE);
-  }
-
   const policy = evaluateBrowserRenderPolicy(story);
 
   if (!policy.eligible) {
@@ -556,12 +564,19 @@ export const renderStoryMediaOnWeb = async (
 
   // Acceptance uses the lower bound (policy.totalFrames); the render uses the
   // exact compiled timeline, built from the same map the composition receives.
-  const audioDurations = storyAudioDurations(story);
+  const hasAudio = storyHasAudio(story);
+  const audioDurations = storyAudioDurations(story, options.localAudioDurations);
   const totalFrames = getStoryMetadata(
     story,
     VIDEO_FPS,
     audioDurations,
   ).durationInFrames;
+
+  if (totalFrames > MAX_BROWSER_TOTAL_FRAMES && hasAudio) {
+    throw new Error(
+      storyTooLongWithVoicesMessage(Math.ceil(totalFrames / VIDEO_FPS)),
+    );
+  }
 
   if (totalFrames > MAX_BROWSER_TOTAL_FRAMES) {
     const exceeded = evaluateBrowserRenderPolicy(story, {
@@ -581,13 +596,38 @@ export const renderStoryMediaOnWeb = async (
   const props = {
     story,
     localAssetSources: options.localAssetSources,
-    ...(storyHasAudio(story) ? {audioDurations, audioArmed: true} : {}),
+    ...(hasAudio
+      ? {
+          audioDurations,
+          audioSources: options.audioSources,
+          bundledAudioPolicy: "explicit" as const,
+          audioArmed: true,
+        }
+      : {}),
   };
 
-  // INV-5: a local ref must never reach the renderer without a resolved
+  // INV-5 for audio (AINV-5): every local and bundled audio ref must resolve
+  // through the frozen map, or the MP4 would silently lack a sound. A pending
+  // or missing source, or a ready one without a measured duration, is refused.
+  if (hasAudio) {
+    const unplayable = new Set(
+      compileFrozenAudioPlan(story, audioDurations, options.audioSources ?? {})
+        .issues.flatMap((issue) =>
+          issue.kind === "missing-audio" || issue.kind === "pending-audio"
+            ? [issue.ref]
+            : [],
+        ),
+    );
+
+    if (unplayable.size > 0) {
+      throw new Error(
+        `Cannot render: ${unplayable.size} audio source(s) have no resolved source.`,
+      );
+    }
+  }
+
+  // INV-5: a local image ref must never reach the renderer without a resolved
   // source, or the composition would draw a placeholder into the MP4.
-  // Image refs only: audio sources are checked by AUDIO-005's readiness (until then
-  // the interim block keeps every Story with audio away from here).
   const unresolved = splitUsagesByCategory(
     collectStoryLocalAssetUsages(story),
   ).image.filter((usage) => {
@@ -634,7 +674,16 @@ export const renderStoryMediaOnWeb = async (
       inputProps: props,
       container: "mp4",
       videoCodec: "h264",
-      muted: true,
+      // D-13: the audio follows the Story. A silent Story keeps exactly the v0.3 options.
+      muted: !hasAudio,
+      ...(hasAudio
+        ? {
+            audioCodec: "aac" as const,
+            audioBitrate: OUTPUT_AUDIO_BITRATE,
+            sampleRate: OUTPUT_AUDIO_SAMPLE_RATE,
+            delayRenderTimeoutInMilliseconds: AUDIO_DELAY_RENDER_TIMEOUT_MS,
+          }
+        : {}),
       outputWritable: output.stream as OutputWritable,
       signal: options.signal,
       onProgress: options.onProgress,
@@ -785,6 +834,8 @@ export const startBrowserRenderTransaction = async (
         onProgress: options.onProgress,
         licenseKey: options.licenseKey,
         localAssetSources,
+        audioSources: preparation?.audioSources,
+        localAudioDurations: preparation?.localAudioDurations,
       });
       const webFsBlob = await result.getBlob();
 

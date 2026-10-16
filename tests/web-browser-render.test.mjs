@@ -6,6 +6,7 @@ import {ASSET_LIBRARY_LOCK} from "../src/web/assetLibrary/constants.ts";
 import {createLocalAssetRenderPreparation} from "../src/web/localAssetState.ts";
 import {
   acquireBrowserRenderLock,
+  AUDIO_DELAY_RENDER_TIMEOUT_MS,
   BROWSER_FRAME_DURATION_MICROSECONDS,
   canDownloadBrowserRenderSnapshot,
   checkBrowserRenderCapability,
@@ -1392,147 +1393,204 @@ describe("issue #29 Tora-owned OPFS writer", () => {
   });
 });
 
-describe("AUDIO-001 browser render uses the exact compiled timeline", () => {
-  const autoScene = {
+describe("AUDIO-005 browser render with audio", () => {
+  const VOICE = `local:audio:sha256:${"d".repeat(64)}`;
+  const OTHER_VOICE = `local:audio:sha256:${"e".repeat(64)}`;
+  const autoScene = (voice = VOICE) => ({
     type: "intro",
     pose: "formal",
     background: "office",
     text: "Auto",
     duration: "auto",
-    voice: {src: `local:audio:sha256:${"d".repeat(64)}`}, // no known duration: the 3 s fallback
-  };
-  const renderWith = async (story) => {
+    voice: {src: voice},
+  });
+  const voiceSources = (...refs) =>
+    Object.fromEntries(refs.map((ref) => [ref, {kind: "url", url: `blob:voice/${ref.slice(-4)}`}]));
+  const renderWith = async (story, options = {}) => {
     let seen = null;
 
     await renderStoryMediaOnWeb(story, {
       signal: new AbortController().signal,
-      bypassAudioBlockForTest: true,
       component: () => null,
       getDirectory: createFakeOpfs().getDirectory,
-      render: async (options) => {
-        seen = options;
-        await finalizeOutput(options);
+      render: async (renderOptions) => {
+        seen = renderOptions;
+        await finalizeOutput(renderOptions);
 
         return {getBlob: async () => new Blob(["v"]), internalState: {}};
       },
+      ...options,
     });
 
     return seen;
   };
-
-  it("an auto Story renders at the compiled total, not the acceptance lower bound", async () => {
-    const story = {
-      title: "Auto",
-      scenes: [{...autoScene}, {...autoScene, text: "Two"}, {...exampleStory.scenes[0], duration: 2}],
-    };
-    const seen = await renderWith(story);
-
-    // 2 auto scenes at the 3 s fallback (90 frames each) + one 2 s scene.
-    assert.equal(seen.composition.durationInFrames, 90 + 90 + 60);
-    assert.ok(seen.composition.durationInFrames > 16 + 16 + 60);
-    assert.equal(
-      seen.inputProps.audioDurations,
-      seen.composition.defaultProps.audioDurations,
-    );
-    assert.notEqual(seen.inputProps.audioDurations, undefined);
-    assert.equal(seen.inputProps.audioArmed, true);
-    assert.equal(seen.composition.defaultProps.audioArmed, true);
-  });
-
-  it("a Story without audio keeps its duration and its props", async () => {
-    const seen = await renderWith(exampleStory);
-
-    assert.equal(seen.composition.durationInFrames, 360);
-    assert.deepEqual(Object.keys(seen.inputProps), ["story", "localAssetSources"]);
-    assert.deepEqual(Object.keys(seen.composition.defaultProps), [
-      "story",
-      "localAssetSources",
-    ]);
-    assert.equal("audioArmed" in seen.inputProps, false);
-  });
-
-  it("refuses an auto Story whose exact total exceeds the cap while its lower bound passes", async () => {
-    const story = {
-      title: "Long auto",
-      scenes: Array.from({length: 101}, (_, i) => ({...autoScene, text: `S${i}`})),
-    };
+  const refuses = async (story, options, pattern) => {
     let rendered = false;
     let directoryRequested = false;
 
     await assert.rejects(
       renderStoryMediaOnWeb(story, {
         signal: new AbortController().signal,
-        bypassAudioBlockForTest: true,
-      component: () => null,
+        component: () => null,
         getDirectory: async () => {
           directoryRequested = true;
+
           return createFakeOpfs().getDirectory();
         },
         render: async () => {
           rendered = true;
         },
+        ...options,
       }),
-      /Active Story failed the browser render policy recheck: Browser authoring supports at most 9,000 frames/,
+      pattern,
     );
     assert.equal(rendered, false);
     assert.equal(directoryRequested, false);
-  });
-});
-
-describe("AUDIO-001 interim render block (removed by AUDIO-005)", () => {
-  const MESSAGE =
-    "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.";
-  const refuse = async (story) => {
-    const calls = [];
-
-    await assert.rejects(
-      renderStoryMediaOnWeb(story, {
-        signal: new AbortController().signal,
-        component: () => null,
-        getDirectory: async () => {
-          calls.push("getDirectory");
-          return createFakeOpfs().getDirectory();
-        },
-        render: async () => {
-          calls.push("render");
-        },
-      }),
-      (error) => error.message === MESSAGE,
-    );
-
-    assert.deepEqual(calls, []);
   };
 
-  it("refuses a Story with music, sfx, voice or an auto duration before any OPFS or render work", async () => {
-    const withMusic = structuredClone(exampleStory);
-    withMusic.music = {src: "calm-loop"};
-    const withSfx = structuredClone(exampleStory);
-    withSfx.scenes[0].sfx = {src: "ding"};
-    const withVoice = structuredClone(exampleStory);
-    withVoice.scenes[0].voice = {src: "ding"};
-    const withAuto = structuredClone(exampleStory);
-    withAuto.scenes[0].duration = "auto";
-
-    for (const story of [withMusic, withSfx, withVoice, withAuto]) {
-      await refuse(story);
-    }
-  });
-
-  it("still renders a Story without audio", async () => {
-    let rendered = false;
-
-    await renderStoryMediaOnWeb(exampleStory, {
-      signal: new AbortController().signal,
-      component: () => null,
-      getDirectory: createFakeOpfs().getDirectory,
-      render: async (options) => {
-        rendered = true;
-        await finalizeOutput(options);
-
-        return {getBlob: async () => new Blob(["v"]), internalState: {}};
-      },
+  it("an auto Story renders at the compiled total with the measured voice duration, not the lower bound", async () => {
+    const story = {
+      title: "Auto",
+      scenes: [autoScene(), autoScene(OTHER_VOICE), {...exampleStory.scenes[0], duration: 2}],
+    };
+    const seen = await renderWith(story, {
+      audioSources: voiceSources(VOICE, OTHER_VOICE),
+      localAudioDurations: {[VOICE]: 2.2, [OTHER_VOICE]: 2.2},
     });
 
-    assert.equal(rendered, true);
+    // Two auto scenes of ceil((2.2 + 0.5) x 30) = 81 frames + one 2 s scene.
+    assert.equal(seen.composition.durationInFrames, 81 + 81 + 60);
+    assert.ok(seen.composition.durationInFrames > 16 + 16 + 60);
+    assert.equal(seen.inputProps.audioDurations, seen.composition.defaultProps.audioDurations);
+    assert.deepEqual(seen.inputProps.audioDurations, {[VOICE]: 2.2, [OTHER_VOICE]: 2.2});
+    assert.equal(seen.inputProps.audioArmed, true);
+    assert.equal(seen.composition.defaultProps.audioArmed, true);
+    assert.equal(seen.inputProps.bundledAudioPolicy, "explicit");
+    assert.deepEqual(Object.keys(seen.inputProps.audioSources), [VOICE, OTHER_VOICE]);
+  });
+
+  it("muted and the audio options follow storyHasAudio", async () => {
+    const withAudio = await renderWith(
+      {title: "Ding", scenes: [{...exampleStory.scenes[0], sfx: {src: "ding"}}]},
+      {audioSources: {ding: {kind: "url", url: "blob:render/ding"}}},
+    );
+    const silent = await renderWith(exampleStory);
+
+    assert.equal(withAudio.muted, false);
+    assert.equal(withAudio.audioCodec, "aac");
+    assert.equal(withAudio.audioBitrate, 128_000);
+    assert.equal(withAudio.sampleRate, 48_000);
+    assert.equal(withAudio.delayRenderTimeoutInMilliseconds, 30_000);
+    assert.equal(AUDIO_DELAY_RENDER_TIMEOUT_MS, 30_000);
+    assert.equal(withAudio.inputProps.audioSources.ding.url, "blob:render/ding");
+
+    // AINV-6: a silent Story is exactly the v0.3 render.
+    assert.equal(silent.muted, true);
+    for (const key of ["audioCodec", "audioBitrate", "sampleRate", "delayRenderTimeoutInMilliseconds"]) {
+      assert.equal(key in silent, false, key);
+    }
+    assert.deepEqual(Object.keys(silent.inputProps), ["story", "localAssetSources"]);
+    assert.deepEqual(Object.keys(silent.composition.defaultProps), ["story", "localAssetSources"]);
+    assert.equal(silent.composition.durationInFrames, 360);
+  });
+
+  it("refuses a local or bundled audio ref that has no resolved source (INV-5), before any OPFS work", async () => {
+    const voiceStory = {title: "Voice", scenes: [autoScene()]};
+    const dingStory = {title: "Ding", scenes: [{...exampleStory.scenes[0], sfx: {src: "ding"}}]};
+    const NO_SOURCE = /^Error: Cannot render: 1 audio source\(s\) have no resolved source\.$/u;
+
+    // No audioSources at all.
+    await refuses(voiceStory, {localAudioDurations: {[VOICE]: 2.2}}, NO_SOURCE);
+    // A pending entry, an unavailable entry, a ready source whose duration was never measured.
+    await refuses(
+      voiceStory,
+      {audioSources: {[VOICE]: {kind: "pending"}}, localAudioDurations: {[VOICE]: 2.2}},
+      NO_SOURCE,
+    );
+    await refuses(
+      voiceStory,
+      {audioSources: {[VOICE]: {kind: "unavailable"}}, localAudioDurations: {[VOICE]: 2.2}},
+      NO_SOURCE,
+    );
+    await refuses(voiceStory, {audioSources: voiceSources(VOICE)}, NO_SOURCE);
+    // A bundled id resolves only through the map ("explicit"): no entry is pending, not a fallback to staticFile.
+    await refuses(dingStory, {audioSources: {}}, NO_SOURCE);
+    await refuses(dingStory, {audioSources: {ding: {kind: "unavailable"}}}, NO_SOURCE);
+
+    // Two refs missing are counted once each.
+    await refuses(
+      {title: "Two", scenes: [autoScene(), autoScene(OTHER_VOICE)]},
+      {localAudioDurations: {[VOICE]: 2.2, [OTHER_VOICE]: 2.2}},
+      /^Error: Cannot render: 2 audio source\(s\) have no resolved source\.$/u,
+    );
+  });
+
+  it("renders when every audio ref resolves, whatever mix of local and bundled sources", async () => {
+    const story = {
+      title: "Mixed",
+      scenes: [{...autoScene(), sfx: {src: "ding"}}],
+      music: {src: "whoosh"},
+    };
+    const seen = await renderWith(story, {
+      audioSources: {
+        ...voiceSources(VOICE),
+        ding: {kind: "url", url: "blob:render/ding"},
+        whoosh: {kind: "url", url: "blob:render/whoosh"},
+      },
+      localAudioDurations: {[VOICE]: 2.2},
+    });
+
+    assert.notEqual(seen, null);
+  });
+
+  it("an audio Story over the browser cap at its exact total says so with the voices sentence, and a silent Story keeps the policy text", async () => {
+    // 101 auto scenes of ceil((3 + 0.5) x 30) = 105 frames: 10,605 frames, 353.5 s; the acceptance lower bound (101 x 16) passed.
+    const story = {title: "Long auto", scenes: Array.from({length: 101}, () => autoScene())};
+
+    await refuses(
+      story,
+      {audioSources: voiceSources(VOICE), localAudioDurations: {[VOICE]: 3}},
+      /^Error: This Story is longer than 300 s with its voices \(354 s\)\.$/u,
+    );
+
+    const silent = {title: "Long", scenes: Array.from({length: 101}, () => ({...exampleStory.scenes[0], duration: 3}))};
+
+    await refuses(
+      silent,
+      {},
+      /Active Story failed the browser render policy recheck: Browser authoring supports at most 9,000 frames/u,
+    );
+  });
+
+  it("the transaction hands the preparation's audio sources and local durations to the render, then releases", async () => {
+    const calls = [];
+    const story = {title: "Voice", scenes: [autoScene()]};
+    const sources = voiceSources(VOICE);
+    const outcome = await startBrowserRenderTransaction(story, {
+      signal: new AbortController().signal,
+      checkCapability: readyCapability,
+      acquireLock: async () => ({mode: "owner", release: () => calls.push("lock-release")}),
+      cleanup: async () => ({ok: true, attempts: 1}),
+      prepareLocalAssets: async () => ({
+        ok: true,
+        localAssetSources: undefined,
+        audioSources: sources,
+        localAudioDurations: {[VOICE]: 2.2},
+        release: () => calls.push("release"),
+      }),
+      renderStory: async (_story, options) => {
+        calls.push(["render", options.audioSources, options.localAudioDurations]);
+
+        return {getBlob: async () => new Blob(["mp4"]), internalState: {}};
+      },
+      materializeBlob: async (blob) => blob,
+    });
+
+    assert.equal(outcome.kind, "success");
+    assert.deepEqual(calls, [
+      ["render", sources, {[VOICE]: 2.2}],
+      "lock-release",
+      "release",
+    ]);
   });
 });
