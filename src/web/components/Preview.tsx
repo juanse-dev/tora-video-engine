@@ -10,9 +10,12 @@ import type {Story} from "../../story/types.ts";
 import type {StoryLocalAssetState} from "../localAssetState.ts";
 import {describeLocalAssetPreviewStatus} from "../localAssetPreviewStatus.ts";
 import {applyArmingAction, nextArmingAction} from "../audioArming.ts";
+import type {EditorAudioPlanView} from "../audio/audioPlanView.ts";
 import {audioPreview} from "../audio/previewPlayback.ts";
+import type {StoryWaveforms} from "../audio/storyWaveforms.ts";
 import {readStoredPlayerVolume, storePlayerVolume} from "../playerVolume.ts";
 import {getWebPlayerConfig} from "../previewConfig.ts";
+import {AudioTimeline} from "./AudioTimeline.tsx";
 
 type PreviewProps = {
   story?: Story;
@@ -25,6 +28,10 @@ type PreviewProps = {
    * The Player mounts a bundled sound only from its checked blob: URL.
    */
   audioSources: AudioSourceMap;
+  /** The timeline and plan the audio timeline under the Player shows (the Player's own plan, recompiled from the same inputs). */
+  audioPlanView: EditorAudioPlanView;
+  /** The peaks the timeline draws, by ref (stored local peaks and the bundled store's). */
+  waveforms: StoryWaveforms;
 };
 
 export const Preview = ({
@@ -33,6 +40,8 @@ export const Preview = ({
   localAssetState,
   audioDurations,
   audioSources,
+  audioPlanView,
+  waveforms,
 }: PreviewProps) => {
   const config = getWebPlayerConfig(story, audioDurations);
   const playerRef = useRef<PlayerRef>(null);
@@ -161,6 +170,13 @@ export const Preview = ({
       />
       {statusLine !== null ? (
         <p data-local-asset-status>{statusLine}</p>
+      ) : null}
+      {hasAudio ? (
+        <AudioTimeline
+          view={audioPlanView}
+          waveforms={waveforms}
+          playerRef={playerRef}
+        />
       ) : null}
     </div>
   );

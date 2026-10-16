@@ -818,3 +818,259 @@ test("when every request fails the store gives up after four requests and the Pl
   await page.waitForTimeout(1_200);
   expect(await starts(page)).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+// The audio timeline under the Player (AUDIO-004 task 6)
+// ---------------------------------------------------------------------------
+
+const timeline = (page) => page.locator("[data-audio-timeline]");
+const lane = (page, name) => page.locator(`[data-timeline-canvas="${name}"]`);
+const paintedPixels = (canvas) =>
+  canvas.evaluate((element) => {
+    const {data} = element.getContext("2d").getImageData(0, 0, element.width, element.height);
+    let painted = 0;
+
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] > 0) {
+        painted += 1;
+      }
+    }
+
+    return painted;
+  });
+const frameOf = async (page) => Number(await page.locator(".preview-frame").getAttribute("data-tora-frame"));
+const sceneStory = (extras = {}) =>
+  [
+    "title: Timeline fixture",
+    ...(extras.music === undefined ? [] : ["music:", `  src: ${extras.music}`, ...(extras.musicTail ?? [])]),
+    "scenes:",
+    "  - type: intro",
+    "    pose: formal",
+    "    background: office",
+    "    text: One",
+    "    sfx:",
+    "      src: ding",
+    "    duration: 2",
+    "  - type: dialogue",
+    "    pose: formal",
+    "    background: office",
+    "    text: Two",
+    ...(extras.voice === undefined ? [] : ["    voice:", `      src: ${extras.voice}`]),
+    "    duration: 2",
+    "  - type: chaos",
+    "    pose: panic",
+    "    background: office",
+    "    text: Three",
+    "    duration: 2",
+    "",
+  ].join("\n");
+
+test("a Story with sfx ding draws a non-empty effects-lane waveform with no library import, and a silent Story has no timeline", async ({page}) => {
+  await openApp(page);
+  await expect(timeline(page)).toHaveCount(0);
+
+  await importStory(page, sceneStory());
+  await expect(timeline(page)).toHaveCount(1);
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0");
+  await expect(timeline(page).locator("[data-timeline-scene]")).toHaveCount(3);
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(50);
+  expect(await paintedPixels(lane(page, "music"))).toBe(0);
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveCount(0);
+
+  await importStory(page, "title: Quiet\nscenes:\n  - type: intro\n    pose: formal\n    background: office\n    text: Quiet\n    duration: 2\n");
+  await expect(timeline(page)).toHaveCount(0);
+});
+
+test("scene blocks are proportional to their length and carry the scene number", async ({page}) => {
+  await openApp(page);
+  await importStory(
+    page,
+    sceneStory().replace("    duration: 2\n  - type: dialogue", "    duration: 4\n  - type: dialogue"),
+  );
+
+  const blocks = timeline(page).locator("[data-timeline-scene]");
+
+  await expect(blocks).toHaveCount(3);
+  await expect(blocks.nth(0)).toHaveText("1");
+  await expect(blocks.nth(2)).toHaveText("3");
+
+  const widths = await blocks.evaluateAll((elements) =>
+    elements.map((element) => element.getBoundingClientRect().width),
+  );
+
+  // 4 s : 2 s : 2 s.
+  expect(widths[0] / widths[1]).toBeCloseTo(2, 1);
+  expect(widths[1] / widths[2]).toBeCloseTo(1, 1);
+});
+
+test("clicking the timeline seeks the Player and moves the playhead", async ({page}) => {
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect(timeline(page)).toHaveCount(1);
+
+  const box = await timeline(page).boundingBox();
+
+  await page.mouse.click(box.x + box.width * 0.5, box.y + 30);
+  // 180 frames: the middle is frame 90, the start of scene 2.
+  await expect.poll(() => frameOf(page)).toBe(90);
+  await expect(timeline(page)).toHaveAttribute("aria-valuenow", "90");
+
+  const playheadLeft = await page.locator("[data-timeline-playhead]").evaluate((element) => element.style.left);
+
+  expect(Number.parseFloat(playheadLeft)).toBeCloseTo(50, 0);
+
+  await page.mouse.click(box.x + box.width - 1, box.y + 30);
+  await expect.poll(() => frameOf(page)).toBe(179);
+});
+
+test("the timeline is one focusable slider: arrows jump between scene starts, Home and End to the ends, and the label says where it is", async ({page}) => {
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect(timeline(page)).toHaveCount(1);
+  await expect(timeline(page)).toHaveAttribute("role", "slider");
+  await expect(timeline(page)).toHaveAttribute("tabindex", "0");
+  await expect(timeline(page)).toHaveAttribute("aria-label", "Audio timeline, scene 1 of 3, 0:00 of 0:06");
+
+  await timeline(page).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => frameOf(page)).toBe(60);
+  await expect(timeline(page)).toHaveAttribute("aria-label", "Audio timeline, scene 2 of 3, 0:02 of 0:06");
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => frameOf(page)).toBe(120);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => frameOf(page)).toBe(179);
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => frameOf(page)).toBe(120);
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => frameOf(page)).toBe(0);
+  await page.keyboard.press("End");
+  await expect.poll(() => frameOf(page)).toBe(179);
+  await page.keyboard.press("Home");
+  await expect.poll(() => frameOf(page)).toBe(0);
+});
+
+test("while the Player plays only the playhead moves: the lanes are not redrawn per frame", async ({page}) => {
+  await page.addInitScript(() => {
+    window.__laneDraws = 0;
+
+    const original = CanvasRenderingContext2D.prototype.fillRect;
+
+    CanvasRenderingContext2D.prototype.fillRect = function fillRect(...args) {
+      window.__laneDraws += 1;
+
+      return original.apply(this, args);
+    };
+  });
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(50);
+  await page.waitForTimeout(300);
+
+  const draws = await page.evaluate(() => window.__laneDraws);
+  const before = await page.locator("[data-timeline-playhead]").evaluate((element) => element.style.left);
+
+  await page.getByRole("button", {name: "Play video"}).click();
+  await expect.poll(() => frameOf(page)).toBeGreaterThan(30);
+  await page.getByRole("button", {name: "Pause video"}).click();
+
+  const after = await page.locator("[data-timeline-playhead]").evaluate((element) => element.style.left);
+
+  expect(Number.parseFloat(after)).toBeGreaterThan(Number.parseFloat(before));
+  expect(await page.evaluate(() => window.__laneDraws)).toBe(draws);
+});
+
+test("the lanes follow a resize of the page", async ({page}) => {
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(50);
+
+  const width = () => lane(page, "effects").evaluate((element) => element.width);
+  const wide = await width();
+
+  await page.setViewportSize({width: 420, height: 1500});
+  await expect.poll(width).toBeLessThan(wide);
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(20);
+});
+
+test("an unusable ding shows a hatched block with the role label instead of a waveform, and a track that is still loading a plain one", async ({page}) => {
+  const requests = dingRequests(page);
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  await page.route(DING, async (route) => {
+    await gate;
+    await route.fulfill({status: 200, contentType: "audio/wav", body: "this is not audio"});
+  });
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect.poll(() => requests.length).toBe(1);
+
+  const block = page.locator("[data-timeline-placeholder]");
+
+  // The check is pending: a plain block of the right length (ding is 1.2 s of 6 s) and no waveform.
+  await expect(block).toHaveAttribute("data-timeline-placeholder", "plain");
+  await expect(block).toHaveText("Sound effect");
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "");
+  expect(await paintedPixels(lane(page, "effects"))).toBe(0);
+
+  const [laneBox, blockBox] = await Promise.all([
+    page.locator('[data-timeline-lane="effects"]').boundingBox(),
+    block.boundingBox(),
+  ]);
+
+  expect(blockBox.width / laneBox.width).toBeCloseTo(36 / 180, 1);
+
+  release();
+  await expect(block).toHaveAttribute("data-timeline-placeholder", "hatched");
+  await expect(block).toHaveAttribute("data-timeline-role", "sfx");
+  expect(await paintedPixels(lane(page, "effects"))).toBe(0);
+});
+
+test("a ding whose first request fails shows a plain block that turns into a waveform by itself", async ({page}) => {
+  test.setTimeout(30_000);
+
+  let attempts = 0;
+
+  await page.route(DING, (route) => {
+    attempts += 1;
+
+    return attempts === 1 ? route.abort("failed") : route.continue();
+  });
+  await openApp(page);
+  await importStory(page, sceneStory());
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveAttribute("data-timeline-placeholder", "plain");
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveCount(0, {timeout: 10_000});
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0");
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(50);
+});
+
+test("music and voice draw in their lanes from the stored peaks, and deleting the voice from My audio turns it into a hatched block while ding stays", async ({page}) => {
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-12s.wav"));
+  await expect(card(page, "tone-220-12s")).toHaveCount(1);
+  await importInput(page).setInputFiles(upload("tone-440-2.2s.wav"));
+  await expect(card(page, "tone-440-2.2s")).toHaveCount(1);
+
+  const musicRef = await card(page, "tone-220-12s").getAttribute("data-local-asset-card");
+  const voiceRef = await card(page, "tone-440-2.2s").getAttribute("data-local-asset-card");
+
+  await importStory(page, sceneStory({music: musicRef, musicTail: ["  fadeIn: 1"], voice: voiceRef}));
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "music-0 sfx-0 voice-1");
+  await expect.poll(() => paintedPixels(lane(page, "music"))).toBeGreaterThan(200);
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(100);
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveCount(0);
+
+  await page.getByRole("button", {name: "Delete tone-440-2.2s", exact: true}).click();
+  await page.getByRole("dialog").getByRole("button", {name: "Delete asset anyway"}).click();
+  await expect(card(page, "tone-440-2.2s")).toHaveCount(0);
+
+  const hatched = page.locator('[data-timeline-placeholder="hatched"]');
+
+  await expect(hatched).toHaveCount(1);
+  await expect(hatched).toHaveText("Voice");
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "music-0 sfx-0");
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(20);
+});

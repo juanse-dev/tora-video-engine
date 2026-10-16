@@ -32,7 +32,9 @@ import {
   requestBundledAudio,
   useBundledAudioStates,
 } from "./audio/bundledAudio.ts";
+import {compileEditorAudioPlan} from "./audio/audioPlanView.ts";
 import {audioPreview, type AcquirePreviewUrl} from "./audio/previewPlayback.ts";
+import {useStoryWaveforms} from "./audio/storyWaveforms.ts";
 import {acquireAudioPreviewUrl} from "./audio/previewSource.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {
@@ -339,6 +341,23 @@ export const App = () => {
         audioSourceForBundledState(bundledStates.get(id)),
       ),
     [activeStory, localAssets.sources, bundledStates],
+  );
+  // The audio timeline's plan: the Player's own inputs, compiled once more for display.
+  const audioPlanView = useMemo(
+    () =>
+      compileEditorAudioPlan({
+        story: activeStory,
+        fps: previewConfig.fps,
+        audioDurations,
+        audioSources,
+      }),
+    [activeStory, previewConfig.fps, audioDurations, audioSources],
+  );
+  const waveforms = useStoryWaveforms(
+    activeStory,
+    assetLibrary,
+    assetRefreshToken,
+    bundledStates,
   );
 
   const activeStoryChangedFromInitial =
@@ -2144,6 +2163,8 @@ export const App = () => {
             localAssetState={localAssets.state}
             audioDurations={audioDurations}
             audioSources={audioSources}
+            audioPlanView={audioPlanView}
+            waveforms={waveforms}
           />
         </section>
       </main>
