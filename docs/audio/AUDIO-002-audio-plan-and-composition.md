@@ -165,4 +165,4 @@ The plan tests pass, the Player plays bundled sounds after unmute, and every v0.
 - Test hooks on `.preview-frame`: `data-tora-muted` and `data-tora-audio-armed`.
 - `buildAudioSourceMap` takes a `LocalAudioSourceMap` (`Readonly<Partial<Record<LocalAudioRef, LocalAssetSource>>>`); the image `LocalAssetSourceMap` is assignable to it.
 - `maxSimultaneousGain` is computed in one sweep over the frames with a small active set of tracks, not by evaluating every track on every frame.
-- The CLI props stay `{story}` (plus `localAssetSources` for images) until AUDIO-005 adds the audio props.
+- The CLI props were `{story}` (plus `localAssetSources` for images) until AUDIO-005, which adds the audio props for a Story with audio only; a Story without audio keeps them.

@@ -23,6 +23,13 @@ import {
   decodeMp4AudioMono,
   goertzelWindows,
 } from "./helpers/audioEnvelope.mjs";
+import {
+  assertAacLcStereoStream,
+  assertIntegrationEnvelope,
+  INTEGRATION_FRAMES,
+  INTEGRATION_VOICE_FIXTURE,
+  integrationStoryYaml,
+} from "./helpers/audioIntegration.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = join(repoRoot, "tests", "fixtures", "local-assets");
@@ -321,15 +328,7 @@ describe("CLI render with audio", () => {
     assert.equal(Number(video[0].nb_frames), 360);
 
     assert.equal(audio.length, 1);
-    assert.equal(audio[0].codec_name, "aac");
-    // The repository ffprobe prints the AAC profile as its number (1 = LC).
-    assert.ok(["LC", "1"].includes(audio[0].profile), `profile ${audio[0].profile}`);
-    assert.equal(Number(audio[0].sample_rate), 48_000);
-    assert.equal(audio[0].channels, 2);
-
-    const bitRate = Number(audio[0].bit_rate);
-
-    assert.ok(bitRate >= 115_200 && bitRate <= 140_800, `bit rate ${bitRate}`);
+    assertAacLcStereoStream(audio[0], "CLI render");
 
     // 1 / fps plus the 60 ms the spec allows for the encoder's priming.
     const drift = Math.abs(Number(audio[0].duration) - Number(video[0].duration));
@@ -392,6 +391,50 @@ describe("CLI render with audio", () => {
     assert.match(result.stderr, /Audio file voice\.mp3 cannot be used for rendering/u);
     assert.doesNotMatch(result.stdout, /Rendered \d+\/\d+/u);
     await assert.rejects(stat(join(repoRoot, "output", `${slug}.mp4`)), {code: "ENOENT"});
+  });
+
+  it("an imported voice and a bundled ding render together with the CLI: 440 Hz during the voice and the ding at its onset", async () => {
+    const voice = await readFile(
+      join(repoRoot, "tests", "fixtures", "local-audio", INTEGRATION_VOICE_FIXTURE),
+    );
+    const root = join(workDirectory, "integration-root");
+    const slug = "ci-audio-integration";
+    const story = join(workDirectory, `${slug}.yaml`);
+    const output = join(repoRoot, "output", `${slug}.mp4`);
+
+    await mkdir(join(root, "audio"), {recursive: true});
+    await writeFile(join(root, "audio", "any-name.wav"), voice);
+    await writeFile(story, integrationStoryYaml(`local:audio:sha256:${sha256(voice)}`), "utf8");
+    await rm(output, {force: true});
+
+    try {
+      const result = render(story, root);
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+
+      const streams = probeStreams(output);
+      const video = streams.find((stream) => stream.codec_type === "video");
+
+      assert.equal(Number(video.nb_frames), INTEGRATION_FRAMES);
+      assertAacLcStereoStream(
+        streams.find((stream) => stream.codec_type === "audio"),
+        "CLI integration render",
+      );
+      assertIntegrationEnvelope(await decodeMp4AudioMono(output), "CLI render");
+
+      // The same Story once the voice file is gone: it refuses before rendering, naming the audio.
+      await rm(output, {force: true});
+
+      const missing = render(story, emptyRoot);
+
+      assert.equal(missing.status, 1);
+      assert.match(missing.stderr, /Cannot render Story: 1 local asset is missing\./u);
+      assert.match(missing.stderr, /^Audio:$/mu);
+      assert.doesNotMatch(missing.stdout, /Rendered \d+\/\d+/u);
+      await assert.rejects(stat(output), {code: "ENOENT"});
+    } finally {
+      await rm(output, {force: true});
+    }
   });
 
   it("a Story whose only audio is at volume 0 still gets exactly one AAC-LC stereo track, silent (--enforce-audio-track)", async () => {

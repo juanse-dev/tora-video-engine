@@ -108,6 +108,33 @@ export const probeMp4 = async (path) => {
   };
 };
 
+/**
+ * Every stream of a media file as ffprobe reports it (`codec_type`,
+ * `codec_name`, `profile`, `sample_rate`, `channels`, `bit_rate`, `duration`,
+ * `nb_frames`...). The repository ffprobe prints the AAC profile as its number
+ * (1 = LC) instead of its name.
+ */
+export const probeStreams = async (path) => {
+  const {ffprobe, dir} = resolveFfmpegBinaries();
+
+  try {
+    const {stdout} = await run(ffprobe, dir, [
+      "-v",
+      "error",
+      "-show_streams",
+      "-of",
+      "json",
+      path,
+    ]);
+
+    return JSON.parse(stdout).streams ?? [];
+  } catch (error) {
+    throw new Error(
+      `probeStreams could not read ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+
 /** Samples per pixel of the 8-bit PNG colour types ffmpeg writes (RGB, RGBA). */
 const PNG_CHANNELS = {2: 3, 6: 4};
 

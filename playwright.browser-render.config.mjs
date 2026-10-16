@@ -11,6 +11,7 @@ export default defineConfig({
     "my-assets-render.spec.mjs",
     "render-cancel-cleanup.spec.mjs",
     "my-audio-m4a.spec.mjs",
+    "audio-rendering.spec.mjs",
   ],
   timeout: 240_000,
   workers: 1,

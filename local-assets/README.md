@@ -24,4 +24,4 @@ copy of the same image works. Only static PNG, JPEG and WebP images up to
 
 Audio goes in `audio/` (MP3, WAV, M4A with AAC, or Ogg Opus; one audio track, mono or
 stereo, up to 50 MiB and 300 seconds). `npm run assets` lists each file's ref and
-duration. The CLI cannot render Stories that use audio yet (v0.4 in progress).
+duration. `npm run video` copies the audio files a Story uses (and the bundled sounds) into its private staging directory, checks that each one decodes completely and renders them as AAC; a missing or undecodable file stops it before the render starts.

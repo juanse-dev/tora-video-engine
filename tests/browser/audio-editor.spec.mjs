@@ -1211,6 +1211,11 @@ test("deleting the voice from My audio shows Audio not available on the voice fi
   await expect(voice(page)).toHaveAttribute("aria-describedby", await noticeFor(page, "voice").getAttribute("id"));
   await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0");
   await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+  // The local-asset gate itself blocks it (not the audio readiness or the capability check).
+  await expect(page.locator(".render-banner")).toHaveAttribute(
+    "data-local-asset-block",
+    /1 audio file\(s\) are unavailable/u,
+  );
 
   // ding still sounds after unmute.
   await unmuteAndPlay(page);
