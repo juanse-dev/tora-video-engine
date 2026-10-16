@@ -24,10 +24,12 @@ import {
   type AssetLibraryMessage,
   type AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
+import {AudioDecodeCache} from "./assetLibrary/audioDecodeCache.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
 import {
   audioSourceForBundledState,
   bundledAudioKey,
+  getBundledAudioStates,
   parseBundledAudioKey,
   requestBundledAudio,
   useBundledAudioStates,
@@ -65,8 +67,9 @@ import {
   describeLocalAssetRenderBlock,
   resolveStoryLocalAssets,
   type LocalAssetRenderPreparation,
+  type ResolvedStoryLocalAssetState,
 } from "./localAssetState.ts";
-import {storyHasLocalAssetRefs} from "../localAssets/readiness.ts";
+import {storyHasAnyLocalAssetRef} from "../localAssets/readiness.ts";
 import {hasLossRisk} from "./lossRisk.ts";
 import {ObjectUrlPool} from "./objectUrlPool.ts";
 import {
@@ -81,12 +84,12 @@ import {
   type ProtectedRecovery,
 } from "./persistence.ts";
 import {buildAudioSourceMap} from "../audio/sources.ts";
-import {
-  AUDIO_RENDER_BLOCK_MESSAGE,
-  storyHasAudio,
-} from "../audio/storyAudio.ts";
+import {storyHasAudio} from "../audio/storyAudio.ts";
 import {getWebPlayerConfig} from "./previewConfig.ts";
 import {useStoryAudioDurations} from "./useStoryAudioDurations.ts";
+import {createAudioRenderPreparation} from "./audioRenderPreparation.ts";
+import {evaluateAudioRenderReadiness} from "./audioRenderReadiness.ts";
+import {createRenderCapabilityCache} from "./renderCapabilityCache.ts";
 import {useStoryLocalAssets} from "./useStoryLocalAssets.ts";
 import type {VisualDraftEvaluation} from "./visualDraft.ts";
 import {
@@ -281,8 +284,12 @@ export const App = () => {
   const [policyRejectedImport, setPolicyRejectedImport] =
     useState<PolicyRejectedImport | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [renderCapability, setRenderCapability] =
-    useState<BrowserRenderCapability | null>(null);
+  // One capability per `storyHasAudio` value, probed on demand: a silent Story
+  // never pays for the audio probe (D-13).
+  const [capabilities, setCapabilities] = useState<{
+    silent?: BrowserRenderCapability;
+    audio?: BrowserRenderCapability;
+  }>({});
   const [renderLockStatus, setRenderLockStatus] = useState<
     "checking" | "available" | "busy" | "unavailable"
   >("checking");
@@ -308,8 +315,17 @@ export const App = () => {
   const [assetDialog, setAssetDialog] = useState<AssetDialog | null>(null);
   const [integrityCache] = useState(() => new IntegrityCache());
   const [objectUrlPool] = useState(() => new ObjectUrlPool());
+  const [audioDecodeCache] = useState(() => new AudioDecodeCache());
+  const [capabilityCache] = useState(() =>
+    createRenderCapabilityCache(({hasAudio}) =>
+      checkBrowserRenderCapability({hasAudio}),
+    ),
+  );
 
   const {activeStory, visual} = authoringState;
+  const storyUsesAudio = storyHasAudio(activeStory);
+  const capabilityKey = storyUsesAudio ? "audio" : "silent";
+  const renderCapability = capabilities[capabilityKey] ?? null;
   const localAssets = useStoryLocalAssets(
     activeStory,
     assetLibrary,
@@ -415,10 +431,20 @@ export const App = () => {
     localAssets.state,
     assetLibrary ?? OPENING_ASSET_LIBRARY,
   );
-  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
-  const audioRenderBlock = storyHasAudio(activeStory)
-    ? AUDIO_RENDER_BLOCK_MESSAGE
-    : null;
+  // Audio readiness before the click (AUDIO-005): a pure function of the Story,
+  // the page's duration map, the local-asset state and the bundled-audio
+  // store's snapshot, so Render MP4 enables by itself when the last pending
+  // sound becomes ready. It never uses the render's own source map.
+  const audioRenderBlock = useMemo(
+    () =>
+      evaluateAudioRenderReadiness({
+        story: activeStory,
+        audioDurations,
+        localState: localAssets.state,
+        bundledStates,
+      }).block,
+    [activeStory, audioDurations, localAssets.state, bundledStates],
+  );
   const renderNeedsUnloadWarning =
     renderAuthoringLocked || renderUi.phase === "cleanup-blocked";
 
@@ -506,15 +532,17 @@ export const App = () => {
       post(message: AssetLibraryMessage) {
         assetChannelRef.current?.post(message);
         integrityCache.invalidate(message.digests);
+        audioDecodeCache.invalidate(message.digests);
         bumpAssetRefresh();
       },
     }),
-    [integrityCache, bumpAssetRefresh],
+    [integrityCache, audioDecodeCache, bumpAssetRefresh],
   );
 
   useEffect(() => {
     const channel = createAssetLibraryChannel((message) => {
       integrityCache.invalidate(message.digests);
+      audioDecodeCache.invalidate(message.digests);
       bumpAssetRefresh();
     });
 
@@ -530,7 +558,7 @@ export const App = () => {
 
       channel.close();
     };
-  }, [integrityCache, bumpAssetRefresh]);
+  }, [integrityCache, audioDecodeCache, bumpAssetRefresh]);
 
   // Mirrors `assetDialog !== null`; also set eagerly on open so two opens in one tick cannot both succeed.
   const assetDialogOpenRef = useRef(false);
@@ -624,12 +652,16 @@ export const App = () => {
   useEffect(() => {
     let cancelled = false;
 
-    void checkBrowserRenderCapability().then((capability) => {
+    void capabilityCache.get(storyUsesAudio).then((capability) => {
       if (cancelled) {
         return;
       }
 
-      setRenderCapability(capability);
+      setCapabilities((current) =>
+        current[capabilityKey] === undefined
+          ? {...current, [capabilityKey]: capability}
+          : current,
+      );
       setRenderUi((current) => {
         if (current.phase !== "idle") {
           return current;
@@ -649,7 +681,7 @@ export const App = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [capabilityCache, capabilityKey, storyUsesAudio]);
 
   const refreshRenderLockStatus = useCallback(async () => {
     const status = await getBrowserRenderLockStatus();
@@ -1056,7 +1088,8 @@ export const App = () => {
     renderAbortRef.current = controller;
     renderSnapshotRef.current = snapshot;
 
-    const hasLocalRefs = storyHasLocalAssetRefs(snapshot);
+    // Any local ref, image or audio, takes the verified-assets path.
+    const hasLocalRefs = storyHasAnyLocalAssetRef(snapshot);
 
     setRenderUi({
       phase: "rendering",
@@ -1071,6 +1104,7 @@ export const App = () => {
     let prepareLocalAssets:
       | ((signal: AbortSignal) => Promise<LocalAssetRenderPreparation>)
       | undefined;
+    let resolvedLocalAssets: ResolvedStoryLocalAssetState | null = null;
 
     if (hasLocalRefs) {
       // Heavy verification with no locks held. Every exit that does not start
@@ -1101,6 +1135,7 @@ export const App = () => {
             describeLocalAssetRenderBlock(resolved, assetLibrary) ??
             "Local assets are not ready for rendering.";
         } else {
+          resolvedLocalAssets = resolved;
           prepareLocalAssets = createLocalAssetRenderPreparation({
             resolved,
             store: assetLibrary.store,
@@ -1153,8 +1188,31 @@ export const App = () => {
       );
     }
 
+    if (storyHasAudio(snapshot)) {
+      // Freezes the render's audio sources (render-owned URLs for the bundled
+      // sounds, the verified local ones), re-checks that map and preflights
+      // every audio source before OPFS is touched (AINV-8).
+      prepareLocalAssets = createAudioRenderPreparation({
+        story: snapshot,
+        resolved: resolvedLocalAssets,
+        prepareLocal: prepareLocalAssets ?? null,
+        getBundledStates: getBundledAudioStates,
+        store: assetLibrary?.kind === "ready" ? assetLibrary.store : null,
+        decodeCache: audioDecodeCache,
+        // "Checking audio…" while the sources are inspected and decoded.
+        onStatus: (message) =>
+          setRenderUi((current) =>
+            current.phase === "rendering" ? {...current, message} : current,
+          ),
+      });
+    }
+
     const outcome = await startBrowserRenderTransaction(snapshot, {
       signal: controller.signal,
+      // The page's own probe (one per storyHasAudio value, shared with the UI
+      // check above), so a click never probes again; a failed probe is already
+      // the unsupported result the UI shows.
+      checkCapability: () => capabilityCache.get(storyHasAudio(snapshot)),
       prepareLocalAssets,
       licenseKey: import.meta.env.VITE_REMOTION_LICENSE_KEY || null,
       onProgress: ({progress}) => {
@@ -1251,10 +1309,13 @@ export const App = () => {
     }
 
     if (outcome.kind === "unsupported") {
-      setRenderCapability({
-        kind: "unsupported",
-        message: outcome.message,
-      });
+      setCapabilities((current) => ({
+        ...current,
+        [storyHasAudio(snapshot) ? "audio" : "silent"]: {
+          kind: "unsupported",
+          message: outcome.message,
+        },
+      }));
       setRenderUi({
         phase: "failure",
         message: outcome.message,
@@ -2031,24 +2092,23 @@ export const App = () => {
         role="status"
         data-render-state={renderUi.phase}
         data-local-asset-block={localAssetRenderBlock ?? undefined}
-        data-audio-block={audioRenderBlock ?? undefined}
       >
         <strong>Browser MP4</strong>
         <span>
           {renderCapability === null
             ? "Checking browser render support…"
-            : renderCapability.kind === "unsupported"
+            : renderCapability.kind !== "ready"
               ? renderCapability.message
               : renderInputBlocked
                 ? "Resolve or discard pending editor/import work before rendering the active Story."
-                : audioRenderBlock !== null &&
-                    (renderUi.phase === "idle" ||
-                      renderUi.phase === "success")
-                  ? audioRenderBlock
-                  : localAssetRenderBlock !== null &&
+                : localAssetRenderBlock !== null &&
                     (renderUi.phase === "idle" ||
                       renderUi.phase === "success")
                   ? localAssetRenderBlock
+                  : audioRenderBlock !== null &&
+                      (renderUi.phase === "idle" ||
+                        renderUi.phase === "success")
+                    ? audioRenderBlock
                   : renderLockStatus === "busy"
                   ? "Another Tora tab owns the browser render lock."
                   : renderLockStatus === "unavailable"

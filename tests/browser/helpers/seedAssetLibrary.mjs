@@ -335,3 +335,36 @@ export const audioWavRecord = async (name, options = {}) => {
     thumbnail: null,
   };
 };
+
+/**
+ * What `inspectAudio` reports for tests/fixtures/local-audio/truncated.mp3: the
+ * first 60% of the 10 s MP3, whose Xing header still declares the full length.
+ * Its metadata parses (so the integrity check accepts the seeded record) but a
+ * full decode yields only about 6 s, so only a decode in the page catches it.
+ * tests/audio-seed-fixtures.test.mjs pins these numbers against `inspectAudio`.
+ */
+export const TRUNCATED_MP3_METADATA = {
+  kind: "audio",
+  mimeType: "audio/mpeg",
+  container: "mp3",
+  codec: "mp3",
+  durationSeconds: 10.031020408163265,
+  sampleRate: 44_100,
+  channels: 2,
+};
+
+/** A seed record for the truncated MP3 fixture: readable metadata, bytes that do not decode completely. */
+export const truncatedMp3Record = async (options = {}) => {
+  const fixture = await readAudioFixture("truncated.mp3");
+
+  return {
+    ref: localAssetRef("audio", fixture.digest),
+    digest: fixture.digest,
+    meta: {...TRUNCATED_MP3_METADATA, byteSize: fixture.bytes.length},
+    bytesBase64: fixture.base64,
+    mimeType: "audio/mpeg",
+    row: options.row !== false,
+    label: options.label ?? "truncated",
+    thumbnail: null,
+  };
+};

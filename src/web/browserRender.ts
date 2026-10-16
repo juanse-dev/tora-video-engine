@@ -5,11 +5,17 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
+import type {AudioDurationMap} from "../audio/catalog.ts";
 import {
-  AUDIO_RENDER_BLOCK_MESSAGE,
-  storyAudioDurations,
-  storyHasAudio,
-} from "../audio/storyAudio.ts";
+  OUTPUT_AUDIO_BITRATE,
+  OUTPUT_AUDIO_SAMPLE_RATE,
+} from "../audio/constants.ts";
+import {
+  compileFrozenAudioPlan,
+  storyTooLongWithVoicesMessage,
+} from "../audio/readiness.ts";
+import type {AudioSourceMap} from "../audio/sources.ts";
+import {storyAudioDurations, storyHasAudio} from "../audio/storyAudio.ts";
 import {
   collectStoryLocalAssetUsages,
   splitUsagesByCategory,
@@ -30,6 +36,10 @@ import {
 } from "./browserPolicy.ts";
 import type {LocalAssetRenderPreparation} from "./localAssetState.ts";
 import {storiesSemanticallyEqual} from "./persistence.ts";
+import {
+  verifyRenderedMp4,
+  type RenderedMp4Expectation,
+} from "./renderedMp4Check.ts";
 
 export type {LocalAssetRenderPreparation};
 
@@ -47,6 +57,12 @@ export const OPFS_CLEANUP_BACKOFF_MS = [
   1_600,
   3_200,
 ] as const;
+
+/**
+ * A source that still stalls fails with a clear timeout instead of hanging
+ * (S-9): every audio source was preflighted, so this is the last line of defense.
+ */
+export const AUDIO_DELAY_RENDER_TIMEOUT_MS = 30_000;
 
 export const BROWSER_FRAME_DURATION_MICROSECONDS = Math.round(
   1_000_000 / VIDEO_FPS,
@@ -67,7 +83,15 @@ export type BrowserRenderCapability =
   | {
       kind: "unsupported";
       message: string;
+    }
+  | {
+      /** Video can be rendered here but AAC cannot be encoded, natively or with the WASM encoder (D-13). */
+      kind: "audio-unsupported";
+      message: string;
     };
+
+export const AUDIO_UNSUPPORTED_MESSAGE =
+  "This browser cannot encode audio. Use the local CLI: npm run video -- <story.yaml>";
 
 export type BrowserRenderLockLease =
   | {
@@ -153,6 +177,26 @@ type OutputWritable = NonNullable<
 
 const asError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
+
+export const AUDIO_ENCODER_LOAD_MESSAGE =
+  "Browser render could not load its audio encoder. Reload the page to try again. Preview, YAML export, and the local CLI remain available.";
+
+// The WASM AAC encoder is a lazily loaded chunk: a stale tab after a deploy, or a
+// network failure, makes the dynamic import fail, and only a reload can retry it.
+const CHUNK_LOAD_FAILURE =
+  /dynamically imported module|importing a module script failed|ChunkLoadError|Loading chunk [\w-]+ failed/iu;
+
+/** The message for a capability probe that threw (the result is cached for the page session). */
+export const describeCapabilityProbeFailure = (
+  error: unknown,
+  hasAudio: boolean,
+): string => {
+  const reason = asError(error).message;
+
+  return hasAudio && CHUNK_LOAD_FAILURE.test(reason)
+    ? AUDIO_ENCODER_LOAD_MESSAGE
+    : `Browser render capability detection failed: ${reason}. Preview, YAML export, and the local CLI remain available.`;
+};
 
 export const materializeBrowserDownloadBlob = async (
   blob: Blob,
@@ -259,8 +303,16 @@ export const checkBrowserRenderCapability = async (
   options: {
     canRender?: CapabilityChecker;
     getLocks?: () => LockManager | undefined;
+    /**
+     * The Story has audio (`storyHasAudio`). The probe then asks for AAC at the
+     * output bitrate; `canRenderMediaOnWeb` registers the WASM AAC encoder
+     * itself when the browser has no native one and only then decides. A silent
+     * Story keeps the v0.3 probe: muted, no audio codec, no audio cost (D-13).
+     */
+    hasAudio?: boolean;
   } = {},
 ): Promise<BrowserRenderCapability> => {
+  const hasAudio = options.hasAudio === true;
   const getLocks = options.getLocks ?? defaultGetLocks;
 
   if (getLocks() === undefined) {
@@ -280,19 +332,34 @@ export const checkBrowserRenderCapability = async (
       videoCodec: "h264",
       width: VIDEO_WIDTH,
       height: VIDEO_HEIGHT,
-      muted: true,
+      ...(hasAudio
+        ? {
+            muted: false,
+            audioCodec: "aac" as const,
+            audioBitrate: OUTPUT_AUDIO_BITRATE,
+          }
+        : {muted: true}),
     });
   } catch (error) {
     return {
       kind: "unsupported",
-      message: `Browser render capability detection failed: ${asError(error).message}. Preview, YAML export, and the local CLI remain available.`,
+      message: describeCapabilityProbeFailure(error, hasAudio),
     };
   }
 
   if (!result.canRender) {
-    const messages = result.issues
-      .filter((issue) => issue.severity === "error")
-      .map((issue) => issue.message);
+    const errors = result.issues.filter((issue) => issue.severity === "error");
+
+    // Only the audio is missing: say so, and point at the CLI.
+    if (
+      hasAudio &&
+      errors.length > 0 &&
+      errors.every((issue) => issue.type === "audio-codec-unsupported")
+    ) {
+      return {kind: "audio-unsupported", message: AUDIO_UNSUPPORTED_MESSAGE};
+    }
+
+    const messages = errors.map((issue) => issue.message);
 
     return {
       kind: "unsupported",
@@ -309,6 +376,11 @@ export const checkBrowserRenderCapability = async (
       message:
         "Browser MP4 export requires Remotion's web-fs output target. This browser only offers the in-memory fallback, so use YAML export and the local CLI instead.",
     };
+  }
+
+  // AINV-9: never a different audio codec than the one the output promises.
+  if (hasAudio && result.resolvedAudioCodec !== "aac") {
+    return {kind: "audio-unsupported", message: AUDIO_UNSUPPORTED_MESSAGE};
   }
 
   return {kind: "ready"};
@@ -478,17 +550,14 @@ export const renderStoryMediaOnWeb = async (
     licenseKey?: string | null;
     render?: RenderFunction;
     localAssetSources?: LocalAssetSourceMap;
+    /** The frozen audio sources of a Story with audio: lease URLs (local) and render-owned URLs (bundled). */
+    audioSources?: AudioSourceMap;
+    /** The verified durations of the Story's local audio (the catalog supplies the bundled ones). */
+    localAudioDurations?: AudioDurationMap;
     component?: ComponentType<ToraVideoProps>;
     getDirectory?: () => Promise<RenderDirectory>;
-    /** TEMPORARY (AUDIO-001), tests only: keeps the exact-timeline path of AUDIO-005 testable. */
-    bypassAudioBlockForTest?: boolean;
   },
 ): Promise<RenderMediaOnWebResult> => {
-  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
-  if (storyHasAudio(story) && options.bypassAudioBlockForTest !== true) {
-    throw new Error(AUDIO_RENDER_BLOCK_MESSAGE);
-  }
-
   const policy = evaluateBrowserRenderPolicy(story);
 
   if (!policy.eligible) {
@@ -499,12 +568,19 @@ export const renderStoryMediaOnWeb = async (
 
   // Acceptance uses the lower bound (policy.totalFrames); the render uses the
   // exact compiled timeline, built from the same map the composition receives.
-  const audioDurations = storyAudioDurations(story);
+  const hasAudio = storyHasAudio(story);
+  const audioDurations = storyAudioDurations(story, options.localAudioDurations);
   const totalFrames = getStoryMetadata(
     story,
     VIDEO_FPS,
     audioDurations,
   ).durationInFrames;
+
+  if (totalFrames > MAX_BROWSER_TOTAL_FRAMES && hasAudio) {
+    throw new Error(
+      storyTooLongWithVoicesMessage(Math.ceil(totalFrames / VIDEO_FPS)),
+    );
+  }
 
   if (totalFrames > MAX_BROWSER_TOTAL_FRAMES) {
     const exceeded = evaluateBrowserRenderPolicy(story, {
@@ -524,13 +600,38 @@ export const renderStoryMediaOnWeb = async (
   const props = {
     story,
     localAssetSources: options.localAssetSources,
-    ...(storyHasAudio(story) ? {audioDurations, audioArmed: true} : {}),
+    ...(hasAudio
+      ? {
+          audioDurations,
+          audioSources: options.audioSources,
+          bundledAudioPolicy: "explicit" as const,
+          audioArmed: true,
+        }
+      : {}),
   };
 
-  // INV-5: a local ref must never reach the renderer without a resolved
+  // INV-5 for audio (AINV-5): every local and bundled audio ref must resolve
+  // through the frozen map, or the MP4 would silently lack a sound. A pending
+  // or missing source, or a ready one without a measured duration, is refused.
+  if (hasAudio) {
+    const unplayable = new Set(
+      compileFrozenAudioPlan(story, audioDurations, options.audioSources ?? {})
+        .issues.flatMap((issue) =>
+          issue.kind === "missing-audio" || issue.kind === "pending-audio"
+            ? [issue.ref]
+            : [],
+        ),
+    );
+
+    if (unplayable.size > 0) {
+      throw new Error(
+        `Cannot render: ${unplayable.size} audio source(s) have no resolved source.`,
+      );
+    }
+  }
+
+  // INV-5: a local image ref must never reach the renderer without a resolved
   // source, or the composition would draw a placeholder into the MP4.
-  // Image refs only: audio sources are checked by AUDIO-005's readiness (until then
-  // the interim block keeps every Story with audio away from here).
   const unresolved = splitUsagesByCategory(
     collectStoryLocalAssetUsages(story),
   ).image.filter((usage) => {
@@ -577,7 +678,16 @@ export const renderStoryMediaOnWeb = async (
       inputProps: props,
       container: "mp4",
       videoCodec: "h264",
-      muted: true,
+      // D-13: the audio follows the Story. A silent Story keeps exactly the v0.3 options.
+      muted: !hasAudio,
+      ...(hasAudio
+        ? {
+            audioCodec: "aac" as const,
+            audioBitrate: OUTPUT_AUDIO_BITRATE,
+            sampleRate: OUTPUT_AUDIO_SAMPLE_RATE,
+            delayRenderTimeoutInMilliseconds: AUDIO_DELAY_RENDER_TIMEOUT_MS,
+          }
+        : {}),
       outputWritable: output.stream as OutputWritable,
       signal: options.signal,
       onProgress: options.onProgress,
@@ -643,10 +753,20 @@ export const startBrowserRenderTransaction = async (
     prepareLocalAssets?: (
       signal: AbortSignal,
     ) => Promise<LocalAssetRenderPreparation>;
+    /**
+     * Checks the rendered MP4 before it is handed over (before `consumeBlob`);
+     * a rejection is a failed render. Runs only for a Story with audio (AINV-9):
+     * a silent Story keeps the v0.3 behavior. Defaults to `verifyRenderedMp4`.
+     */
+    verifyOutput?: (
+      blob: Blob,
+      expected: RenderedMp4Expectation,
+    ) => Promise<void>;
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
   const checkCapability =
-    options.checkCapability ?? (() => checkBrowserRenderCapability());
+    options.checkCapability ??
+    (() => checkBrowserRenderCapability({hasAudio: storyHasAudio(story)}));
   const capability = await checkCapability();
 
   if (capability.kind !== "ready") {
@@ -721,12 +841,27 @@ export const startBrowserRenderTransaction = async (
     let pending: BrowserRenderPendingOutcome;
 
     try {
+      // Inside the try: a throw here fails the render and releases the lease.
+      const verifyOutput = storyHasAudio(story)
+        ? (options.verifyOutput ?? verifyRenderedMp4)
+        : undefined;
+      // The plan's length: the frames the renderer is asked to produce.
+      const plannedFrames =
+        verifyOutput === undefined
+          ? 0
+          : getStoryMetadata(
+              story,
+              VIDEO_FPS,
+              storyAudioDurations(story, preparation?.localAudioDurations),
+            ).durationInFrames;
       const renderStory = options.renderStory ?? renderStoryMediaOnWeb;
       const result = await renderStory(story, {
         signal: options.signal,
         onProgress: options.onProgress,
         licenseKey: options.licenseKey,
         localAssetSources,
+        audioSources: preparation?.audioSources,
+        localAudioDurations: preparation?.localAudioDurations,
       });
       const webFsBlob = await result.getBlob();
 
@@ -736,6 +871,14 @@ export const startBrowserRenderTransaction = async (
         const materializeBlob =
           options.materializeBlob ?? materializeBrowserDownloadBlob;
         const blob = await materializeBlob(webFsBlob);
+
+        await verifyOutput?.(blob, {
+          frames: plannedFrames,
+          fps: VIDEO_FPS,
+          width: VIDEO_WIDTH,
+          height: VIDEO_HEIGHT,
+          hasAudio: true,
+        });
 
         if (options.signal.aborted) {
           pending = {kind: "cancelled"};

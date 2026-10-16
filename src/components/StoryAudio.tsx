@@ -1,6 +1,6 @@
 import {Audio} from "@remotion/media";
 import {useMemo} from "react";
-import {Sequence} from "remotion";
+import {Sequence, useRemotionEnvironment} from "remotion";
 import type {AudioDurationMap} from "../audio/catalog.ts";
 import {buildStoryAudioMounts} from "../audio/mounts.ts";
 import {compileAudioPlan} from "../audio/plan.ts";
@@ -30,6 +30,9 @@ export const StoryAudio = ({
   audioArmed,
 }: StoryAudioProps) => {
   const {sources, policy} = useAudioSources();
+  // Renders (CLI and browser) never fall back to another decode path; the
+  // Player keeps the default so a browser that cannot decode a file still plays it.
+  const {isRendering} = useRemotionEnvironment();
   const plan = useMemo(
     () =>
       compileAudioPlan({
@@ -43,8 +46,9 @@ export const StoryAudio = ({
     [story, timeline, fps, audioDurations, sources, policy],
   );
   const mounts = useMemo(
-    () => buildStoryAudioMounts({plan, sources, policy, audioArmed}),
-    [plan, sources, policy, audioArmed],
+    () =>
+      buildStoryAudioMounts({plan, sources, policy, audioArmed, isRendering}),
+    [plan, sources, policy, audioArmed, isRendering],
   );
 
   return (
@@ -56,7 +60,11 @@ export const StoryAudio = ({
           durationInFrames={mount.durationInFrames}
           layout="none"
         >
-          <Audio src={mount.src} volume={(frame) => mount.volumeAt(frame)} />
+          <Audio
+            src={mount.src}
+            volume={(frame) => mount.volumeAt(frame)}
+            disallowFallbackToHtml5Audio={mount.disallowFallbackToHtml5Audio}
+          />
         </Sequence>
       ))}
     </>

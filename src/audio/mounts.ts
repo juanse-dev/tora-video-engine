@@ -14,6 +14,11 @@ export type StoryAudioMount = {
   src: string;
   /** Remotion `volume` callback: the frame is relative to the sequence. */
   volumeAt: (frame: number) => number;
+  /**
+   * A render must not silently decode a source another way (`<Html5Audio>`
+   * fallback): set for renders, never for the Player.
+   */
+  disallowFallbackToHtml5Audio: boolean;
 };
 
 /**
@@ -26,8 +31,11 @@ export const buildStoryAudioMounts = (input: {
   sources: AudioSourceMap | undefined;
   policy: BundledAudioPolicy;
   audioArmed: boolean | undefined;
+  /** True while Remotion renders (CLI or browser); false in the Player and Studio. */
+  isRendering?: boolean;
 }): StoryAudioMount[] => {
   const {plan, sources, policy, audioArmed} = input;
+  const disallowFallbackToHtml5Audio = input.isRendering === true;
 
   if (audioArmed === false) {
     return [];
@@ -44,6 +52,7 @@ export const buildStoryAudioMounts = (input: {
             durationInFrames: track.durationInFrames,
             src: resolution.src,
             volumeAt: (frame: number) => track.gainAt(track.fromFrame + frame),
+            disallowFallbackToHtml5Audio,
           },
         ]
       : [];

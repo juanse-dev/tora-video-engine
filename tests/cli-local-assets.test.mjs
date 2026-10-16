@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {spawnSync} from "node:child_process";
 import {
+  cp,
   mkdir,
   mkdtemp,
   open,
@@ -16,6 +17,7 @@ import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {after, describe, it} from "node:test";
 import {fileURLToPath} from "node:url";
+import {AudioRenderError} from "../scripts/audioRender.ts";
 import {
   categoryFolderExists,
   displayRoot,
@@ -29,7 +31,6 @@ import {
 } from "../scripts/localAssets.ts";
 import {renderStory} from "../scripts/renderStory.ts";
 import {buildRenderArgs} from "../scripts/renderSupport.ts";
-import {AUDIO_RENDER_BLOCK_MESSAGE} from "../src/audio/storyAudio.ts";
 import {
   AUDIO_EMPTY_MESSAGE,
   AUDIO_TOO_LARGE_MESSAGE,
@@ -43,6 +44,7 @@ import {
   buildTextBytes,
 } from "./helpers/imageBytes.mjs";
 import {buildWav, fixtureBytes} from "./helpers/audioBytes.mjs";
+import {decodeSeconds, FAKE_FFMPEG, fakeSpawn} from "./helpers/fakeFfmpeg.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = join(repoRoot, "tests", "fixtures", "local-assets");
@@ -1334,62 +1336,348 @@ describe("renderStory staging", () => {
     await rm(outputPath, {force: true});
   });
 
-  it("refuses a Story with audio before writing props or starting Remotion (AUDIO-001 interim block)", async () => {
-    const {storyPath, tempBase} = await setup(
-      `${storyYaml("formal")}music:\n  src: calm-loop\n`,
-    );
-    let started = false;
+  // --- Stories with audio (AUDIO-005) ---------------------------------------
 
-    await assert.rejects(
-      renderStory(storyPath, {
-        tempBase,
-        runRemotion: async () => {
-          started = true;
-        },
-      }),
-      {
-        message:
-          "This Story uses audio (music, sfx, voice or duration: auto), which cannot be rendered yet. Remove the audio fields to render.",
-      },
-    );
+  const audioStoryYaml = (extra) =>
+    [
+      'title: "T5"',
+      ...extra.music,
+      "scenes:",
+      "  - type: intro",
+      "    pose: formal",
+      "    background: office",
+      "    animation: fade",
+      '    text: "Hi"',
+      ...extra.scene,
+      "    duration: 1",
+      "",
+    ].join("\n");
+  const sfxScene = (id) => ["    sfx:", `      src: ${id}`];
+  const noMusic = [];
+  /** Records the arguments and the props file of the one Remotion run, and what `inspect` reads from the staged public dir. */
+  const captureRun = (calls, inspect = async () => undefined) =>
+    async (_executable, args) => {
+      const propsArg = args.find((arg) => arg.startsWith("--props="));
+      const publicArg = args.find((arg) => arg.startsWith("--public-dir="));
+      const publicDir = publicArg?.slice("--public-dir=".length);
 
-    assert.equal(started, false);
+      calls.push({
+        args,
+        props: JSON.parse(await readFile(propsArg.slice(8), "utf8")),
+        publicDir,
+        extra: await inspect(publicDir),
+      });
+    };
+
+  it("renders a Story with a bundled sfx from a staged copy, with the audio props and the AAC arguments", async () => {
+    const {storyPath, tempBase, outputPath} = await setup(
+      audioStoryYaml({music: noMusic, scene: sfxScene("ding")}),
+    );
+    const calls = [];
+
+    await renderStory(storyPath, {
+      tempBase,
+      runRemotion: captureRun(calls, (publicDir) =>
+        readFile(join(publicDir, "__local-assets", "bundled", "ding.wav")),
+      ),
+    });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(Object.keys(calls[0].props), [
+      "story",
+      "audioDurations",
+      "audioSources",
+      "bundledAudioPolicy",
+      "audioArmed",
+    ]);
+    assert.deepEqual(calls[0].props.audioDurations, {ding: 1.2});
+    assert.deepEqual(calls[0].props.audioSources, {
+      ding: {kind: "static", path: "__local-assets/bundled/ding.wav"},
+    });
+    assert.equal(calls[0].props.bundledAudioPolicy, "explicit");
+    assert.equal(calls[0].props.audioArmed, true);
+    assert.deepEqual(
+      calls[0].extra,
+      await readFile(join(repoRoot, "public", "audio", "sfx", "ding.wav")),
+    );
+    assert.equal(calls[0].args.filter((arg) => arg === "--audio-codec=aac").length, 1);
+    assert.equal(calls[0].args.filter((arg) => arg === "--audio-bitrate=128k").length, 1);
+    assert.ok(calls[0].args.some((arg) => arg.startsWith("--public-dir=")));
+    assert.ok(resolve(calls[0].publicDir).startsWith(resolve(tempBase)));
     assert.deepEqual(await readdir(tempBase), []);
+    await rm(outputPath, {force: true});
   });
 
-  it("still refuses a Story whose voice is a local audio ref before staging or starting Remotion", async () => {
+  it("a Story without audio keeps exactly { story } and no audio arguments (AINV-6)", async () => {
+    const {storyPath, tempBase, outputPath} = await setup(storyYaml("formal"));
+    const calls = [];
+
+    await renderStory(storyPath, {tempBase, runRemotion: captureRun(calls)});
+
+    assert.deepEqual(Object.keys(calls[0].props), ["story"]);
+    assert.ok(!calls[0].args.some((arg) => arg.startsWith("--audio")));
+    assert.ok(!calls[0].args.some((arg) => arg.startsWith("--public-dir")));
+    await rm(outputPath, {force: true});
+  });
+
+  it("stages a Story whose only local ref is an audio ref (the gate is any local ref)", async () => {
     const root = await makeRoot();
     const voice = fixtureBytes("tone-440-2.2s.wav");
-    const {storyPath, tempBase} = await setup(
+    const {storyPath, tempBase, outputPath} = await setup(
+      audioStoryYaml({
+        music: noMusic,
+        scene: ["    voice:", `      src: ${audioRefOf(voice)}`],
+      }),
+    );
+    const calls = [];
+
+    await put(root, "audio/any-name.bin", voice);
+    await renderStory(storyPath, {
+      tempBase,
+      localAssetsRoot: root,
+      runRemotion: captureRun(calls, (publicDir) =>
+        readFile(join(publicDir, "__local-assets", "audio", `${nodeSha(voice)}.wav`)),
+      ),
+    });
+
+    assert.deepEqual(Object.keys(calls[0].props), [
+      "story",
+      "audioDurations",
+      "audioSources",
+      "bundledAudioPolicy",
+      "audioArmed",
+    ]);
+    assert.deepEqual(calls[0].props.audioDurations, {[audioRefOf(voice)]: 2.2});
+    assert.deepEqual(calls[0].props.audioSources, {
+      [audioRefOf(voice)]: {kind: "static", path: `__local-assets/audio/${nodeSha(voice)}.wav`},
+    });
+    assert.deepEqual(Buffer.from(calls[0].extra), Buffer.from(voice));
+    assert.equal(calls[0].args.filter((arg) => arg === "--audio-codec=aac").length, 1);
+    assert.deepEqual(await readdir(tempBase), []);
+    await rm(outputPath, {force: true});
+  });
+
+  it("keeps staged image sources in localAssetSources and audio sources in audioSources", async () => {
+    const root = await makeRoot();
+    const pose = await fixture("pose-magenta.png");
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const {storyPath, tempBase, outputPath} = await setup(
       [
-        'title: "T2"',
+        'title: "T5"',
         "scenes:",
         "  - type: intro",
-        "    pose: formal",
+        `    pose: ${poseRefOf(pose)}`,
         "    background: office",
         "    animation: fade",
         '    text: "Hi"',
         "    voice:",
         `      src: ${audioRefOf(voice)}`,
-        "    duration: 1",
+        "    duration: 3",
         "",
       ].join("\n"),
     );
-    let started = false;
+    const calls = [];
 
-    await put(root, "audio/voice.wav", voice);
+    await put(root, "poses/p.png", pose);
+    await put(root, "audio/v.wav", voice);
+    await renderStory(storyPath, {tempBase, localAssetsRoot: root, runRemotion: captureRun(calls)});
+
+    assert.deepEqual(Object.keys(calls[0].props.localAssetSources), [poseRefOf(pose)]);
+    assert.deepEqual(Object.keys(calls[0].props.audioSources), [audioRefOf(voice)]);
+    await rm(outputPath, {force: true});
+  });
+
+  it("fails before spawning when a local audio file is missing, with the audio section of the message", async () => {
+    const root = await makeRoot();
+    const {storyPath, tempBase} = await setup(
+      audioStoryYaml({
+        music: noMusic,
+        scene: ["    voice:", `      src: local:audio:sha256:${MISSING_DIGEST}`],
+      }),
+    );
+    let spawned = 0;
+
     await assert.rejects(
       renderStory(storyPath, {
-        localAssetsRoot: root,
         tempBase,
+        localAssetsRoot: root,
         runRemotion: async () => {
-          started = true;
+          spawned += 1;
         },
       }),
-      {message: AUDIO_RENDER_BLOCK_MESSAGE},
+      (error) => {
+        assert.ok(error instanceof MissingLocalAssetsError);
+        assert.match(error.message, /^Audio:$/mu);
+
+        return true;
+      },
     );
-    assert.equal(started, false);
+    assert.equal(spawned, 0);
     assert.deepEqual(await readdir(tempBase), []);
+  });
+
+  it("fails before spawning when a bundled sound is not available in this build (calm-loop has no file)", async () => {
+    const {storyPath, tempBase, outputPath} = await setup(
+      audioStoryYaml({music: ["music:", "  src: calm-loop"], scene: []}),
+    );
+    let spawned = 0;
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          spawned += 1;
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof AudioRenderError);
+        assert.match(error.message, /music: Bundled audio calm-loop is not available in this build\./u);
+
+        return true;
+      },
+    );
+    assert.equal(spawned, 0);
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(outputPath), {code: "ENOENT"});
+  });
+
+  it("fails before spawning for a Story longer than 3,600 s with audio", async () => {
+    const {storyPath, tempBase} = await setup(
+      audioStoryYaml({music: noMusic, scene: sfxScene("ding")}).replace(
+        "duration: 1",
+        "duration: 3601",
+      ),
+    );
+    let spawned = 0;
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          spawned += 1;
+        },
+      }),
+      /Stories with audio/u,
+    );
+    assert.equal(spawned, 0);
+    assert.deepEqual(await readdir(tempBase), []);
+  });
+
+  it("refuses a truncated local MP3 from a real ffmpeg decode before spawning Remotion", async () => {
+    const root = await makeRoot();
+    const truncated = fixtureBytes("truncated.mp3");
+    const {storyPath, tempBase} = await setup(
+      audioStoryYaml({
+        music: noMusic,
+        scene: ["    voice:", `      src: ${audioRefOf(truncated)}`],
+      }),
+    );
+    let spawned = 0;
+
+    await put(root, "audio/voice.mp3", truncated);
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        localAssetsRoot: root,
+        runRemotion: async () => {
+          spawned += 1;
+        },
+      }),
+      /Audio file voice\.mp3 cannot be used for rendering\.[\s\S]*used by: scene 1 voice/u,
+    );
+    assert.equal(spawned, 0);
+    assert.deepEqual(await readdir(tempBase), []);
+  });
+
+  it("decode failures (non-zero exit, timeout, 0.3 s short) refuse before Remotion and 0.2 s short renders", async () => {
+    const run = async (script, timeoutMs) => {
+      const {storyPath, tempBase, outputPath} = await setup(
+        audioStoryYaml({music: noMusic, scene: sfxScene("ding")}),
+      );
+      let spawned = 0;
+      let error = null;
+
+      try {
+        await renderStory(storyPath, {
+          tempBase,
+          runRemotion: async () => {
+            spawned += 1;
+          },
+          audioPreflight: {
+            spawn: fakeSpawn(script),
+            ffmpeg: FAKE_FFMPEG,
+            ...(timeoutMs === undefined ? {} : {timeoutMs}),
+          },
+        });
+      } catch (caught) {
+        error = caught;
+      }
+
+      assert.deepEqual(await readdir(tempBase), []);
+      await rm(outputPath, {force: true});
+
+      return {spawned, error};
+    };
+    const exit1 = await run((child) => child.emit("close", 1, null));
+    const timeout = await run(() => undefined, 20);
+    const short = await run(decodeSeconds(0.9));
+    const nearlyWhole = await run(decodeSeconds(1.0));
+
+    for (const refused of [exit1, timeout, short]) {
+      assert.equal(refused.spawned, 0);
+      assert.match(refused.error.message, /Audio file ding cannot be used for rendering\./u);
+    }
+
+    assert.equal(nearlyWhole.error, null);
+    assert.equal(nearlyWhole.spawned, 1);
+  });
+
+  it("replacing public/audio/sfx/ding.wav after the preflight and before the spawn cannot reach the render", async () => {
+    const source = await makeRoot();
+    const original = await readFile(join(repoRoot, "public", "audio", "sfx", "ding.wav"));
+
+    await cp(join(repoRoot, "public"), source, {recursive: true});
+
+    const {storyPath, tempBase, outputPath} = await setup(
+      audioStoryYaml({music: noMusic, scene: sfxScene("ding")}),
+    );
+    const calls = [];
+
+    await renderStory(storyPath, {
+      tempBase,
+      publicSourceDir: source,
+      runRemotion: async (executable, args) => {
+        // The preflight is over: change the repository file now.
+        await writeFile(join(source, "audio", "sfx", "ding.wav"), buildWav({seconds: 9}));
+        await captureRun(calls, (publicDir) =>
+          readFile(join(publicDir, "__local-assets", "bundled", "ding.wav")),
+        )(executable, args);
+      },
+    });
+
+    assert.equal(calls[0].props.audioSources.ding.path, "__local-assets/bundled/ding.wav");
+    assert.equal(nodeSha(calls[0].extra), nodeSha(original));
+    await rm(outputPath, {force: true});
+  });
+
+  it("removes the staged audio with the temporary directory when Remotion fails", async () => {
+    const {storyPath, tempBase, outputPath} = await setup(
+      audioStoryYaml({music: noMusic, scene: sfxScene("ding")}),
+    );
+
+    await assert.rejects(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          await mkdir(dirname(outputPath), {recursive: true});
+          await writeFile(outputPath, "partial");
+          throw new Error("Remotion render failed with exit code 1");
+        },
+      }),
+      /Remotion render failed/u,
+    );
+    assert.deepEqual(await readdir(tempBase), []);
+    await assert.rejects(stat(outputPath), {code: "ENOENT"});
   });
 
   it("stages local assets into a temporary public dir and cleans it up", async () => {
@@ -1712,6 +2000,21 @@ describe("local-assets/audio: staging", () => {
     }
 
     await assert.rejects(stat(join(repoRoot, "public", "__local-assets")), {code: "ENOENT"});
+  });
+
+  it("tells onStaged the path inside the category folder, which is what a person calls the file", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const staged = [];
+
+    await put(root, "audio/takes/voice.wav", voice);
+    await stageInto(audioStoryOf({voices: [audioRefOf(voice)]}), root, {
+      onStaged: (ref, stagedPath, relativePath) => staged.push([ref, stagedPath, relativePath]),
+    });
+
+    assert.equal(staged.length, 1);
+    assert.equal(staged[0][0], audioRefOf(voice));
+    assert.equal(staged[0][2], "takes/voice.wav");
   });
 
   it("stages images and audio of one Story independently, each category from its own folder", async () => {

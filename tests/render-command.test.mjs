@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {join, resolve} from "node:path";
 import {describe, it} from "node:test";
 import {
+  AUDIO_RENDER_ARGS,
   buildRenderArgs,
   COMPOSITION_ID,
   getOutputPath,
@@ -122,5 +123,85 @@ describe("render command support", () => {
         process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
       }
     }
+  });
+
+  describe("audio arguments (D-14)", () => {
+    const withoutBrowser = (run) => {
+      const previous = process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+
+      delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+
+      try {
+        run();
+      } finally {
+        if (previous === undefined) {
+          delete process.env.TORA_REMOTION_BROWSER_EXECUTABLE;
+        } else {
+          process.env.TORA_REMOTION_BROWSER_EXECUTABLE = previous;
+        }
+      }
+    };
+
+    it("hasAudio: false is byte-for-byte the v0.3 list, with and without a public dir", () => {
+      withoutBrowser(() => {
+        const v03 = (publicDir) => [
+          getRemotionCliPath(),
+          "render",
+          REMOTION_ENTRY_POINT,
+          COMPOSITION_ID,
+          "output/story.mp4",
+          "--codec=h264",
+          "--overwrite=true",
+          "--props=/tmp/tora/props.json",
+          ...(publicDir === undefined ? [] : [`--public-dir=${publicDir}`]),
+        ];
+
+        for (const publicDir of [undefined, "/tmp/tora/public"]) {
+          assert.deepEqual(
+            buildRenderArgs("output/story.mp4", "/tmp/tora/props.json", publicDir, {
+              hasAudio: false,
+            }),
+            v03(publicDir),
+          );
+          assert.deepEqual(
+            buildRenderArgs("output/story.mp4", "/tmp/tora/props.json", publicDir),
+            v03(publicDir),
+          );
+        }
+      });
+    });
+
+    it("hasAudio: true appends --audio-codec=aac, --audio-bitrate=128k and --enforce-audio-track exactly once", () => {
+      withoutBrowser(() => {
+        const args = buildRenderArgs(
+          "output/story.mp4",
+          "/tmp/tora/props.json",
+          "/tmp/tora/public",
+          {hasAudio: true},
+        );
+
+        assert.deepEqual(AUDIO_RENDER_ARGS, [
+          "--audio-codec=aac",
+          "--audio-bitrate=128k",
+          "--enforce-audio-track",
+        ]);
+        assert.equal(args.filter((arg) => arg === "--audio-codec=aac").length, 1);
+        assert.equal(args.filter((arg) => arg === "--audio-bitrate=128k").length, 1);
+        assert.equal(args.filter((arg) => arg === "--enforce-audio-track").length, 1);
+        assert.deepEqual(args.slice(-3), AUDIO_RENDER_ARGS);
+        assert.ok(args.includes("--public-dir=/tmp/tora/public"));
+        assert.ok(!args.some((arg) => arg === "--muted"));
+      });
+    });
+
+    it("the silent argument list never carries an audio flag, enforce-audio-track included (AINV-6)", () => {
+      withoutBrowser(() => {
+        for (const options of [undefined, {}, {hasAudio: false}]) {
+          const args = buildRenderArgs("output/story.mp4", "/tmp/tora/props.json", "/tmp/tora/public", options);
+
+          assert.ok(!args.some((arg) => arg === "--enforce-audio-track" || arg.startsWith("--audio-")));
+        }
+      });
+    });
   });
 });

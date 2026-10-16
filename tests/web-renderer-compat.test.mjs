@@ -67,4 +67,27 @@ describe("WEB-006 web-renderer compatibility audit", () => {
     assert.equal(source.includes("zIndex"), false);
     assert.match(source, /backgroundColor: preset\.overlay/);
   });
+
+  it("relies on the pinned web-renderer registering its WASM AAC encoder before it decides", async () => {
+    // D-13: with no native AAC encoder the page still renders AAC. The capability
+    // probe and the render both go through resolveAudioCodec, which awaits the
+    // registration; this pins that behavior of exactly @remotion/web-renderer 4.0.529.
+    const library = await read("node_modules/@remotion/web-renderer/dist/esm/index.mjs");
+    const packageJson = JSON.parse(await read("node_modules/@remotion/web-renderer/package.json"));
+
+    assert.equal(packageJson.version, "4.0.529");
+    assert.equal(packageJson.dependencies["@mediabunny/aac-encoder"], "1.56.1");
+    assert.match(library, /import\("@mediabunny\/aac-encoder"\)/u);
+    const registration = library.indexOf(
+      'if (audioCodec === "aac") {\n    await ensureAacEncoderRegistered();',
+    );
+    const decision = library.indexOf(
+      "const canEncode = await canEncodeAudio4(mediabunnyAudioCodec",
+    );
+
+    assert.ok(
+      registration > 0 && decision > registration,
+      "the AAC registration comes before the encode check",
+    );
+  });
 });

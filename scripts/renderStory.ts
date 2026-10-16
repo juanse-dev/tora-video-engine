@@ -8,6 +8,8 @@ import {
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join} from "node:path";
+import {prepareCliAudio} from "./audioRender.ts";
+import type {AudioPreflightDeps} from "./audioPreflight.ts";
 import {
   getLocalAssetsRoot,
   stageLocalAssetsForStory,
@@ -24,11 +26,10 @@ import {
   type RenderControl,
   RenderInterruptedError,
 } from "./interrupt.ts";
-import {
-  AUDIO_RENDER_BLOCK_MESSAGE,
-  storyHasAudio,
-} from "../src/audio/storyAudio.ts";
+import {storyHasAudio} from "../src/audio/storyAudio.ts";
 import {storyHasLocalAssetRefs} from "../src/localAssets/readiness.ts";
+import {isLocalAudioRef} from "../src/localAssets/refs.ts";
+import type {LocalAssetSourceMap} from "../src/localAssets/sources.ts";
 import {loadStory} from "../src/story/loadStory.ts";
 
 export type RunRemotion = (
@@ -45,6 +46,10 @@ export type RenderStoryDeps = {
   tempBase?: string;
   /** Overrides `TORA_LOCAL_ASSETS_ROOT` / `local-assets`. */
   localAssetsRoot?: string;
+  /** The directory copied into the staging directory and read for bundled audio. Defaults to `public`. */
+  publicSourceDir?: string;
+  /** Replaces the ffmpeg process of the audio decode preflight (tests). */
+  audioPreflight?: AudioPreflightDeps;
   /** Replaces `child_process.spawn` in the real runner (tests). */
   spawn?: typeof spawn;
   /** Signal source, platform and timers for Ctrl+C handling (tests). */
@@ -105,11 +110,6 @@ export const renderStory = async (
 
   const story = await loadStory(storyPath);
 
-  // TEMPORARY (AUDIO-001): AUDIO-005 removes this block.
-  if (storyHasAudio(story)) {
-    throw new Error(AUDIO_RENDER_BLOCK_MESSAGE);
-  }
-
   // Installed before the directory is created and removed only after it is
   // gone, so a signal at any point in between still ends in the cleanup below.
   const guard = createInterruptGuard(deps.interrupt);
@@ -142,21 +142,61 @@ export const renderStory = async (
       // A signal while the directory was being created: skip the staging.
       guard.throwIfInterrupted();
 
+      const hasAudio = storyHasAudio(story);
+      const publicSourceDir = deps.publicSourceDir ?? "public";
       let props: Record<string, unknown> = {story};
       let publicDir: string | undefined;
 
-      if (storyHasLocalAssetRefs(story)) {
-        // Bundled-only Stories never reach this branch, so the root is not
-        // required for them and their command line is unchanged.
+      // A Story without local refs and without audio never reaches this
+      // branch, so the root is not required for it and its command line and
+      // props are exactly the v0.3 ones (AINV-6). Audio needs the staging
+      // directory even when it is all bundled: Remotion reads the staged copy.
+      if (storyHasLocalAssetRefs(story) || hasAudio) {
         publicDir = join(temporaryDirectory, "public");
-        await cp("public", publicDir, {recursive: true});
+        await cp(publicSourceDir, publicDir, {recursive: true});
 
+        const localNames = new Map<string, string>();
         const staged = await stageLocalAssetsForStory(story, {
           root: deps.localAssetsRoot ?? getLocalAssetsRoot(),
           publicDir,
+          onStaged: (ref, _stagedPath, relativePath) => {
+            localNames.set(ref, relativePath);
+          },
         });
 
-        props = {story, localAssetSources: staged.sources};
+        if (storyHasLocalAssetRefs(story)) {
+          // Images only: the audio sources travel in `audioSources`.
+          props = {
+            story,
+            localAssetSources: Object.fromEntries(
+              Object.entries(staged.sources).filter(
+                ([ref]) => !isLocalAudioRef(ref),
+              ),
+            ) as LocalAssetSourceMap,
+          };
+        }
+
+        if (hasAudio) {
+          guard.throwIfInterrupted();
+
+          const audio = await prepareCliAudio(story, {
+            publicDir,
+            localSources: staged.sources,
+            localNames,
+            publicSourceDir,
+            checkInterrupt: () => guard.throwIfInterrupted(),
+            control: guard,
+            preflight: deps.audioPreflight,
+          });
+
+          props = {
+            ...props,
+            audioDurations: audio.audioDurations,
+            audioSources: audio.audioSources,
+            bundledAudioPolicy: "explicit",
+            audioArmed: true,
+          };
+        }
       }
 
       await writeFile(propsPath, JSON.stringify(props), "utf8");
@@ -165,7 +205,9 @@ export const renderStory = async (
       try {
         await runRemotion(
           getRemotionExecutable(),
-          buildRenderArgs(outputPath, propsPath, publicDir),
+          buildRenderArgs(outputPath, propsPath, publicDir, {
+            hasAudio: storyHasAudio(story),
+          }),
           guard,
         );
         // An interrupt wins even if the child finished first: the output of

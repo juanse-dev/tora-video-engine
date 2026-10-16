@@ -528,7 +528,12 @@ export const stageLocalAssetsForStory = async (
   options: {
     root: string;
     publicDir: string;
-    onStaged?: (ref: LocalAssetRef, stagedPath: string) => Promise<void> | void;
+    /** `relativePath` is the file's path inside its category folder (what a person calls it). */
+    onStaged?: (
+      ref: LocalAssetRef,
+      stagedPath: string,
+      relativePath: string,
+    ) => Promise<void> | void;
   },
   deps: ScanDeps = {},
 ): Promise<StagedLocalAssets> => {
@@ -572,7 +577,7 @@ export const stageLocalAssetsForStory = async (
 
       stagedDigests.add(candidate.digest);
       sources[candidate.ref] = {kind: "static", path: sourcePath};
-      await options.onStaged?.(candidate.ref, stagedPath);
+      await options.onStaged?.(candidate.ref, stagedPath, candidate.relativePath);
 
       if (stagedDigests.size === required.size) {
         break;

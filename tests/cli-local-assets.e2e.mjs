@@ -12,12 +12,24 @@ import {
   readFile,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {after, before, describe, it} from "node:test";
 import {fileURLToPath} from "node:url";
 import {inflateSync} from "node:zlib";
+import {
+  decodeMp4AudioMono,
+  goertzelWindows,
+} from "./helpers/audioEnvelope.mjs";
+import {
+  assertAacLcStereoStream,
+  assertIntegrationEnvelope,
+  INTEGRATION_FRAMES,
+  INTEGRATION_VOICE_FIXTURE,
+  integrationStoryYaml,
+} from "./helpers/audioIntegration.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = join(repoRoot, "tests", "fixtures", "local-assets");
@@ -238,5 +250,252 @@ describe("CLI render with local assets", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Cannot render Story/u);
     await assert.rejects(stat(outputPath), {code: "ENOENT"});
+  });
+});
+
+
+describe("CLI render with audio", () => {
+  const audioStoryPath = "stories/ci-audio.yaml";
+  const audioOutputPath = join(repoRoot, "output", "ci-audio.mp4");
+  // A copy of the reference Story under another slug: the test never renders to,
+  // or deletes, the developer's own output/friday-deploy.mp4.
+  const silentOutputPath = join(repoRoot, "output", "ci-audio-silent.mp4");
+  let workDirectory;
+  let emptyRoot;
+  let audioRender;
+  let probe;
+
+  const render = (story, localAssetsRoot) =>
+    spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "scripts/render.ts", story],
+      {
+        cwd: repoRoot,
+        env: {...process.env, TORA_LOCAL_ASSETS_ROOT: localAssetsRoot},
+        encoding: "utf8",
+        timeout: SPAWN_TIMEOUT_MS,
+      },
+    );
+  const probeStreams = (path) => {
+    const result = remotion(
+      "ffprobe",
+      "-v",
+      "error",
+      "-show_entries",
+      "stream=codec_type,codec_name,profile,width,height,r_frame_rate,sample_rate,channels,bit_rate,duration,nb_frames",
+      "-of",
+      "json",
+      path,
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+
+    return JSON.parse(result.stdout).streams;
+  };
+
+  before(async () => {
+    workDirectory = await mkdtemp(join(tmpdir(), "tora-cli-audio-e2e-"));
+    emptyRoot = join(workDirectory, "local-assets");
+    await mkdir(emptyRoot);
+    await rm(audioOutputPath, {force: true});
+    audioRender = render(audioStoryPath, emptyRoot);
+    probe = audioRender.status === 0 ? probeStreams(audioOutputPath) : [];
+  });
+
+  after(async () => {
+    if (workDirectory) {
+      await rm(workDirectory, {recursive: true, force: true});
+    }
+
+    await rm(audioOutputPath, {force: true});
+    await rm(silentOutputPath, {force: true});
+  });
+
+  it("renders the Story with a bundled sfx from the staged copy and exits 0", async () => {
+    assert.equal(audioRender.status, 0, audioRender.stderr || audioRender.stdout);
+    assert.match(audioRender.stdout, /Rendered .*ci-audio\.mp4/u);
+    assert.ok((await stat(audioOutputPath)).size > 0);
+  });
+
+  it("outputs h264 1080x1920 30 fps with 360 frames and one AAC-LC 48 kHz stereo stream at about 128 kb/s", () => {
+    const video = probe.filter((stream) => stream.codec_type === "video");
+    const audio = probe.filter((stream) => stream.codec_type === "audio");
+
+    assert.equal(video.length, 1);
+    assert.equal(video[0].codec_name, "h264");
+    assert.deepEqual([video[0].width, video[0].height], [1080, 1920]);
+    assert.equal(video[0].r_frame_rate, "30/1");
+    assert.equal(Number(video[0].nb_frames), 360);
+
+    assert.equal(audio.length, 1);
+    assertAacLcStereoStream(audio[0], "CLI render");
+
+    // 1 / fps plus the 60 ms the spec allows for the encoder's priming.
+    const drift = Math.abs(Number(audio[0].duration) - Number(video[0].duration));
+
+    assert.ok(drift <= 1 / 30 + 0.06, `audio ${audio[0].duration} s, video ${video[0].duration} s`);
+  });
+
+  it("plays the ding at the scene start and nothing after it (Goertzel on the decoded MP4)", async () => {
+    const samples = await decodeMp4AudioMono(audioOutputPath);
+    const fundamental = goertzelWindows(samples, 880, 100);
+    const partial = goertzelWindows(samples, 1760, 100);
+
+    // Positive control: the sfx is clearly there in the first 300 ms...
+    for (const windows of [fundamental, partial]) {
+      assert.ok(windows[0] > 0.02 && windows[1] > 0.02, windows.slice(0, 3).join(" "));
+    }
+
+    // ...it decays, and nothing sounds from 2 s on (the Story has no other audio).
+    for (const windows of [fundamental, partial]) {
+      assert.ok(
+        windows.slice(20).every((amplitude) => amplitude < 0.005),
+        `after 2 s: ${Math.max(...windows.slice(20))}`,
+      );
+    }
+  });
+
+  it("fails before spawning Remotion on a truncated local voice and leaves no MP4", async () => {
+    const root = join(workDirectory, "truncated-root");
+    const truncated = await readFile(
+      join(repoRoot, "tests", "fixtures", "local-audio", "truncated.mp3"),
+    );
+    const slug = "ci-audio-truncated";
+    const story = join(workDirectory, `${slug}.yaml`);
+
+    await mkdir(join(root, "audio"), {recursive: true});
+    await cp(
+      join(repoRoot, "tests", "fixtures", "local-audio", "truncated.mp3"),
+      join(root, "audio", "voice.mp3"),
+    );
+    await writeFile(
+      story,
+      [
+        'title: "CI truncated voice"',
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        '    text: "Truncated."',
+        "    voice:",
+        `      src: local:audio:sha256:${sha256(truncated)}`,
+        "    duration: auto",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = render(story, root);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Audio file voice\.mp3 cannot be used for rendering/u);
+    assert.doesNotMatch(result.stdout, /Rendered \d+\/\d+/u);
+    await assert.rejects(stat(join(repoRoot, "output", `${slug}.mp4`)), {code: "ENOENT"});
+  });
+
+  it("an imported voice and a bundled ding render together with the CLI: 440 Hz during the voice and the ding at its onset", async () => {
+    const voice = await readFile(
+      join(repoRoot, "tests", "fixtures", "local-audio", INTEGRATION_VOICE_FIXTURE),
+    );
+    const root = join(workDirectory, "integration-root");
+    const slug = "ci-audio-integration";
+    const story = join(workDirectory, `${slug}.yaml`);
+    const output = join(repoRoot, "output", `${slug}.mp4`);
+
+    await mkdir(join(root, "audio"), {recursive: true});
+    await writeFile(join(root, "audio", "any-name.wav"), voice);
+    await writeFile(story, integrationStoryYaml(`local:audio:sha256:${sha256(voice)}`), "utf8");
+    await rm(output, {force: true});
+
+    try {
+      const result = render(story, root);
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+
+      const streams = probeStreams(output);
+      const video = streams.find((stream) => stream.codec_type === "video");
+
+      assert.equal(Number(video.nb_frames), INTEGRATION_FRAMES);
+      assertAacLcStereoStream(
+        streams.find((stream) => stream.codec_type === "audio"),
+        "CLI integration render",
+      );
+      assertIntegrationEnvelope(await decodeMp4AudioMono(output), "CLI render");
+
+      // The same Story once the voice file is gone: it refuses before rendering, naming the audio.
+      await rm(output, {force: true});
+
+      const missing = render(story, emptyRoot);
+
+      assert.equal(missing.status, 1);
+      assert.match(missing.stderr, /Cannot render Story: 1 local asset is missing\./u);
+      assert.match(missing.stderr, /^Audio:$/mu);
+      assert.doesNotMatch(missing.stdout, /Rendered \d+\/\d+/u);
+      await assert.rejects(stat(output), {code: "ENOENT"});
+    } finally {
+      await rm(output, {force: true});
+    }
+  });
+
+  it("a Story whose only audio is at volume 0 still gets exactly one AAC-LC stereo track, silent (--enforce-audio-track)", async () => {
+    const storyFile = join(workDirectory, "ci-audio-volume-zero.yaml");
+    const outputFile = join(repoRoot, "output", "ci-audio-volume-zero.mp4");
+
+    await writeFile(
+      storyFile,
+      [
+        "title: Volume zero",
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        "    animation: fade",
+        "    text: Sin sonido audible.",
+        "    sfx:",
+        "      src: ding",
+        "      volume: 0",
+        "    duration: 2",
+        "",
+      ].join("\n"),
+    );
+    await rm(outputFile, {force: true});
+
+    try {
+      const result = render(storyFile, emptyRoot);
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+
+      const streams = probeStreams(outputFile);
+      const audio = streams.filter((stream) => stream.codec_type === "audio");
+
+      assert.equal(streams.filter((stream) => stream.codec_type === "video").length, 1);
+      assert.equal(audio.length, 1);
+      assert.equal(audio[0].codec_name, "aac");
+      assert.equal(audio[0].profile, "1");
+      assert.equal(Number(audio[0].sample_rate), 48_000);
+      assert.equal(audio[0].channels, 2);
+
+      const samples = await decodeMp4AudioMono(outputFile);
+
+      assert.ok(samples.every((sample) => Math.abs(sample) < 1e-3), "the track is silent");
+    } finally {
+      await rm(outputFile, {force: true});
+    }
+  });
+
+  it("a Story without audio (a copy of friday-deploy.yaml) still renders video-only", async () => {
+    const silentStoryPath = join(workDirectory, "ci-audio-silent.yaml");
+
+    await writeFile(silentStoryPath, await readFile(join(repoRoot, "stories", "friday-deploy.yaml")));
+    await rm(silentOutputPath, {force: true});
+
+    const result = render(silentStoryPath, emptyRoot);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const streams = probeStreams(silentOutputPath);
+
+    assert.deepEqual(streams.map((stream) => stream.codec_type), ["video"]);
+    assert.equal(Number(streams[0].nb_frames), 360);
   });
 });

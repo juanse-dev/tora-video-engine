@@ -1,4 +1,5 @@
 import {basename, extname, join, resolve} from "node:path";
+import {OUTPUT_AUDIO_BITRATE} from "../src/audio/constants.ts";
 
 export const COMPOSITION_ID = "ToraVideo";
 export const REMOTION_ENTRY_POINT = "src/index.ts";
@@ -58,10 +59,25 @@ export const getRemotionCliPath = (): string =>
     "remotion-cli.js",
   );
 
+/**
+ * D-14: the AAC arguments of a render with audio. A Story without audio never
+ * gets them, so its argument list is exactly the v0.3 one (AINV-6).
+ * `--enforce-audio-track` (the CLI flag of Remotion's `enforceAudioTrack`) keeps one AAC
+ * track when the mix is inaudible (every track at volume 0): without it Remotion
+ * drops the silent audio and writes a video-only file, while the browser always
+ * writes the track (AINV-9).
+ */
+export const AUDIO_RENDER_ARGS = [
+  "--audio-codec=aac",
+  `--audio-bitrate=${OUTPUT_AUDIO_BITRATE / 1000}k`,
+  "--enforce-audio-track",
+] as const;
+
 export const buildRenderArgs = (
   outputPath: string,
   propsPath: string,
   publicDir?: string,
+  options: {hasAudio?: boolean} = {},
 ): string[] => {
   const browserExecutable = getRemotionBrowserExecutable();
 
@@ -78,5 +94,6 @@ export const buildRenderArgs = (
       ? []
       : [`--browser-executable=${browserExecutable}`]),
     ...(publicDir === undefined ? [] : [`--public-dir=${publicDir}`]),
+    ...(options.hasAudio === true ? AUDIO_RENDER_ARGS : []),
   ];
 };

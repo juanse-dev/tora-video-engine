@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import {sha256Hex} from "../src/localAssets/hash.ts";
 import {
+  MAX_BROWSER_STORY_AUDIO_REFS,
   MAX_BROWSER_STORY_LOCAL_ASSET_BYTES,
   MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS,
   MAX_BROWSER_STORY_LOCAL_ASSET_REFS,
@@ -929,8 +930,30 @@ test("a local voice is resolved and verified like an image and keeps its role", 
   assert.equal(state.blobs.get(digest).type, "audio/wav");
 });
 
+const seedAudioMeta = (store, n, byteSize, durationSeconds = 100) => {
+  store.setRaw("assets", audioRefOf(digestOf(n)), row());
+  store.setRaw("payloadMeta", digestOf(n), {
+    kind: "audio", mimeType: "audio/wav", byteSize, container: "wave", codec: "pcm",
+    durationSeconds, sampleRate: 48_000, channels: 2,
+  });
+
+  return audioRefOf(digestOf(n));
+};
+
+/** `imageCount` scenes with distinct local poses, the first `audioCount` of them also with a distinct local voice. */
+const mixedStoryOf = (imageCount, audioCount) => ({
+  title: "Mixed",
+  scenes: Array.from({length: Math.max(imageCount, audioCount)}, (_, index) => ({
+    pose: index < imageCount ? poseRef(index + 1) : "formal",
+    background: "office",
+    duration: 1,
+    caption: "x",
+    ...(index < audioCount ? {voice: {src: audioRefOf(digestOf(2000 + index))}} : {}),
+  })),
+});
+
 test("audio refs never count against the image ref cap, with a ready or a disabled library", async () => {
-  const many = Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS + 6}, (_, index) => audioRefOf(digestOf(1000 + index)));
+  const many = Array.from({length: MAX_BROWSER_STORY_AUDIO_REFS}, (_, index) => audioRefOf(digestOf(1000 + index)));
   const story = audioStoryOf(...many);
   const ready = await resolve(story, createMemoryAssetStore());
   const disabled = await resolve(story, createMemoryAssetStore(), {library: {kind: "disabled", message: DISABLED_MESSAGE}});
@@ -939,30 +962,85 @@ test("audio refs never count against the image ref cap, with a ready or a disabl
   assert.equal(ready.refs.every((entry) => entry.status === "missing"), true);
   assert.equal(disabled.kind, "resolved");
   assert.equal(disabled.refs.every((entry) => entry.status === "unavailable"), true);
-
-  const images = storyOf(Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS}, (_, index) => [poseRef(index + 1), "office"]));
-  const withAudio = {...images, scenes: images.scenes.map((scene, index) => (index === 0 ? {...scene, voice: {src: many[0]}} : scene))};
-  const tooMany = storyOf(Array.from({length: MAX_BROWSER_STORY_LOCAL_ASSET_REFS + 1}, (_, index) => [poseRef(index + 1), "office"]));
-
-  assert.equal((await resolve(withAudio, createMemoryAssetStore())).kind, "resolved");
-  assert.equal((await resolve(tooMany, createMemoryAssetStore())).kind, "over-budget");
+  assert.equal((await resolve(mixedStoryOf(MAX_BROWSER_STORY_LOCAL_ASSET_REFS, 1), createMemoryAssetStore())).kind, "resolved");
+  assert.equal((await resolve(mixedStoryOf(MAX_BROWSER_STORY_LOCAL_ASSET_REFS + 1, 0), createMemoryAssetStore())).kind, "over-budget");
 });
 
-test("audio bytes never count against the image byte budget", async () => {
-  const store = createMemoryAssetStore();
-  const refs = [];
+test("a mixed Story at 64 image refs and 64 audio refs passes both budgets; one more of either fails only that budget, with its own message", async () => {
+  const library = readyLibrary(createMemoryAssetStore());
+  const passes = await resolve(mixedStoryOf(64, 64), createMemoryAssetStore());
+  const tooManyImages = await resolve(mixedStoryOf(65, 64), createMemoryAssetStore());
+  const tooManyAudio = await resolve(mixedStoryOf(64, 65), createMemoryAssetStore());
+  const both = await resolve(mixedStoryOf(65, 65), createMemoryAssetStore());
 
-  for (let n = 1; n <= 6; n += 1) {
-    store.setRaw("assets", audioRefOf(digestOf(n)), row());
-    store.setRaw("payloadMeta", digestOf(n), {
-      kind: "audio", mimeType: "audio/wav", byteSize: 50 * MIB, container: "wave", codec: "pcm",
-      durationSeconds: 100, sampleRate: 48_000, channels: 2,
-    });
-    refs.push(audioRefOf(digestOf(n)));
+  assert.equal(passes.kind, "resolved");
+  assert.equal(tooManyImages.kind, "over-budget");
+  assert.equal(tooManyImages.message, "Uses 65 local assets (limit 64).");
+  assert.equal(tooManyAudio.kind, "over-budget");
+  assert.equal(tooManyAudio.message, "This Story uses more than 64 audio files.");
+  assert.equal(describeLocalAssetRenderBlock(tooManyAudio, library), "This Story uses more than 64 audio files.");
+  assert.equal(both.kind, "over-budget");
+  assert.equal(both.message, "Uses 65 local assets (limit 64). This Story uses more than 64 audio files.");
+});
+
+test("image bytes and audio bytes are separate budgets: 250 MiB of audio with 200 MiB of images passes", async () => {
+  const store = createMemoryAssetStore();
+  const voices = [];
+
+  for (let n = 1; n <= 5; n += 1) {
+    voices.push(seedAudioMeta(store, n, 50 * MIB));
   }
 
-  // 300 MiB of audio is over the 256 MiB image limit, which is not an audio concern (AUDIO-005 adds the audio budget).
-  assert.equal((await resolve(audioStoryOf(...refs), store)).kind, "resolved");
+  const scenes = [];
+
+  for (let n = 1; n <= 8; n += 1) {
+    scenes.push(
+      seedMetaOnly(store, 100 + n, {mimeType: "image/png", byteSize: 25 * MIB, width: 100, height: 100}),
+    );
+  }
+
+  const story = {
+    title: "Bytes",
+    scenes: scenes.map((pose, index) => ({
+      pose,
+      background: "office",
+      duration: 1,
+      caption: "x",
+      ...(index < voices.length ? {voice: {src: voices[index]}} : {}),
+    })),
+  };
+
+  // 450 MiB in total is over either 256 MiB limit, but neither budget sees the other's bytes.
+  assert.equal((await resolve(story, store)).kind, "resolved");
+});
+
+test("over 256 MiB of audio is over-budget from metadata alone, with the audio message and no blob read; exactly 256 MiB passes", async () => {
+  const over = createMemoryAssetStore();
+  const overRefs = [];
+
+  for (let n = 1; n <= 5; n += 1) {
+    overRefs.push(seedAudioMeta(over, n, 50 * MIB));
+  }
+
+  overRefs.push(seedAudioMeta(over, 6, 6 * MIB + 1));
+  over.resetReads();
+
+  const state = await resolve(audioStoryOf(...overRefs), over);
+
+  assert.equal(state.kind, "over-budget");
+  assert.equal(state.message, "This Story's audio is larger than 256 MiB.");
+  assert.equal(over.reads.blobs, 0);
+
+  const exact = createMemoryAssetStore();
+  const exactRefs = [];
+
+  for (let n = 1; n <= 5; n += 1) {
+    exactRefs.push(seedAudioMeta(exact, n, 50 * MIB));
+  }
+
+  exactRefs.push(seedAudioMeta(exact, 6, 6 * MIB));
+
+  assert.equal((await resolve(audioStoryOf(...exactRefs), exact)).kind, "resolved");
 });
 
 test("an audio row pointing at image metadata, and an image row pointing at audio metadata, are corrupt and their bytes are never read", async () => {
@@ -1072,4 +1150,43 @@ test("a payloadMeta whose kind changed from audio to image, or from image to aud
 
   assert.equal(toAudio.ok, false);
   assert.equal(imagePool.calls.acquire.length, 0);
+});
+
+const resolvedWith = (...entries) => ({
+  kind: "resolved",
+  refs: entries.map(([usage, status]) => ({usage, status, detail: null})),
+  verified: new Map(),
+  blobs: new Map(),
+  allReady: entries.every(([, status]) => status === "ready"),
+  failureMessage: null,
+});
+const imageUsage = (n) => ({ref: poseRef(n), category: "pose", digest: digestOf(n), sceneIndexes: [0]});
+const audioUsage = (n) => ({
+  ref: audioRefOf(digestOf(n)),
+  category: "audio",
+  digest: digestOf(n),
+  sceneIndexes: [0],
+  roles: ["voice"],
+});
+
+test("describeLocalAssetRenderBlock says audio when the unavailable refs are audio, and keeps the image sentence for images", () => {
+  const library = readyLibrary(createMemoryAssetStore());
+
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([imageUsage(1), "missing"], [imageUsage(2), "corrupt"], [imageUsage(3), "ready"]), library),
+    "Browser render is blocked because 2 local asset(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "missing"], [imageUsage(1), "ready"]), library),
+    "Browser render is blocked because 1 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "unavailable"], [audioUsage(2), "corrupt"]), library),
+    "Browser render is blocked because 2 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(
+    describeLocalAssetRenderBlock(resolvedWith([imageUsage(1), "missing"], [audioUsage(1), "missing"], [audioUsage(2), "missing"]), library),
+    "Browser render is blocked because 1 local asset(s) and 2 audio file(s) are unavailable in this browser.",
+  );
+  assert.equal(describeLocalAssetRenderBlock(resolvedWith([audioUsage(1), "ready"]), library), null);
 });

@@ -143,6 +143,15 @@ export const storyHasLocalAssetRefs = (story: Story): boolean =>
       parseLocalAssetRef(scene.background) !== null,
   );
 
+/**
+ * Any local ref, image or audio: the gate of the browser render path (it
+ * resolves and prepares local assets once audio can be rendered). The CLI gates
+ * on `storyHasLocalAssetRefs(story) || hasAudio` instead. `storyHasLocalAssetRefs`
+ * stays image-only: it drives persistence v2.
+ */
+export const storyHasAnyLocalAssetRef = (story: Story): boolean =>
+  storyHasLocalAssetRefs(story) || collectAudioUsages(story).length > 0;
+
 export type ImagePayloadMetadata = {
   /** Absent in every record this build writes and in every v0.3 record; a stored "image" is tolerated and dropped on read. */
   kind?: "image";
@@ -208,7 +217,7 @@ export const evaluateLocalAssetBudget = (
       continue;
     }
 
-    if (isAudioPayload(metadata)) {
+    if (isAudioPayload(metadata) || !Number.isFinite(metadata.width * metadata.height)) {
       nonImageMetadata = true;
       continue;
     }
