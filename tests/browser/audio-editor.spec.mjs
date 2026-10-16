@@ -1,7 +1,8 @@
 import {expect, test} from "@playwright/test";
 import {fixtureBytes} from "../helpers/audioBytes.mjs";
 import {yamlSource} from "./helpers/localAssetFlows.mjs";
-import {applyYaml, waitForOwner} from "./helpers/localAssetPage.mjs";
+import {applyYaml, openSeeded, waitForOwner} from "./helpers/localAssetPage.mjs";
+import {audioWavRecord, metadataOnlyRecord} from "./helpers/seedAssetLibrary.mjs";
 
 // The built bundle is served; the Player is the real one (muted start, arming).
 test.use({viewport: {width: 1400, height: 1500}});
@@ -497,6 +498,45 @@ test("deleting the sound that is playing stops it", async ({page}) => {
   await expect.poll(() => soundingPreviews(page)).toBe(0);
   await page.getByRole("dialog").getByRole("button", {name: "Delete asset"}).click();
   await expect(card(page, "tone-220-10s")).toHaveCount(0);
+});
+
+test("renaming the sound that is playing stops it, because the rename form has no Stop button", async ({page}) => {
+  await trackPlayedAudio(page);
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-10s.wav"));
+  await playButton(page, "tone-220-10s").click();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.getByRole("button", {name: "Rename tone-220-10s", exact: true}).click();
+  await expect(page.getByRole("textbox", {name: "New name for tone-220-10s"})).toBeVisible();
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
+});
+
+test("paging away from the card that is playing stops the preview", async ({page}) => {
+  await trackPlayedAudio(page);
+  // 50 sorted-first synthetic sounds fill page 1; the playable fixture is the 51st, alone on page 2.
+  const audioMeta = {
+    kind: "audio",
+    mimeType: "audio/wav",
+    byteSize: 1000,
+    container: "wave",
+    codec: "pcm",
+    durationSeconds: 1,
+    sampleRate: 48_000,
+    channels: 2,
+  };
+  const synthetic = Array.from({length: 50}, (_, index) =>
+    metadataOnlyRecord("audio", index + 1, audioMeta),
+  );
+
+  await openSeeded(page, [...synthetic, await audioWavRecord("tone-220-10s.wav")]);
+  await page.locator(SECTION).getByRole("button", {name: /Next/u}).click();
+  await playButton(page, "tone-220-10s").click();
+  await expect.poll(() => soundingPreviews(page)).toBe(1);
+
+  await page.locator(SECTION).getByRole("button", {name: /Previous/u}).click();
+  await expect(card(page, "tone-220-10s")).toHaveCount(0);
+  await expect.poll(() => soundingPreviews(page)).toBe(0);
 });
 
 test("the preview controls are disabled while authoring is locked, and a preview that is playing is stopped when the lock engages", async ({page}) => {

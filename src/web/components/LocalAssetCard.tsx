@@ -291,6 +291,12 @@ export const LocalAssetCard = ({
             type="button"
             aria-label={`Rename ${label}`}
             onClick={() => {
+              // The rename form has no Stop button: a preview that is playing
+              // (Stop shown) is stopped here, since toggling the active card stops it.
+              if (preview?.active === true) {
+                preview.onToggle();
+              }
+
               editSessionRef.current += 1;
               setDraft(label);
               setError(null);

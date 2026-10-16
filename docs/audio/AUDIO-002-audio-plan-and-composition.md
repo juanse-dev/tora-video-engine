@@ -159,7 +159,7 @@ The plan tests pass, the Player plays bundled sounds after unmute, and every v0.
 
 ## Implementation notes
 
-- Preview receives audioSources from App (AUDIO-004) and passes bundledAudioPolicy: "explicit"; the source test now pins "explicit".
+- Preview receives `audioSources` from App (AUDIO-004) and passes `bundledAudioPolicy: "explicit"`; the source test now pins `"explicit"`.
 - The arming rule, the mount list and the volume store are pure modules tested in Node: `src/audio/mounts.ts`, `src/web/audioArming.ts`, `src/web/playerVolume.ts`.
 - Volume is restored with the Player's `initialVolume` prop from a validated `tora.playerVolume` and persisted on the Player's `volumechange` event, not through the Player ref.
 - Test hooks on `.preview-frame`: `data-tora-muted` and `data-tora-audio-armed`.

@@ -33,6 +33,23 @@ type MyAudioSectionProps = {
 const ignoreImportedRef = () => {};
 
 /**
+ * Ends a preview whose card is not listed (another page of the list, or the row
+ * is gone): it has no Stop button left. Renders nothing; a component only so
+ * that its effect can sit below `MyAudioSection`'s early return.
+ */
+const StopPreviewWhenUnlisted = ({listedRefs}: {listedRefs: readonly string[]}) => {
+  useEffect(() => {
+    const current = audioPreview().getState();
+
+    if (current.kind !== "idle" && !listedRefs.includes(current.ref)) {
+      audioPreview().stopRef(current.ref);
+    }
+  });
+
+  return null;
+};
+
+/**
  * The minimal My audio list: heading with the total, the local-only
  * disclosure, Import audio, a card per file (label, duration, rename, delete),
  * a missing card for every audio ref of the Story that is not usable here
@@ -98,6 +115,9 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
 
   return (
     <div className="my-assets my-audio" data-my-audio="">
+      <StopPreviewWhenUnlisted
+        listedRefs={ready ? visibleEntries.map((entry) => entry.ref) : []}
+      />
       <h5>{ready ? `My audio · ${page.total}` : "My audio"}</h5>
       {ready ? (
         <>
