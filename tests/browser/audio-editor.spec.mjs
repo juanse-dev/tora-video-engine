@@ -589,3 +589,232 @@ test("a card's delete warning counts the pending draft, so a pending change is n
   await expect(page.getByRole("dialog")).not.toContainText("scenes 1, 2");
   await page.getByRole("dialog").getByRole("button", {name: "Cancel"}).click();
 });
+
+// ---------------------------------------------------------------------------
+// The Player's bundled audio comes from the page's bundled-audio store (AUDIO-004 task 5)
+// ---------------------------------------------------------------------------
+
+const DING = "**/audio/sfx/ding.wav";
+const dingYaml = (sceneCount = 10) =>
+  [
+    "title: Bundled ding",
+    "scenes:",
+    ...Array.from({length: sceneCount}, (_, index) => [
+      "  - type: dialogue",
+      "    pose: confused",
+      "    background: office",
+      `    text: Scene ${index + 1}`,
+      "    sfx:",
+      "      src: ding",
+      "    duration: 1",
+    ]).flat(),
+    "",
+  ].join("\n");
+const dingRequests = (page) => {
+  const urls = [];
+
+  page.on("request", (request) => {
+    if (request.url().endsWith("/audio/sfx/ding.wav")) {
+      urls.push(request.url());
+    }
+  });
+
+  return urls;
+};
+// Counts every sound the page starts (Web Audio sources and media elements), except Remotion's silent pool.
+const installStartCounter = () => {
+  window.__starts = 0;
+
+  for (const prototype of [AudioBufferSourceNode.prototype, AudioScheduledSourceNode.prototype]) {
+    const original = prototype.start;
+
+    prototype.start = function start(...args) {
+      window.__starts += 1;
+
+      return original.apply(this, args);
+    };
+  }
+
+  const originalPlay = HTMLMediaElement.prototype.play;
+
+  HTMLMediaElement.prototype.play = function play(...args) {
+    if (!this.src.startsWith("data:")) {
+      window.__starts += 1;
+    }
+
+    return originalPlay.apply(this, args);
+  };
+};
+const starts = (page) => page.evaluate(() => window.__starts);
+const volumeToggle = (page) => page.locator('.preview-frame button[aria-label$=" sound"]');
+const unmuteAndPlay = async (page) => {
+  await volumeToggle(page).click();
+  await expect(volumeToggle(page)).toHaveAttribute("aria-label", "Mute sound");
+  await page.getByRole("button", {name: "Play video"}).click();
+};
+const importStory = (page, source) =>
+  page.locator(".project-toolbar input[type=file]").setInputFiles({
+    name: "story.yaml",
+    mimeType: "text/yaml",
+    buffer: Buffer.from(source),
+  });
+const armed = (page) =>
+  expect(page.locator(".preview-frame")).toHaveAttribute("data-tora-audio-armed", "true");
+
+test("ten scenes using ding fetch /audio/sfx/ding.wav once, and the Player plays it from a blob: URL without another request", async ({page}) => {
+  const requests = dingRequests(page);
+
+  await page.addInitScript(installStartCounter);
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml());
+  await armed(page);
+  await expect.poll(() => requests.length).toBe(1);
+
+  await unmuteAndPlay(page);
+  // Positive control: the Player does sound its ding once the check passed.
+  await expect.poll(() => starts(page), {timeout: 10_000}).toBeGreaterThan(0);
+  expect(requests).toHaveLength(1);
+});
+
+test("a ding file that cannot be decoded is unusable: the Player mounts nothing for it and makes no media request", async ({page}) => {
+  const requests = dingRequests(page);
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, (route) =>
+    route.fulfill({status: 200, contentType: "audio/wav", body: "this is not audio"}),
+  );
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml());
+  await armed(page);
+  await expect.poll(() => requests.length).toBe(1);
+
+  await unmuteAndPlay(page);
+  await expect.poll(() => page.locator(".preview-frame").getAttribute("data-tora-frame")).not.toBe("0");
+  await page.waitForTimeout(1_500);
+  expect(await starts(page)).toBe(0);
+  expect(requests).toHaveLength(1);
+});
+
+test("an unusable ding does not silence the Story's music, which still plays after unmute", async ({page}) => {
+  const requests = dingRequests(page);
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, (route) =>
+    route.fulfill({status: 200, contentType: "audio/wav", body: "this is not audio"}),
+  );
+  await openApp(page);
+  await importInput(page).setInputFiles(upload("tone-220-12s.wav"));
+  await expect(card(page, "tone-220-12s")).toHaveCount(1);
+
+  const ref = await card(page, "tone-220-12s").getAttribute("data-local-asset-card");
+
+  await importStory(
+    page,
+    dingYaml(3).replace("scenes:", `music:\n  src: ${ref}\nscenes:`),
+  );
+  await armed(page);
+  await expect.poll(() => requests.length).toBe(1);
+  await unmuteAndPlay(page);
+  await expect.poll(() => starts(page), {timeout: 10_000}).toBeGreaterThan(0);
+  expect(requests).toHaveLength(1);
+});
+
+test("a failed first request recovers by itself: the retry mounts the track with no navigation, select or Story change", async ({page}) => {
+  test.setTimeout(40_000);
+
+  const requests = dingRequests(page);
+  let attempts = 0;
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, (route) => {
+    attempts += 1;
+
+    return attempts === 1 ? route.abort("failed") : route.continue();
+  });
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml(20));
+  await armed(page);
+  await unmuteAndPlay(page);
+  await expect.poll(() => requests.length).toBe(2);
+  // The 1 s retry succeeded while the Player was playing: a later scene's ding sounds.
+  await expect.poll(() => starts(page), {timeout: 15_000}).toBeGreaterThan(0);
+  expect(requests).toHaveLength(2);
+});
+
+test("while the check is pending the Player plays nothing for ding, and releasing the route with valid bytes mounts it from a blob: URL (no second request)", async ({page}) => {
+  const requests = dingRequests(page);
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, async (route) => {
+    await gate;
+    await route.continue();
+  });
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml(20));
+  await armed(page);
+  await expect.poll(() => requests.length).toBe(1);
+  await unmuteAndPlay(page);
+  await expect
+    .poll(async () => Number(await page.locator(".preview-frame").getAttribute("data-tora-frame")))
+    .toBeGreaterThan(40);
+  expect(await starts(page)).toBe(0);
+  expect(requests).toHaveLength(1);
+
+  release();
+  await expect.poll(() => starts(page), {timeout: 15_000}).toBeGreaterThan(0);
+  expect(requests).toHaveLength(1);
+});
+
+test("a held route released with undecodable bytes never mounts ding", async ({page}) => {
+  const requests = dingRequests(page);
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, async (route) => {
+    await gate;
+    await route.fulfill({status: 200, contentType: "audio/wav", body: "this is not audio"});
+  });
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml(20));
+  await armed(page);
+  await expect.poll(() => requests.length).toBe(1);
+  await unmuteAndPlay(page);
+  release();
+  await expect
+    .poll(async () => Number(await page.locator(".preview-frame").getAttribute("data-tora-frame")))
+    .toBeGreaterThan(75);
+  expect(await starts(page)).toBe(0);
+  expect(requests).toHaveLength(1);
+});
+
+test("when every request fails the store gives up after four requests and the Player never mounts ding", async ({page}) => {
+  test.setTimeout(40_000);
+
+  const requests = dingRequests(page);
+
+  await page.addInitScript(installStartCounter);
+  await page.route(DING, (route) => route.abort("failed"));
+  await page.goto("/", {waitUntil: "domcontentloaded"});
+  await waitForOwner(page);
+  await importStory(page, dingYaml(3));
+  await armed(page);
+  // 1 + 3 retries at 1 s, 2 s and 4 s.
+  await expect.poll(() => requests.length, {timeout: 15_000}).toBe(4);
+  await page.waitForTimeout(1_500);
+  expect(requests).toHaveLength(4);
+  await unmuteAndPlay(page);
+  await page.waitForTimeout(1_200);
+  expect(await starts(page)).toBe(0);
+});

@@ -330,6 +330,13 @@ export const useBundledAudioStates = (): ReadonlyMap<BundledAudio, BundledAudioS
 export const storyBundledAudio = (story: Story): BundledAudio[] =>
   storyAudioRefs(story).filter(isBundledAudio);
 
+/** The Story's distinct bundled ids, sorted and comma-joined: the effect key that says "the requested set changed" (`""` when none). */
+export const bundledAudioKey = (story: Story): string =>
+  [...new Set(storyBundledAudio(story))].sort().join(",");
+
+export const parseBundledAudioKey = (key: string): BundledAudio[] =>
+  key === "" ? [] : (key.split(",") as BundledAudio[]);
+
 /**
  * What the Player's source map holds for a bundled id: `pending` while the
  * check runs, retries or waits for `Retry`; the object URL of the checked Blob

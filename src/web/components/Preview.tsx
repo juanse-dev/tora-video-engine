@@ -1,7 +1,7 @@
 import {Player, type PlayerRef} from "@remotion/player";
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
-import {buildAudioSourceMap} from "../../audio/sources.ts";
 import type {AudioDurationMap} from "../../audio/catalog.ts";
+import type {AudioSourceMap} from "../../audio/sources.ts";
 import {storyHasAudio} from "../../audio/storyAudio.ts";
 import type {LocalAssetSourceMap} from "../../localAssets/sources.ts";
 import {ToraVideo} from "../../Video.tsx";
@@ -14,15 +14,17 @@ import {audioPreview} from "../audio/previewPlayback.ts";
 import {readStoredPlayerVolume, storePlayerVolume} from "../playerVolume.ts";
 import {getWebPlayerConfig} from "../previewConfig.ts";
 
-// Until the bundled-audio store exists (AUDIO-004) no bundled sound has an
-// entry, and the Player resolves bundled ids with "static-fallback".
-const noBundledAudio = () => undefined;
-
 type PreviewProps = {
   story?: Story;
   localAssetSources?: LocalAssetSourceMap;
   localAssetState?: StoryLocalAssetState;
   audioDurations: AudioDurationMap;
+  /**
+   * The Player's audio sources, assembled once by App: the verified local audio
+   * entries plus one entry per bundled id from the page's bundled-audio store.
+   * The Player mounts a bundled sound only from its checked blob: URL.
+   */
+  audioSources: AudioSourceMap;
 };
 
 export const Preview = ({
@@ -30,15 +32,12 @@ export const Preview = ({
   localAssetSources,
   localAssetState,
   audioDurations,
+  audioSources,
 }: PreviewProps) => {
   const config = getWebPlayerConfig(story, audioDurations);
   const playerRef = useRef<PlayerRef>(null);
   const frameProbeRef = useRef<HTMLDivElement>(null);
   const overBudget = localAssetState?.kind === "over-budget";
-  const audioSources = useMemo(
-    () => buildAudioSourceMap(story, localAssetSources, noBundledAudio),
-    [story, localAssetSources],
-  );
   const hasAudio = storyHasAudio(story);
   // The Player starts muted and a Story's tracks only mount after the Player
   // muted itself, so `armed` flips in a layout effect (see below).
@@ -57,7 +56,7 @@ export const Preview = ({
       localAssetSources,
       audioDurations,
       audioSources,
-      bundledAudioPolicy: "static-fallback" as const,
+      bundledAudioPolicy: "explicit" as const,
       audioArmed,
     }),
     [story, localAssetSources, audioDurations, audioSources, audioArmed],

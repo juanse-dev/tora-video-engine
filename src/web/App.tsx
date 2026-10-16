@@ -25,6 +25,13 @@ import {
   type AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
+import {
+  audioSourceForBundledState,
+  bundledAudioKey,
+  parseBundledAudioKey,
+  requestBundledAudio,
+  useBundledAudioStates,
+} from "./audio/bundledAudio.ts";
 import {audioPreview, type AcquirePreviewUrl} from "./audio/previewPlayback.ts";
 import {acquireAudioPreviewUrl} from "./audio/previewSource.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
@@ -71,6 +78,7 @@ import {
   type PersistenceVersion,
   type ProtectedRecovery,
 } from "./persistence.ts";
+import {buildAudioSourceMap} from "../audio/sources.ts";
 import {
   AUDIO_RENDER_BLOCK_MESSAGE,
   storyHasAudio,
@@ -315,6 +323,23 @@ export const App = () => {
     assetRefreshToken,
   );
   const previewConfig = getWebPlayerConfig(activeStory, audioDurations);
+  // The bundled-audio store is the one source of truth for bundled ids: every
+  // id the Active Story references is checked from page load, with no display.
+  const bundledStates = useBundledAudioStates();
+  const bundledKey = bundledAudioKey(activeStory);
+
+  useEffect(() => {
+    requestBundledAudio(parseBundledAudioKey(bundledKey));
+  }, [bundledKey]);
+
+  // The Player's audio sources: verified local entries plus the store's bundled ones.
+  const audioSources = useMemo(
+    () =>
+      buildAudioSourceMap(activeStory, localAssets.sources, (id) =>
+        audioSourceForBundledState(bundledStates.get(id)),
+      ),
+    [activeStory, localAssets.sources, bundledStates],
+  );
 
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
@@ -2118,6 +2143,7 @@ export const App = () => {
             localAssetSources={localAssets.sources}
             localAssetState={localAssets.state}
             audioDurations={audioDurations}
+            audioSources={audioSources}
           />
         </section>
       </main>
