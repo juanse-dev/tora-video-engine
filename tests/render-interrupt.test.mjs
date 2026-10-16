@@ -16,6 +16,7 @@ import {
   reportRenderError,
 } from "../scripts/interrupt.ts";
 import {renderStory} from "../scripts/renderStory.ts";
+import {FAKE_FFMPEG, fakeSpawn} from "./helpers/fakeFfmpeg.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryDirectories = [];
@@ -202,6 +203,120 @@ describe("renderStory interruption", () => {
       assert.deepEqual(timers.active(), []);
     });
   }
+
+  it("removes the staged audio with the temporary directory when an interrupt lands during the render", async () => {
+    const {storyPath, tempBase, outputPath} = await setup();
+    const signals = makeSignals();
+    const timers = makeTimers();
+    const child = makeChild();
+    const started = deferred();
+
+    await writeFile(
+      storyPath,
+      [
+        'title: "T37 audio"',
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        "    animation: fade",
+        '    text: "Hi"',
+        "    sfx:",
+        "      src: ding",
+        "    duration: 1",
+        "",
+      ].join("\n"),
+    );
+
+    const outcome = settle(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: makeRunner(child, started),
+        interrupt: {signals, timers, platform: "linux"},
+      }),
+    );
+
+    await started.promise;
+
+    const [temporary] = await readdir(tempBase);
+
+    assert.ok(
+      await exists(
+        join(tempBase, temporary, "public", "__local-assets", "bundled", "ding.wav"),
+      ),
+    );
+
+    signals.emit("SIGINT");
+
+    const error = await outcome;
+
+    assert.ok(error instanceof RenderInterruptedError);
+    assert.deepEqual(await readdir(tempBase), []);
+    assert.equal(await exists(outputPath), false);
+  });
+
+  it("an interrupt during the audio decode preflight kills the ffmpeg child, cleans up and never starts Remotion", async () => {
+    const {storyPath, tempBase, outputPath} = await setup();
+    const signals = makeSignals();
+    const timers = makeTimers();
+    const decoding = deferred();
+    const kills = [];
+    let remotionStarted = false;
+
+    await writeFile(
+      storyPath,
+      [
+        'title: "T37 preflight"',
+        "scenes:",
+        "  - type: intro",
+        "    pose: formal",
+        "    background: office",
+        "    animation: fade",
+        '    text: "Hi"',
+        "    sfx:",
+        "      src: ding",
+        "    duration: 1",
+        "",
+      ].join("\n"),
+    );
+
+    const outcome = settle(
+      renderStory(storyPath, {
+        tempBase,
+        runRemotion: async () => {
+          remotionStarted = true;
+        },
+        audioPreflight: {
+          ffmpeg: FAKE_FFMPEG,
+          // An ffmpeg that decodes until the guard signals it, then exits.
+          spawn: fakeSpawn((child) => {
+            child.kill = (signal) => {
+              kills.push(signal);
+              queueMicrotask(() => child.emit("close", null, signal));
+
+              return true;
+            };
+            decoding.resolve();
+          }),
+        },
+        interrupt: {signals, timers, platform: "linux"},
+      }),
+    );
+
+    await decoding.promise;
+    assert.equal((await readdir(tempBase)).length, 1);
+    signals.emit("SIGINT");
+
+    const error = await outcome;
+
+    assert.ok(error instanceof RenderInterruptedError);
+    assert.equal(error.exitCode, 130);
+    assert.deepEqual(kills.slice(0, 1), ["SIGINT"]);
+    assert.equal(remotionStarted, false);
+    assert.deepEqual(await readdir(tempBase), []);
+    assert.equal(await exists(outputPath), false);
+    assert.deepEqual(timers.active(), []);
+  });
 
   it("sends SIGKILL when the child ignores the forwarded signal", async () => {
     const {storyPath, tempBase, outputPath} = await setup();

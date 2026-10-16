@@ -1,0 +1,29 @@
+# Used by tests/cli-local-assets.e2e.mjs: Deploy Friday with a bundled sound
+# effect on its first scene (12 s, 360 frames at 30 FPS).
+title: "CI Audio"
+scenes:
+  - type: intro
+    pose: formal
+    background: office
+    animation: fade
+    text: "Tora tiene una regla: Nunca desplegar en viernes."
+    sfx:
+      src: ding
+    duration: 3
+  - type: dialogue
+    pose: confused
+    background: office
+    animation: float
+    text: Pero es solo un cambio pequeño... qué es lo peor que podría pasar?
+    duration: 3
+  - type: chaos
+    pose: panic
+    background: server-room
+    text: Se cayó el sistema!
+    duration: 3
+  - type: punchline
+    pose: coffee
+    background: office
+    animation: slowZoom
+    text: Era un cambio pequeño.
+    duration: 3
