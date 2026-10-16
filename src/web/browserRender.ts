@@ -5,6 +5,7 @@ import {
   type RenderMediaOnWebResult,
 } from "@remotion/web-renderer";
 import type {ComponentType} from "react";
+import {OUTPUT_AUDIO_BITRATE} from "../audio/constants.ts";
 import {
   AUDIO_RENDER_BLOCK_MESSAGE,
   storyAudioDurations,
@@ -67,7 +68,15 @@ export type BrowserRenderCapability =
   | {
       kind: "unsupported";
       message: string;
+    }
+  | {
+      /** Video can be rendered here but AAC cannot be encoded, natively or with the WASM encoder (D-13). */
+      kind: "audio-unsupported";
+      message: string;
     };
+
+export const AUDIO_UNSUPPORTED_MESSAGE =
+  "This browser cannot encode audio. Use the local CLI: npm run video -- <story.yaml>";
 
 export type BrowserRenderLockLease =
   | {
@@ -153,6 +162,26 @@ type OutputWritable = NonNullable<
 
 const asError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
+
+export const AUDIO_ENCODER_LOAD_MESSAGE =
+  "Browser render could not load its audio encoder. Reload the page to try again. Preview, YAML export, and the local CLI remain available.";
+
+// The WASM AAC encoder is a lazily loaded chunk: a stale tab after a deploy, or a
+// network failure, makes the dynamic import fail, and only a reload can retry it.
+const CHUNK_LOAD_FAILURE =
+  /dynamically imported module|importing a module script failed|ChunkLoadError|Loading chunk [\w-]+ failed/iu;
+
+/** The message for a capability probe that threw (the result is cached for the page session). */
+export const describeCapabilityProbeFailure = (
+  error: unknown,
+  hasAudio: boolean,
+): string => {
+  const reason = asError(error).message;
+
+  return hasAudio && CHUNK_LOAD_FAILURE.test(reason)
+    ? AUDIO_ENCODER_LOAD_MESSAGE
+    : `Browser render capability detection failed: ${reason}. Preview, YAML export, and the local CLI remain available.`;
+};
 
 export const materializeBrowserDownloadBlob = async (
   blob: Blob,
@@ -259,8 +288,16 @@ export const checkBrowserRenderCapability = async (
   options: {
     canRender?: CapabilityChecker;
     getLocks?: () => LockManager | undefined;
+    /**
+     * The Story has audio (`storyHasAudio`). The probe then asks for AAC at the
+     * output bitrate; `canRenderMediaOnWeb` registers the WASM AAC encoder
+     * itself when the browser has no native one and only then decides. A silent
+     * Story keeps the v0.3 probe: muted, no audio codec, no audio cost (D-13).
+     */
+    hasAudio?: boolean;
   } = {},
 ): Promise<BrowserRenderCapability> => {
+  const hasAudio = options.hasAudio === true;
   const getLocks = options.getLocks ?? defaultGetLocks;
 
   if (getLocks() === undefined) {
@@ -280,19 +317,34 @@ export const checkBrowserRenderCapability = async (
       videoCodec: "h264",
       width: VIDEO_WIDTH,
       height: VIDEO_HEIGHT,
-      muted: true,
+      ...(hasAudio
+        ? {
+            muted: false,
+            audioCodec: "aac" as const,
+            audioBitrate: OUTPUT_AUDIO_BITRATE,
+          }
+        : {muted: true}),
     });
   } catch (error) {
     return {
       kind: "unsupported",
-      message: `Browser render capability detection failed: ${asError(error).message}. Preview, YAML export, and the local CLI remain available.`,
+      message: describeCapabilityProbeFailure(error, hasAudio),
     };
   }
 
   if (!result.canRender) {
-    const messages = result.issues
-      .filter((issue) => issue.severity === "error")
-      .map((issue) => issue.message);
+    const errors = result.issues.filter((issue) => issue.severity === "error");
+
+    // Only the audio is missing: say so, and point at the CLI.
+    if (
+      hasAudio &&
+      errors.length > 0 &&
+      errors.every((issue) => issue.type === "audio-codec-unsupported")
+    ) {
+      return {kind: "audio-unsupported", message: AUDIO_UNSUPPORTED_MESSAGE};
+    }
+
+    const messages = errors.map((issue) => issue.message);
 
     return {
       kind: "unsupported",
@@ -309,6 +361,11 @@ export const checkBrowserRenderCapability = async (
       message:
         "Browser MP4 export requires Remotion's web-fs output target. This browser only offers the in-memory fallback, so use YAML export and the local CLI instead.",
     };
+  }
+
+  // AINV-9: never a different audio codec than the one the output promises.
+  if (hasAudio && result.resolvedAudioCodec !== "aac") {
+    return {kind: "audio-unsupported", message: AUDIO_UNSUPPORTED_MESSAGE};
   }
 
   return {kind: "ready"};
@@ -646,7 +703,8 @@ export const startBrowserRenderTransaction = async (
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
   const checkCapability =
-    options.checkCapability ?? (() => checkBrowserRenderCapability());
+    options.checkCapability ??
+    (() => checkBrowserRenderCapability({hasAudio: storyHasAudio(story)}));
   const capability = await checkCapability();
 
   if (capability.kind !== "ready") {
