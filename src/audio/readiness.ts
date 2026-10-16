@@ -66,6 +66,14 @@ export const bundledAudioUnavailableMessage = (id: string): string =>
 export const bundledAudioMismatchMessage = (id: string): string =>
   `Bundled audio ${id} does not match the catalog.`;
 
+/**
+ * Render readiness (exact total, not the acceptance lower bound): the text of the
+ * block when `compileTimeline(...)` is longer than the browser's 300 s.
+ * `seconds` is the exact total, rounded up to whole seconds.
+ */
+export const storyTooLongWithVoicesMessage = (seconds: number): string =>
+  `This Story is longer than 300 s with its voices (${seconds} s).`;
+
 /** The one text for a source that failed a render preflight (metadata or decode). */
 export const audioFileUnusableMessage = (name: string): string =>
   `Audio file ${name} cannot be used for rendering.`;
