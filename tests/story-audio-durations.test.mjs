@@ -54,14 +54,18 @@ describe("one duration map per page (AUDIO-001 final-review follow-up)", () => {
       return statSync(path).isDirectory() ? walk(path) : [path];
     });
 
-  it("App and Preview never build their own map: only the hook (and the interim render path) call storyAudioDurations", () => {
+  it("App and Preview never build their own map: only the hook and the render path (the render's own durations) call storyAudioDurations", () => {
     const callers = walk("src/web")
       .filter((path) => /\.(ts|tsx)$/u.test(path))
       .filter((path) => /\bstoryAudioDurations\(/u.test(readFileSync(path, "utf8")))
       .map((path) => path.replaceAll("\\", "/"))
       .sort();
 
-    assert.deepEqual(callers, ["src/web/browserRender.ts", "src/web/useStoryAudioDurations.ts"]);
+    assert.deepEqual(callers, [
+      "src/web/audioRenderPreparation.ts",
+      "src/web/browserRender.ts",
+      "src/web/useStoryAudioDurations.ts",
+    ]);
   });
 
   it("App passes the hook's map to the Player config and to Preview", () => {

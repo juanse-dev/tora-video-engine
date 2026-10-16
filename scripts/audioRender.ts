@@ -16,18 +16,16 @@ import {
   type BundledAudio,
 } from "../src/audio/catalog.ts";
 import {MAX_AUDIO_STORY_SECONDS} from "../src/audio/constants.ts";
-import {compileAudioPlan} from "../src/audio/plan.ts";
 import {
   audioFileUnusableMessage,
   bundledAudioMismatchMessage,
   bundledAudioUnavailableMessage,
+  compileFrozenAudioPlan,
   describeAudioRefRoles,
   describeAudioRole,
 } from "../src/audio/readiness.ts";
 import {
-  audioSourceState,
   buildAudioSourceMap,
-  resolveAudioSrc,
   type AudioSource,
   type AudioSourceMap,
 } from "../src/audio/sources.ts";
@@ -38,9 +36,7 @@ import {
   STAGED_LOCAL_ASSETS_DIR,
   type LocalAssetSourceMap,
 } from "../src/localAssets/sources.ts";
-import {compileTimeline} from "../src/story/timeline.ts";
 import type {Story} from "../src/story/types.ts";
-import {VIDEO_FPS} from "../src/videoConfig.ts";
 import {checkAudioFileDecodes, type AudioPreflightDeps} from "./audioPreflight.ts";
 
 /** A bundled file must be as long as its catalog says (D-8), within this much. */
@@ -134,15 +130,12 @@ const stageBundledFile = async (
   return {source: {kind: "static", path: stagedPath}, staged: absolute};
 };
 
-const planProblems = (story: Story, audioDurations: AudioDurationMap, audioSources: AudioSourceMap): string[] => {
-  const plan = compileAudioPlan({
-    story,
-    timeline: compileTimeline(story, VIDEO_FPS, audioDurations),
-    fps: VIDEO_FPS,
-    audioDurations,
-    sourceState: (ref) =>
-      audioSourceState(resolveAudioSrc(ref, audioSources, "explicit")),
-  });
+const planProblems = (
+  story: Story,
+  audioDurations: AudioDurationMap,
+  audioSources: AudioSourceMap,
+): string[] => {
+  const plan = compileFrozenAudioPlan(story, audioDurations, audioSources);
   const problems: string[] = [];
 
   for (const issue of plan.issues) {

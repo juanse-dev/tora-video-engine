@@ -8,9 +8,16 @@ import {
   type LocalAudioUsage,
   type PayloadMetadata,
 } from "../localAssets/readiness.ts";
+import {compileTimeline} from "../story/timeline.ts";
 import type {Story} from "../story/types.ts";
-import type {AudioRef} from "./catalog.ts";
-import type {AudioRole} from "./plan.ts";
+import {VIDEO_FPS} from "../videoConfig.ts";
+import type {AudioDurationMap, AudioRef} from "./catalog.ts";
+import {compileAudioPlan, type AudioPlan, type AudioRole} from "./plan.ts";
+import {
+  audioSourceState,
+  resolveAudioSrc,
+  type AudioSourceMap,
+} from "./sources.ts";
 
 /** One use of an audio ref by the Story: the music, or the sfx / voice of a scene. */
 export type StoryAudioRef = {
@@ -149,3 +156,23 @@ export const describeAudioBudgetFailure = (
 
   return sentences.join(" ");
 };
+
+/**
+ * The plan of a render's frozen `audioSources` (both renderers, AINV-5): bundled
+ * ids resolve only through the map (`"explicit"`), so a source that is not in it
+ * is pending, never a silent fallback. A render may start only when this plan has
+ * no `pending-audio`, `missing-audio` or `story-too-long-for-audio` issue.
+ */
+export const compileFrozenAudioPlan = (
+  story: Story,
+  audioDurations: AudioDurationMap,
+  audioSources: AudioSourceMap,
+): AudioPlan =>
+  compileAudioPlan({
+    story,
+    timeline: compileTimeline(story, VIDEO_FPS, audioDurations),
+    fps: VIDEO_FPS,
+    audioDurations,
+    sourceState: (ref) =>
+      audioSourceState(resolveAudioSrc(ref, audioSources, "explicit")),
+  });

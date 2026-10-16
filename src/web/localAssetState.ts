@@ -1,3 +1,4 @@
+import type {AudioDurationMap} from "../audio/catalog.ts";
 import {
   describeAudioBudgetFailure,
   evaluateAudioBudget,
@@ -12,6 +13,7 @@ import {
   type LocalAssetUsage,
   type PayloadMetadata,
 } from "../localAssets/readiness.ts";
+import type {AudioSourceMap} from "../audio/sources.ts";
 import type {LocalAssetRef} from "../localAssets/refs.ts";
 import type {LocalAssetSourceMap} from "../localAssets/sources.ts";
 import type {Story} from "../story/schema.ts";
@@ -63,6 +65,10 @@ export type LocalAssetRenderPreparation =
   | {
       ok: true;
       localAssetSources: LocalAssetSourceMap | undefined;
+      /** The frozen audio sources of a render with audio (AUDIO-005); absent for a Story without audio. */
+      audioSources?: AudioSourceMap;
+      /** The durations of the verified local audio the render measured; absent for a Story without audio. */
+      localAudioDurations?: AudioDurationMap;
       release: () => void;
     }
   | {ok: false; message: string};
