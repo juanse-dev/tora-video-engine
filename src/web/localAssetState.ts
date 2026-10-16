@@ -1,4 +1,8 @@
 import {
+  describeAudioBudgetFailure,
+  evaluateAudioBudget,
+} from "../audio/readiness.ts";
+import {
   collectStoryLocalAssetUsages,
   describeBudgetFailure,
   evaluateLocalAssetBudget,
@@ -91,6 +95,36 @@ export const unavailableState = (
   failureMessage,
 });
 
+/**
+ * The over-budget state when the image budget or the audio budget failed
+ * (each budget counts its own refs and bytes), else null. Both messages are
+ * shown when both failed; `budget` is the first failure (images first).
+ */
+const overBudgetState = (
+  usages: readonly LocalAssetUsage[],
+  image: LocalAssetBudgetResult,
+  audio: LocalAssetBudgetResult,
+): Extract<StoryLocalAssetState, {kind: "over-budget"}> | null => {
+  if (image.ok && audio.ok) {
+    return null;
+  }
+
+  const messages = [
+    ...(image.ok ? [] : [describeBudgetFailure(image)]),
+    ...(audio.ok ? [] : [describeAudioBudgetFailure(audio)]),
+  ];
+
+  return {
+    kind: "over-budget",
+    usages: [...usages],
+    budget: (image.ok ? audio : image) as Extract<
+      LocalAssetBudgetResult,
+      {ok: false}
+    >,
+    message: messages.join(" "),
+  };
+};
+
 export const resolveStoryLocalAssets = async (
   story: Story,
   library: AssetLibraryStatus,
@@ -108,18 +142,18 @@ export const resolveStoryLocalAssets = async (
     return {kind: "none"};
   }
 
-  // 2. The ref cap counts images only (the audio budget is AUDIO-005's) and is
-  // checked first, independent of storage.
-  const imageUsages = splitUsagesByCategory(usages).image;
-  const refBudget = evaluateLocalAssetBudget(imageUsages, new Map());
+  // 2. Each budget counts its own refs (images 64, audio 64), checked first,
+  // independent of storage. Budgets never see the unfiltered list.
+  const {image: imageUsages, audio: audioUsages} =
+    splitUsagesByCategory(usages);
+  const refFailure = overBudgetState(
+    usages,
+    evaluateLocalAssetBudget(imageUsages, new Map()),
+    evaluateAudioBudget(audioUsages, new Map()),
+  );
 
-  if (!refBudget.ok) {
-    return {
-      kind: "over-budget",
-      usages,
-      budget: refBudget,
-      message: describeBudgetFailure(refBudget),
-    };
+  if (refFailure !== null) {
+    return refFailure;
   }
 
   if (library.kind !== "ready") {
@@ -202,23 +236,28 @@ export const resolveStoryLocalAssets = async (
   }
 
   // 5. D-10: over-budget is decided from metadata alone, before any blob read.
-  // Only image digests with image metadata take part (audio has its own budget later).
-  const imageDigests = new Set(imageUsages.map((usage) => usage.digest));
-  const imageMetadata = new Map(
-    [...metadataByDigest].filter(
-      ([digest, metadata]) =>
-        imageDigests.has(digest) && payloadKindOf(metadata) === "image",
-    ),
-  );
-  const budget = evaluateLocalAssetBudget(imageUsages, imageMetadata);
+  // Each budget takes the digests of its own usages with metadata of its own kind.
+  const metadataOfKind = (
+    kind: "image" | "audio",
+    categoryUsages: readonly LocalAssetUsage[],
+  ) => {
+    const digests = new Set(categoryUsages.map((usage) => usage.digest));
 
-  if (!budget.ok) {
-    return {
-      kind: "over-budget",
-      usages,
-      budget,
-      message: describeBudgetFailure(budget),
-    };
+    return new Map(
+      [...metadataByDigest].filter(
+        ([digest, metadata]) =>
+          digests.has(digest) && payloadKindOf(metadata) === kind,
+      ),
+    );
+  };
+  const budgetFailure = overBudgetState(
+    usages,
+    evaluateLocalAssetBudget(imageUsages, metadataOfKind("image", imageUsages)),
+    evaluateAudioBudget(audioUsages, metadataOfKind("audio", audioUsages)),
+  );
+
+  if (budgetFailure !== null) {
+    return budgetFailure;
   }
 
   // 6. Sequential verification; one failed digest does not stop the others.

@@ -1,3 +1,13 @@
+import {
+  MAX_BROWSER_STORY_AUDIO_BYTES,
+  MAX_BROWSER_STORY_AUDIO_REFS,
+} from "../localAssets/limits.ts";
+import {
+  isAudioPayload,
+  type LocalAssetBudgetResult,
+  type LocalAudioUsage,
+  type PayloadMetadata,
+} from "../localAssets/readiness.ts";
 import type {Story} from "../story/types.ts";
 import type {AudioRef} from "./catalog.ts";
 import type {AudioRole} from "./plan.ts";
@@ -59,3 +69,75 @@ export const bundledAudioMismatchMessage = (id: string): string =>
 /** The one text for a source that failed a render preflight (metadata or decode). */
 export const audioFileUnusableMessage = (name: string): string =>
   `Audio file ${name} cannot be used for rendering.`;
+
+/**
+ * The audio budget of a Story in the browser (D-17), separate from the image
+ * budget: it receives audio usages and audio metadata only.
+ * refCount = number of usages (missing ones included); bytes are summed once
+ * per distinct digest that has metadata. A value equal to its limit passes.
+ * Metadata that is not audio fails closed ("metadata"), never as a number.
+ */
+export const evaluateAudioBudget = (
+  usages: readonly LocalAudioUsage[],
+  metadataByDigest: ReadonlyMap<string, PayloadMetadata>,
+): LocalAssetBudgetResult => {
+  const refCount = usages.length;
+  let totalBytes = 0;
+  let nonAudioMetadata = false;
+
+  for (const digest of new Set(usages.map((usage) => usage.digest))) {
+    const metadata = metadataByDigest.get(digest);
+
+    if (metadata === undefined) {
+      continue;
+    }
+
+    if (!isAudioPayload(metadata) || !Number.isFinite(metadata.byteSize)) {
+      nonAudioMetadata = true;
+      continue;
+    }
+
+    totalBytes += metadata.byteSize;
+  }
+
+  const exceeded: Array<"refs" | "bytes" | "pixels" | "metadata"> = [];
+
+  if (refCount > MAX_BROWSER_STORY_AUDIO_REFS) {
+    exceeded.push("refs");
+  }
+
+  if (totalBytes > MAX_BROWSER_STORY_AUDIO_BYTES) {
+    exceeded.push("bytes");
+  }
+
+  if (nonAudioMetadata) {
+    exceeded.push("metadata");
+  }
+
+  // There is no pixel budget for audio: the shared result type carries a 0.
+  return exceeded.length === 0
+    ? {ok: true, refCount, totalBytes, totalPixels: 0}
+    : {ok: false, refCount, totalBytes, totalPixels: 0, exceeded};
+};
+
+export const describeAudioBudgetFailure = (
+  result: Extract<LocalAssetBudgetResult, {ok: false}>,
+): string => {
+  const sentences: string[] = [];
+
+  for (const limit of result.exceeded) {
+    if (limit === "refs") {
+      sentences.push(
+        `This Story uses more than ${MAX_BROWSER_STORY_AUDIO_REFS} audio files.`,
+      );
+    } else if (limit === "bytes") {
+      sentences.push(
+        `This Story's audio is larger than ${MAX_BROWSER_STORY_AUDIO_BYTES / (1024 * 1024)} MiB.`,
+      );
+    } else if (limit === "metadata") {
+      sentences.push("An audio file's stored details do not match an audio file.");
+    }
+  }
+
+  return sentences.join(" ");
+};

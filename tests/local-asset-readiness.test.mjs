@@ -9,6 +9,12 @@ import {
   storyHasLocalAssetRefs,
 } from "../src/localAssets/readiness.ts";
 import {
+  describeAudioBudgetFailure,
+  evaluateAudioBudget,
+} from "../src/audio/readiness.ts";
+import {
+  MAX_BROWSER_STORY_AUDIO_BYTES,
+  MAX_BROWSER_STORY_AUDIO_REFS,
   MAX_BROWSER_STORY_LOCAL_ASSET_BYTES,
   MAX_BROWSER_STORY_LOCAL_ASSET_PIXELS,
   MAX_BROWSER_STORY_LOCAL_ASSET_REFS,
@@ -312,4 +318,136 @@ test("splitUsagesByCategory feeds the image budget with image usages only", () =
   const result = evaluateLocalAssetBudget(split.image, new Map([[digestOf(1), metadata(100, 4, 5)]]));
 
   assert.deepEqual(result, {ok: true, refCount: 1, totalBytes: 100, totalPixels: 20});
+});
+
+// --- AUDIO-005: the audio budget ------------------------------------------------
+
+const MIB = 1024 * 1024;
+
+const audioUsageOf = (n) => ({
+  ref: audioRefOf(n),
+  category: "audio",
+  digest: digestOf(n),
+  sceneIndexes: [0],
+  roles: ["voice"],
+});
+
+const audioMetadata = (byteSize) => ({
+  kind: "audio",
+  mimeType: "audio/wav",
+  byteSize,
+  container: "wave",
+  codec: "pcm",
+  durationSeconds: 10,
+  sampleRate: 48_000,
+  channels: 2,
+});
+
+test("the audio budget passes at 64 refs and fails at 65 with its own sentence", () => {
+  const at = (count) =>
+    evaluateAudioBudget(
+      Array.from({length: count}, (_, i) => audioUsageOf(i + 1)),
+      new Map(),
+    );
+
+  assert.equal(MAX_BROWSER_STORY_AUDIO_REFS, 64);
+  assert.deepEqual(at(64), {ok: true, refCount: 64, totalBytes: 0, totalPixels: 0});
+
+  const over = at(65);
+
+  assert.equal(over.ok, false);
+  assert.deepEqual(over.exceeded, ["refs"]);
+  assert.equal(describeAudioBudgetFailure(over), "This Story uses more than 64 audio files.");
+});
+
+test("the audio budget sums bytes once per digest: 256 MiB passes, one byte more fails", () => {
+  const usages = [1, 2, 3, 4].map(audioUsageOf);
+  const at = (last) =>
+    evaluateAudioBudget(
+      [...usages, audioUsageOf(1)],
+      new Map([
+        [digestOf(1), audioMetadata(64 * MIB)],
+        [digestOf(2), audioMetadata(64 * MIB)],
+        [digestOf(3), audioMetadata(64 * MIB)],
+        [digestOf(4), audioMetadata(last)],
+      ]),
+    );
+
+  assert.equal(MAX_BROWSER_STORY_AUDIO_BYTES, 256 * MIB);
+  assert.equal(at(64 * MIB).ok, true);
+  assert.equal(at(64 * MIB).totalBytes, 256 * MIB);
+
+  const over = at(64 * MIB + 1);
+
+  assert.equal(over.ok, false);
+  assert.deepEqual(over.exceeded, ["bytes"]);
+  assert.equal(describeAudioBudgetFailure(over), "This Story's audio is larger than 256 MiB.");
+});
+
+test("each budget counts only its own refs and bytes", () => {
+  const imageUsages = Array.from({length: 64}, (_, i) => usageOf(i + 1));
+  const audioUsages = Array.from({length: 64}, (_, i) => audioUsageOf(500 + i));
+  const imageMeta = new Map(imageUsages.map((u) => [u.digest, metadata(4 * MIB, 1000, 1000)]));
+  const audioMeta = new Map(audioUsages.map((u) => [u.digest, audioMetadata(4 * MIB)]));
+  const story = withScenes(
+    storyOf(imageUsages.map((u) => [u.ref, "office"])),
+    audioUsages.map((u) => ({voice: {src: u.ref}})),
+  );
+  const split = splitUsagesByCategory(collectStoryLocalAssetUsages(story));
+  const all = new Map([...imageMeta, ...audioMeta]);
+
+  // 64 + 64 refs, 256 MiB + 256 MiB: each budget is exactly at its limit.
+  assert.deepEqual(evaluateLocalAssetBudget(split.image, all), {
+    ok: true,
+    refCount: 64,
+    totalBytes: 256 * MIB,
+    totalPixels: 64_000_000,
+  });
+  assert.deepEqual(evaluateAudioBudget(split.audio, all), {
+    ok: true,
+    refCount: 64,
+    totalBytes: 256 * MIB,
+    totalPixels: 0,
+  });
+
+  // One more of either kind fails only that kind.
+  assert.equal(evaluateLocalAssetBudget([...split.image, usageOf(99)], all).ok, false);
+  assert.equal(evaluateAudioBudget(split.audio, all).ok, true);
+  assert.equal(evaluateAudioBudget([...split.audio, audioUsageOf(999)], all).ok, false);
+  assert.equal(evaluateLocalAssetBudget(split.image, all).ok, true);
+});
+
+test("both budgets fail closed on metadata of the other kind, never adding NaN", () => {
+  const image = metadata(1000);
+  const imageResult = evaluateAudioBudget([audioUsageOf(1)], new Map([[digestOf(1), image]]));
+
+  assert.equal(imageResult.ok, false);
+  assert.deepEqual(imageResult.exceeded, ["metadata"]);
+  assert.equal(imageResult.totalBytes, 0);
+  assert.equal(
+    describeAudioBudgetFailure(imageResult),
+    "An audio file's stored details do not match an audio file.",
+  );
+
+  const audioResult = evaluateLocalAssetBudget(
+    [usageOf(1)],
+    new Map([[digestOf(1), audioMetadata(1000)]]),
+  );
+
+  assert.deepEqual(audioResult.exceeded, ["metadata"]);
+  assert.equal(audioResult.totalPixels, 0);
+});
+
+test("image metadata without finite dimensions fails closed instead of making the pixel total NaN", () => {
+  for (const bad of [
+    {...metadata(1000), width: undefined},
+    {...metadata(1000), height: Number.NaN},
+    {...metadata(1000), width: Number.POSITIVE_INFINITY},
+  ]) {
+    const result = evaluateLocalAssetBudget([usageOf(1)], new Map([[digestOf(1), bad]]));
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.exceeded, ["metadata"]);
+    assert.equal(Number.isNaN(result.totalPixels), false);
+  }
 });

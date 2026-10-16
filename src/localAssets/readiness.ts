@@ -208,7 +208,7 @@ export const evaluateLocalAssetBudget = (
       continue;
     }
 
-    if (isAudioPayload(metadata)) {
+    if (isAudioPayload(metadata) || !Number.isFinite(metadata.width * metadata.height)) {
       nonImageMetadata = true;
       continue;
     }
