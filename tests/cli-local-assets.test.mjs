@@ -1714,6 +1714,21 @@ describe("local-assets/audio: staging", () => {
     await assert.rejects(stat(join(repoRoot, "public", "__local-assets")), {code: "ENOENT"});
   });
 
+  it("tells onStaged the path inside the category folder, which is what a person calls the file", async () => {
+    const root = await makeRoot();
+    const voice = fixtureBytes("tone-440-2.2s.wav");
+    const staged = [];
+
+    await put(root, "audio/takes/voice.wav", voice);
+    await stageInto(audioStoryOf({voices: [audioRefOf(voice)]}), root, {
+      onStaged: (ref, stagedPath, relativePath) => staged.push([ref, stagedPath, relativePath]),
+    });
+
+    assert.equal(staged.length, 1);
+    assert.equal(staged[0][0], audioRefOf(voice));
+    assert.equal(staged[0][2], "takes/voice.wav");
+  });
+
   it("stages images and audio of one Story independently, each category from its own folder", async () => {
     const root = await makeRoot();
     const pose = await fixture("pose-magenta.png");
