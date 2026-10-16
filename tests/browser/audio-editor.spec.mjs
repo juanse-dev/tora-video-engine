@@ -1074,3 +1074,201 @@ test("music and voice draw in their lanes from the stored peaks, and deleting th
   await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "music-0 sfx-0");
   await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(20);
 });
+
+// ---------------------------------------------------------------------------
+// Plan warnings in the editor (AUDIO-004 task 7)
+// ---------------------------------------------------------------------------
+
+const notice = (page, text) =>
+  page.getByRole("status").filter({hasText: text});
+// The warning blocks are always mounted (a live region that appears already full is not announced reliably):
+// tests read them by name and "no warning" means an empty block.
+const noticeFor = (page, name) => page.locator(`[data-audio-notices="${name}"]`);
+const sceneNotices = (page) => page.locator("[data-scene-audio] [data-audio-notices]");
+const sceneYaml = ({music, tail = [], sfx, voice, durations = [2, 2]}) =>
+  [
+    "title: Warnings",
+    ...(music === undefined ? [] : ["music:", `  src: ${music}`, ...tail]),
+    "scenes:",
+    ...durations.flatMap((duration, index) => [
+      "  - type: dialogue",
+      "    pose: formal",
+      "    background: office",
+      `    text: Scene ${index + 1}`,
+      ...(index === 0 && sfx !== undefined ? ["    sfx:", `      src: ${sfx}`] : []),
+      ...(index === 0 && voice !== undefined ? ["    voice:", `      src: ${voice}`] : []),
+      `    duration: ${duration}`,
+    ]),
+    "",
+  ].join("\n");
+const importLibrary = async (page, names) => {
+  const refs = [];
+
+  for (const name of names) {
+    await importInput(page).setInputFiles(upload(name));
+
+    const label = name.replace(/\.[^.]+$/u, "");
+
+    await expect(card(page, label)).toHaveCount(1);
+    refs.push(await card(page, label).getAttribute("data-local-asset-card"));
+  }
+
+  return refs;
+};
+
+test("Voice is cut by X s appears on the scene's voice, and goes when the scene is long enough", async ({page}) => {
+  await openApp(page);
+
+  const [voiceRef] = await importLibrary(page, ["tone-440-2.2s.wav"]);
+
+  await applyYaml(page, sceneYaml({voice: voiceRef, durations: [1, 2]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(notice(page, "Voice is cut by 1.2 s.")).toHaveCount(1);
+  await expect(noticeFor(page, "voice")).toHaveText("Voice is cut by 1.2 s.");
+  await expect(noticeFor(page, "sfx")).toHaveText("");
+
+  await page.getByLabel("Duration (seconds)").fill("3");
+  await expect(notice(page, "Voice is cut")).toHaveCount(0);
+});
+
+test("the music panel warns when fades do not fit, when the music is too short to loop and when the mix may clip", async ({page}) => {
+  await openApp(page);
+
+  const [musicRef] = await importLibrary(page, ["tone-220-12s.wav"]);
+
+  await applyYaml(page, sceneYaml({music: musicRef, tail: ["  fadeIn: 2", "  fadeOut: 2"], durations: [1, 2]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(noticeFor(page, "music")).toHaveText("Fades shortened to fit the Story.");
+  await expect(music(page)).toHaveAttribute("aria-describedby", await noticeFor(page, "music").getAttribute("id"));
+
+  // 12 s of full-volume music in a 20 s Story loops and crosses over at sqrt(2).
+  await applyYaml(page, sceneYaml({music: musicRef, durations: [10, 10]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(noticeFor(page, "music")).toHaveText("The mix may clip (peak gain 1.5).");
+  await page.getByLabel("Music volume").fill("0.5");
+  await expect(noticeFor(page, "music")).toHaveText("");
+
+  await applyYaml(page, sceneYaml({music: "pop"}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(noticeFor(page, "music")).toHaveText("This music is too short to loop (under 1 s); it plays once.");
+});
+
+test("deleting the voice from My audio shows Audio not available on the voice field and removes its track while ding keeps playing", async ({page}) => {
+  await page.addInitScript(installStartCounter);
+  await openApp(page);
+
+  const [voiceRef] = await importLibrary(page, ["tone-440-2.2s.wav"]);
+
+  await applyYaml(page, sceneYaml({sfx: "ding", voice: voiceRef, durations: [3, 2]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0 voice-0");
+  await expect(sceneNotices(page)).toHaveText(["", ""]);
+
+  await page.getByRole("button", {name: "Delete tone-440-2.2s", exact: true}).click();
+  await page.getByRole("dialog").getByRole("button", {name: "Delete asset anyway"}).click();
+
+  await expect(noticeFor(page, "voice")).toHaveText("Audio not available: render blocked.");
+  await expect(voice(page)).toHaveAttribute("aria-describedby", await noticeFor(page, "voice").getAttribute("id"));
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0");
+  await expect(page.getByRole("button", {name: "Render MP4"})).toBeDisabled();
+
+  // ding still sounds after unmute.
+  await unmuteAndPlay(page);
+  await expect.poll(() => starts(page), {timeout: 10_000}).toBeGreaterThan(0);
+});
+
+test("an undecodable ding shows Audio not available on the sound effect field with no other interaction", async ({page}) => {
+  await page.route(DING, (route) =>
+    route.fulfill({status: 200, contentType: "audio/wav", body: "this is not audio"}),
+  );
+  await openApp(page);
+  await applyYaml(page, sceneYaml({sfx: "ding"}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(noticeFor(page, "sfx")).toHaveText("Audio not available: render blocked.");
+  await expect(page.locator('[data-timeline-placeholder="hatched"]')).toHaveText("Sound effect");
+});
+
+test("while ding is loading the field shows no text, and when every request fails it shows the load error with a Retry that works once the route is fixed", async ({page}) => {
+  test.setTimeout(45_000);
+
+  const requests = dingRequests(page);
+  let broken = true;
+
+  await page.route(DING, (route) => (broken ? route.abort("failed") : route.continue()));
+  await openApp(page);
+  await applyYaml(page, sceneYaml({sfx: "ding"}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect.poll(() => requests.length).toBeGreaterThanOrEqual(1);
+  // Retrying: a plain block, no warning.
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveAttribute("data-timeline-placeholder", "plain");
+  await expect(sceneNotices(page)).toHaveText(["", ""]);
+
+  const retry = page.getByRole("button", {name: "Retry loading Ding"});
+
+  await expect(retry).toBeVisible({timeout: 15_000});
+  expect(requests).toHaveLength(4);
+  await expect(noticeFor(page, "sfx")).toContainText("Audio could not be loaded.");
+  // The select is described by its warning, so a screen reader reads both together.
+  await expect(sfx(page)).toHaveAttribute("aria-describedby", await noticeFor(page, "sfx").getAttribute("id"));
+  await expect(page.locator("[data-timeline-placeholder]")).toHaveAttribute("data-timeline-placeholder", "plain");
+
+  broken = false;
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  // The button is gone: focus went back to the field instead of falling to the page.
+  await expect(sfx(page)).toBeFocused();
+  await expect(sceneNotices(page)).toHaveText(["", ""]);
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0");
+  await expect.poll(() => paintedPixels(lane(page, "effects"))).toBeGreaterThan(20);
+  expect(requests).toHaveLength(5);
+});
+
+test("warnings are not shown while a visual draft is pending, because the plan belongs to the Active Story", async ({page}) => {
+  await openApp(page);
+
+  const [voiceRef] = await importLibrary(page, ["tone-440-2.2s.wav"]);
+
+  await applyYaml(page, sceneYaml({voice: voiceRef, durations: [1, 2]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(notice(page, "Voice is cut by 1.2 s.")).toHaveCount(1);
+  await music(page).selectOption("ding");
+  await page.getByLabel("Fade in (seconds)").fill("11");
+  await expect(appShell(page)).toHaveAttribute("data-visual-pending", "true");
+  await expect(notice(page, "Voice is cut")).toHaveCount(0);
+  await page.getByLabel("Fade in (seconds)").fill("1");
+  await expect(appShell(page)).toHaveAttribute("data-visual-pending", "false");
+  await expect(notice(page, "Voice is cut by 1.2 s.")).toHaveCount(1);
+});
+
+test("a local voice and ding both play after unmute, each from a blob: URL, with no network request for ding beyond the store's one", async ({page}) => {
+  const requests = dingRequests(page);
+
+  await page.addInitScript(installStartCounter);
+  await page.addInitScript(() => {
+    window.__blobFetches = [];
+
+    const original = window.fetch;
+
+    window.fetch = function fetchSpy(input, ...rest) {
+      const target = typeof input === "string" ? input : input.url;
+
+      if (typeof target === "string" && target.startsWith("blob:")) {
+        window.__blobFetches.push(target);
+      }
+
+      return original.call(this, input, ...rest);
+    };
+  });
+  await openApp(page);
+
+  const [voiceRef] = await importLibrary(page, ["tone-440-2.2s.wav"]);
+
+  await applyYaml(page, sceneYaml({sfx: "ding", voice: voiceRef, durations: [6, 2]}));
+  await page.getByRole("button", {name: "Open visual editor"}).click();
+  await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "sfx-0 voice-0");
+  await unmuteAndPlay(page);
+  await expect.poll(() => starts(page), {timeout: 10_000}).toBeGreaterThan(0);
+  expect(requests).toHaveLength(1);
+  // Each of the two tracks is read from its own blob: URL (the library's verified payload and the store's checked ding).
+  expect(new Set(await page.evaluate(() => window.__blobFetches)).size).toBe(2);
+});

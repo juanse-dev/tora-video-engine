@@ -1118,3 +1118,24 @@ h1 {
   background: #f8fafc;
   pointer-events: none;
 }
+
+/* AUDIO-004: warnings next to the audio controls. */
+.audio-notices {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+.audio-notices:empty {
+  margin: 0;
+}
+
+.audio-notices p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -2125,6 +2125,7 @@ export const App = () => {
               activeStory={activeStory}
               audioDurations={audioDurations}
               fps={previewConfig.fps}
+              audioPlanView={audioPlanView}
               onEvaluationChange={onVisualEvaluationChange}
             />
           ) : yamlState !== null ? (

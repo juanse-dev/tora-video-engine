@@ -1,3 +1,4 @@
+import {useId} from "react";
 import type {AudioRef} from "../../audio/catalog.ts";
 import {
   MAX_FADE_SECONDS,
@@ -9,6 +10,8 @@ import type {
   LibraryAudioChoices,
   MusicNumberField,
 } from "../audio/audioFields.ts";
+import type {AudioNotice} from "../audio/audioNotices.ts";
+import {AudioNotices} from "./AudioNotices.tsx";
 import {AudioSelect, NumberField, UnitSlider} from "./AudioControls.tsx";
 
 type MusicPanelProps = {
@@ -16,6 +19,8 @@ type MusicPanelProps = {
   library: LibraryAudioChoices;
   /** Field errors of the visual draft, keyed `music.fadeIn` and so on. */
   errors: Record<string, string>;
+  /** The plan's warnings for the Story-level audio. */
+  notices: readonly AudioNotice[];
   onSourceChange: (src: AudioRef | null) => void;
   onNumberChange: (field: MusicNumberField, value: number) => void;
 };
@@ -25,50 +30,65 @@ export const MusicPanel = ({
   music,
   library,
   errors,
+  notices,
   onSourceChange,
   onNumberChange,
-}: MusicPanelProps) => (
-  <section className="music-panel" aria-label="Music" data-music-panel="">
-    <AudioSelect
-      label="Music"
-      value={music?.src}
-      library={library}
-      onChange={onSourceChange}
-    />
+}: MusicPanelProps) => {
+  const id = useId();
+  const selectId = `${id}-select`;
+  const noticesId = `${id}-notices`;
 
-    {music === undefined ? null : (
-      <div className="music-settings">
-        <UnitSlider
-          label="Music volume"
-          caption="Volume"
-          value={music.volume ?? DEFAULT_AUDIO_VOLUME}
-          onChange={(value) => onNumberChange("volume", value)}
-        />
-        <UnitSlider
-          label="Music ducking"
-          caption="Ducking"
-          value={music.duck ?? DEFAULT_MUSIC_DUCK}
-          onChange={(value) => onNumberChange("duck", value)}
-        />
-        <NumberField
-          label="Fade in (seconds)"
-          value={music.fadeIn ?? 0}
-          min={0}
-          max={MAX_FADE_SECONDS}
-          step={0.1}
-          error={errors["music.fadeIn"]}
-          onCommit={(value) => onNumberChange("fadeIn", value)}
-        />
-        <NumberField
-          label="Fade out (seconds)"
-          value={music.fadeOut ?? 0}
-          min={0}
-          max={MAX_FADE_SECONDS}
-          step={0.1}
-          error={errors["music.fadeOut"]}
-          onCommit={(value) => onNumberChange("fadeOut", value)}
-        />
-      </div>
-    )}
-  </section>
-);
+  return (
+    <section className="music-panel" aria-label="Music" data-music-panel="">
+      <AudioSelect
+        id={selectId}
+        describedBy={noticesId}
+        label="Music"
+        value={music?.src}
+        library={library}
+        onChange={onSourceChange}
+      />
+
+      {music === undefined ? null : (
+        <div className="music-settings">
+          <UnitSlider
+            label="Music volume"
+            caption="Volume"
+            value={music.volume ?? DEFAULT_AUDIO_VOLUME}
+            onChange={(value) => onNumberChange("volume", value)}
+          />
+          <UnitSlider
+            label="Music ducking"
+            caption="Ducking"
+            value={music.duck ?? DEFAULT_MUSIC_DUCK}
+            onChange={(value) => onNumberChange("duck", value)}
+          />
+          <NumberField
+            label="Fade in (seconds)"
+            value={music.fadeIn ?? 0}
+            min={0}
+            max={MAX_FADE_SECONDS}
+            step={0.1}
+            error={errors["music.fadeIn"]}
+            onCommit={(value) => onNumberChange("fadeIn", value)}
+          />
+          <NumberField
+            label="Fade out (seconds)"
+            value={music.fadeOut ?? 0}
+            min={0}
+            max={MAX_FADE_SECONDS}
+            step={0.1}
+            error={errors["music.fadeOut"]}
+            onCommit={(value) => onNumberChange("fadeOut", value)}
+          />
+        </div>
+      )}
+      <AudioNotices
+        id={noticesId}
+        name="music"
+        focusId={selectId}
+        notices={notices}
+      />
+    </section>
+  );
+};
