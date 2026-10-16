@@ -154,6 +154,13 @@ const run = async (binary, dir, args, options = {}) => {
   });
 };
 
+/** Runs the repository ffmpeg with `args`; resolves `{stdout, stderr}` and rejects on a non-zero exit. */
+export const runFfmpeg = (args, options = {}) => {
+  const {ffmpeg, dir} = resolveFfmpegBinaries();
+
+  return run(ffmpeg, dir, args, options);
+};
+
 const parseRate = (value) => {
   const [numerator, denominator = "1"] = String(value ?? "").split("/");
   const rate = Number(numerator) / Number(denominator);
