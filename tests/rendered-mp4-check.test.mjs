@@ -143,6 +143,21 @@ describe("verifyRenderedMp4", () => {
       /^Error: The rendered MP4 is not the planned one: its audio is mp4a\.40\.5, not AAC-LC \(mp4a\.40\.2\)\.$/u,
     );
   });
+
+  it("says so, with the planned-file prefix and the reader's message, when the bytes are not an MP4", async () => {
+    await assert.rejects(
+      verifyRenderedMp4(new Blob(["x"]), EXPECTED, {
+        readFacts: async () => {
+          throw new Error("moov box missing");
+        },
+      }),
+      /^Error: The rendered MP4 is not the planned one: it could not be read \(moov box missing\)\.$/u,
+    );
+    await assert.rejects(
+      verifyRenderedMp4(new Blob(["not an mp4 at all"]), EXPECTED),
+      /^Error: The rendered MP4 is not the planned one: it could not be read \(.+\)\.$/u,
+    );
+  });
 });
 
 describe("readMp4Facts on real MP4 files", () => {

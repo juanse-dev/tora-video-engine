@@ -817,18 +817,6 @@ export const startBrowserRenderTransaction = async (
   }
 
   const localAssetSources = preparation?.localAssetSources;
-  const verifyOutput = storyHasAudio(story)
-    ? (options.verifyOutput ?? verifyRenderedMp4)
-    : undefined;
-  // The plan's length: the frames the renderer is asked to produce.
-  const plannedFrames =
-    verifyOutput === undefined
-      ? 0
-      : getStoryMetadata(
-          story,
-          VIDEO_FPS,
-          storyAudioDurations(story, preparation?.localAudioDurations),
-        ).durationInFrames;
 
   try {
     const cleanup =
@@ -853,6 +841,19 @@ export const startBrowserRenderTransaction = async (
     let pending: BrowserRenderPendingOutcome;
 
     try {
+      // Inside the try: a throw here fails the render and releases the lease.
+      const verifyOutput = storyHasAudio(story)
+        ? (options.verifyOutput ?? verifyRenderedMp4)
+        : undefined;
+      // The plan's length: the frames the renderer is asked to produce.
+      const plannedFrames =
+        verifyOutput === undefined
+          ? 0
+          : getStoryMetadata(
+              story,
+              VIDEO_FPS,
+              storyAudioDurations(story, preparation?.localAudioDurations),
+            ).durationInFrames;
       const renderStory = options.renderStory ?? renderStoryMediaOnWeb;
       const result = await renderStory(story, {
         signal: options.signal,

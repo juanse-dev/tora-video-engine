@@ -1675,6 +1675,26 @@ describe("AUDIO-005 the rendered MP4 is checked before it is handed over", () =>
     assert.deepEqual(calls, ["cleanup", "cleanup", "lock-release", "release"]);
   });
 
+  it("a throw while planning the length fails the render and still releases the lock and the preparation", async () => {
+    // A scene that cannot compile to a safe frame count: getStoryMetadata throws.
+    const unplannable = {
+      ...audioStory,
+      scenes: [...audioStory.scenes, {...audioStory.scenes[0], duration: 1e300, voice: undefined}],
+    };
+    const {calls, run} = transaction(unplannable, {
+      renderStory: async () => {
+        calls.push("render");
+
+        return {getBlob: async () => new Blob(["mp4"]), internalState: {}};
+      },
+    });
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "failure");
+    assert.match(outcome.error.message, /safe frame count/u);
+    assert.deepEqual(calls, ["cleanup", "cleanup", "lock-release", "release"]);
+  });
+
   it("a Story without audio is never checked", async () => {
     let checked = false;
     const {calls, run} = transaction(exampleStory, {

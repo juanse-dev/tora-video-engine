@@ -48,9 +48,11 @@ const encodesAacNatively = (page) =>
   );
 
 const requireRenderSupport = async (page) => {
-  if (!(await isBrowserRenderSupported(page))) {
-    test.skip(true, "Browser web rendering is unavailable in this runtime");
-  }
+  // A failure, not a skip: these specs are the only proof of the real audio render (as in render-cancel-cleanup).
+  expect(
+    await isBrowserRenderSupported(page),
+    "Browser MP4 rendering must be ready in this runtime",
+  ).toBe(true);
 };
 
 const storyYaml = (scenes, title = "Audio render") =>

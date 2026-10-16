@@ -144,9 +144,10 @@ export const storyHasLocalAssetRefs = (story: Story): boolean =>
   );
 
 /**
- * Any local ref, image or audio: the gate of the render paths (the browser
- * resolves and prepares local assets, the CLI stages them) once audio can be
- * rendered. `storyHasLocalAssetRefs` stays image-only: it drives persistence v2.
+ * Any local ref, image or audio: the gate of the browser render path (it
+ * resolves and prepares local assets once audio can be rendered). The CLI gates
+ * on `storyHasLocalAssetRefs(story) || hasAudio` instead. `storyHasLocalAssetRefs`
+ * stays image-only: it drives persistence v2.
  */
 export const storyHasAnyLocalAssetRef = (story: Story): boolean =>
   storyHasLocalAssetRefs(story) || collectAudioUsages(story).length > 0;

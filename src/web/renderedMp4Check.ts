@@ -161,10 +161,19 @@ export const verifyRenderedMp4 = async (
   expected: RenderedMp4Expectation,
   deps: {readFacts?: (blob: Blob) => Promise<Mp4Facts>} = {},
 ): Promise<void> => {
-  const problem = checkMp4Facts(
-    await (deps.readFacts ?? readMp4Facts)(blob),
-    expected,
-  );
+  let facts: Mp4Facts;
+
+  try {
+    facts = await (deps.readFacts ?? readMp4Facts)(blob);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+
+    throw new Error(
+      `The rendered MP4 is not the planned one: it could not be read (${reason}).`,
+    );
+  }
+
+  const problem = checkMp4Facts(facts, expected);
 
   if (problem !== null) {
     throw new Error(`The rendered MP4 is not the planned one: ${problem}.`);
