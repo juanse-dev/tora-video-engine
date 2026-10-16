@@ -196,6 +196,39 @@ describe("buildStoryAudioMounts", () => {
   });
 });
 
+describe("renders never fall back to another decode path", () => {
+  const story = {
+    title: "Mounts",
+    scenes: [scene(), scene({sfx: {src: "ding"}})],
+  };
+  const sources = {ding: {kind: "url", url: "blob:ding"}};
+  const mountsFor = (isRendering) =>
+    buildStoryAudioMounts({
+      plan: planFor(story, sources, "explicit"),
+      sources,
+      policy: "explicit",
+      audioArmed: true,
+      isRendering,
+    });
+
+  it("disallows the <Html5Audio> fallback while rendering and keeps it for the Player and Studio", () => {
+    assert.equal(mountsFor(true)[0].disallowFallbackToHtml5Audio, true);
+    assert.equal(mountsFor(false)[0].disallowFallbackToHtml5Audio, false);
+    assert.equal(mountsFor(undefined)[0].disallowFallbackToHtml5Audio, false);
+  });
+
+  it("StoryAudio reads isRendering from Remotion and passes the flag to <Audio>", async () => {
+    const source = await read("src/components/StoryAudio.tsx");
+
+    assert.match(source, /useRemotionEnvironment()/);
+    assert.match(source, /isRendering/);
+    assert.match(
+      source,
+      /disallowFallbackToHtml5Audio={mount.disallowFallbackToHtml5Audio}/,
+    );
+  });
+});
+
 describe("StoryAudio and the composition (source contract)", () => {
   it("StoryAudio maps plan mounts to Sequence + Audio from @remotion/media, with no native loop", async () => {
     const source = await read("src/components/StoryAudio.tsx");
