@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
 import {describe, it} from "node:test";
 import {buildLocalAssetRef} from "../src/localAssets/refs.ts";
 import {exampleStory} from "../src/story/exampleStory.ts";
@@ -1584,6 +1585,7 @@ describe("AUDIO-005 browser render with audio", () => {
         return {getBlob: async () => new Blob(["mp4"]), internalState: {}};
       },
       materializeBlob: async (blob) => blob,
+      verifyOutput: async () => undefined,
     });
 
     assert.equal(outcome.kind, "success");
@@ -1592,5 +1594,105 @@ describe("AUDIO-005 browser render with audio", () => {
       "lock-release",
       "release",
     ]);
+  });
+});
+
+describe("AUDIO-005 the rendered MP4 is checked before it is handed over", () => {
+  const VOICE = `local:audio:sha256:${"d".repeat(64)}`;
+  const audioStory = {
+    title: "Voice",
+    scenes: [
+      {
+        type: "intro",
+        pose: "formal",
+        background: "office",
+        text: "Auto",
+        duration: "auto",
+        voice: {src: VOICE},
+      },
+    ],
+  };
+  const transaction = (story, extra = {}) => {
+    const calls = [];
+
+    return {
+      calls,
+      run: () =>
+        startBrowserRenderTransaction(story, {
+          signal: new AbortController().signal,
+          checkCapability: readyCapability,
+          acquireLock: async () => ({mode: "owner", release: () => calls.push("lock-release")}),
+          cleanup: async () => {
+            calls.push("cleanup");
+
+            return {ok: true, attempts: 1};
+          },
+          prepareLocalAssets: async () => ({
+            ok: true,
+            localAssetSources: undefined,
+            audioSources: {[VOICE]: {kind: "url", url: "blob:voice"}},
+            localAudioDurations: {[VOICE]: 2.2},
+            release: () => calls.push("release"),
+          }),
+          renderStory: async () => ({getBlob: async () => new Blob(["mp4"]), internalState: {}}),
+          materializeBlob: async (blob) => blob,
+          consumeBlob: () => {
+            calls.push("download");
+          },
+          ...extra,
+        }),
+    };
+  };
+
+  it("hands the planned length and geometry to the check, then downloads", async () => {
+    const seen = [];
+    const {calls, run} = transaction(audioStory, {
+      verifyOutput: async (blob, expected) => {
+        seen.push([await blob.text(), expected]);
+      },
+    });
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "success");
+    // ceil((2.2 + 0.5) x 30) = 81 frames from the preparation's measured duration.
+    assert.deepEqual(seen, [
+      ["mp4", {frames: 81, fps: 30, width: 1080, height: 1920, hasAudio: true}],
+    ]);
+    // Pre-render cleanup, the download, post-render cleanup, then the lock and the preparation's lease.
+    assert.deepEqual(calls, ["cleanup", "download", "cleanup", "lock-release", "release"]);
+  });
+
+  it("a rejected check is a failed render: nothing is downloaded and the storage is still cleaned", async () => {
+    const {calls, run} = transaction(audioStory, {
+      verifyOutput: async () => {
+        throw new Error("The rendered MP4 is not the planned one: its audio is mp4a.40.5, not AAC-LC (mp4a.40.2).");
+      },
+    });
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "failure");
+    assert.match(outcome.error.message, /not AAC-LC/u);
+    assert.deepEqual(calls, ["cleanup", "cleanup", "lock-release", "release"]);
+  });
+
+  it("a Story without audio is never checked", async () => {
+    let checked = false;
+    const {calls, run} = transaction(exampleStory, {
+      prepareLocalAssets: undefined,
+      verifyOutput: async () => {
+        checked = true;
+      },
+    });
+    const outcome = await run();
+
+    assert.equal(outcome.kind, "success");
+    assert.equal(checked, false);
+    assert.deepEqual(calls, ["cleanup", "download", "cleanup", "lock-release"]);
+  });
+
+  it("without an injected check, a Story with audio is verified by verifyRenderedMp4", async () => {
+    const source = await readFile(new URL("../src/web/browserRender.ts", import.meta.url), "utf8");
+
+    assert.match(source, /options\.verifyOutput \?\? verifyRenderedMp4/u);
   });
 });

@@ -36,6 +36,10 @@ import {
 } from "./browserPolicy.ts";
 import type {LocalAssetRenderPreparation} from "./localAssetState.ts";
 import {storiesSemanticallyEqual} from "./persistence.ts";
+import {
+  verifyRenderedMp4,
+  type RenderedMp4Expectation,
+} from "./renderedMp4Check.ts";
 
 export type {LocalAssetRenderPreparation};
 
@@ -749,6 +753,15 @@ export const startBrowserRenderTransaction = async (
     prepareLocalAssets?: (
       signal: AbortSignal,
     ) => Promise<LocalAssetRenderPreparation>;
+    /**
+     * Checks the rendered MP4 before it is handed over (before `consumeBlob`);
+     * a rejection is a failed render. Runs only for a Story with audio (AINV-9):
+     * a silent Story keeps the v0.3 behavior. Defaults to `verifyRenderedMp4`.
+     */
+    verifyOutput?: (
+      blob: Blob,
+      expected: RenderedMp4Expectation,
+    ) => Promise<void>;
   },
 ): Promise<BrowserRenderTransactionOutcome> => {
   const checkCapability =
@@ -804,6 +817,18 @@ export const startBrowserRenderTransaction = async (
   }
 
   const localAssetSources = preparation?.localAssetSources;
+  const verifyOutput = storyHasAudio(story)
+    ? (options.verifyOutput ?? verifyRenderedMp4)
+    : undefined;
+  // The plan's length: the frames the renderer is asked to produce.
+  const plannedFrames =
+    verifyOutput === undefined
+      ? 0
+      : getStoryMetadata(
+          story,
+          VIDEO_FPS,
+          storyAudioDurations(story, preparation?.localAudioDurations),
+        ).durationInFrames;
 
   try {
     const cleanup =
@@ -845,6 +870,14 @@ export const startBrowserRenderTransaction = async (
         const materializeBlob =
           options.materializeBlob ?? materializeBrowserDownloadBlob;
         const blob = await materializeBlob(webFsBlob);
+
+        await verifyOutput?.(blob, {
+          frames: plannedFrames,
+          fps: VIDEO_FPS,
+          width: VIDEO_WIDTH,
+          height: VIDEO_HEIGHT,
+          hasAudio: true,
+        });
 
         if (options.signal.aborted) {
           pending = {kind: "cancelled"};
