@@ -1,6 +1,6 @@
 # AUDIO-002 — Audio plan, composition and Player audio
 
-Status: implemented (interim: the Player resolves bundled sounds with static-fallback until AUDIO-004; no local audio library until AUDIO-003)
+Status: implemented (the Player resolves bundled sounds through AUDIO-004's bundled-audio store with the explicit policy; Studio keeps static-fallback)
 
 Depends on: AUDIO-001. Read [README](./README.md) first.
 
@@ -81,7 +81,7 @@ Resolution, for both kinds of ref: an entry `url` → `src = url`; `static` → 
 
 Who uses which policy, so that no unverified bundled file is ever mounted by a product path:
 
-- **Player** (`Preview`): `"explicit"`. Its map gets one entry per bundled id the Story references, from AUDIO-004's bundled-audio store: `pending` while the check runs, retries or waits for a manual retry, `{kind: "url", url}` (the object URL of the very Blob that passed inspect + decode + truncation rule) on success, `unavailable` on a terminal failure. Until AUDIO-004 lands, the AUDIO-002 Player uses `"static-fallback"` (an interim, unreleased state; AUDIO-004 task 3 switches it and removes the fallback from the Player).
+- **Player** (`Preview`): `"explicit"`. Its map gets one entry per bundled id the Story references, from AUDIO-004's bundled-audio store: `pending` while the check runs, retries or waits for a manual retry, `{kind: "url", url}` (the object URL of the very Blob that passed inspect + decode + truncation rule) on success, `unavailable` on a terminal failure.
 - **Browser render** (AUDIO-005): `"explicit"`, with an object URL of the preflighted bytes for every bundled id.
 - **CLI** (AUDIO-005): `"explicit"`, with the staged copy (`static`) for every bundled id.
 - **Remotion Studio** (`npm run dev`, default props only): `"static-fallback"`.
@@ -159,8 +159,7 @@ The plan tests pass, the Player plays bundled sounds after unmute, and every v0.
 
 ## Implementation notes
 
-- `Preview` (not `App`) builds `audioSources` with `buildAudioSourceMap(story, localAssetSources, noBundledAudio)`, where `noBundledAudio` is a stub returning `undefined`, until AUDIO-004's bundled-audio store replaces it; `App.tsx` is unchanged by this spec.
-- The Player passes `bundledAudioPolicy: "static-fallback"` and a source test pins it; AUDIO-004 task 3 changes both (the Player switches to `"explicit"` with the store's entries).
+- Preview receives `audioSources` from App (AUDIO-004) and passes `bundledAudioPolicy: "explicit"`; the source test now pins `"explicit"`.
 - The arming rule, the mount list and the volume store are pure modules tested in Node: `src/audio/mounts.ts`, `src/web/audioArming.ts`, `src/web/playerVolume.ts`.
 - Volume is restored with the Player's `initialVolume` prop from a validated `tora.playerVolume` and persisted on the Player's `volumechange` event, not through the Player ref.
 - Test hooks on `.preview-frame`: `data-tora-muted` and `data-tora-audio-armed`.

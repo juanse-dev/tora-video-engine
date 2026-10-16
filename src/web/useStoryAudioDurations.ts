@@ -5,6 +5,7 @@ import {isLocalAudioRef, type LocalAudioRef} from "../localAssets/refs.ts";
 import type {Story} from "../story/types.ts";
 import type {AssetLibraryStatus} from "./assetLibrary/coordination.ts";
 import {readAudioDurations} from "./assetLibrary/library.ts";
+import type {AssetLibraryStore} from "./assetLibrary/store.ts";
 
 const NO_DURATIONS: AudioDurationMap = Object.freeze({});
 
@@ -29,6 +30,39 @@ export const sameDurationMap = (
 };
 
 /**
+ * One read of the Story's local durations, for the effect of
+ * `useStoryAudioDurations`. `settle` gets the map exactly once, unless the
+ * returned cancel function ran first (the effect's cleanup: the Story's refs,
+ * the library or the refresh token changed), in which case a result that
+ * arrives late is discarded. No library, no local refs or a failed read give
+ * the empty map (the refs stay missing and the bundled durations still apply).
+ */
+export const startAudioDurationRead = (
+  store: Pick<AssetLibraryStore, "getAssetRow" | "getPayloadMeta"> | null,
+  refs: readonly LocalAudioRef[],
+  settle: (durations: AudioDurationMap) => void,
+): (() => void) => {
+  let cancelled = false;
+  const deliver = (next: AudioDurationMap) => {
+    if (!cancelled) {
+      settle(next);
+    }
+  };
+
+  if (store === null || refs.length === 0) {
+    deliver(NO_DURATIONS);
+  } else {
+    void readAudioDurations(store, refs).then(deliver, () =>
+      deliver(NO_DURATIONS),
+    );
+  }
+
+  return () => {
+    cancelled = true;
+  };
+};
+
+/**
  * The page's ONE audio duration map: bundled durations from the catalog plus the
  * durations of the Story's own local audio refs, read from the library (never
  * from the visible library page). Recomputed when the Story's set of local audio
@@ -45,29 +79,13 @@ export const useStoryAudioDurations = (
   const store = library?.kind === "ready" ? library.store : null;
   const [local, setLocal] = useState<AudioDurationMap>(NO_DURATIONS);
 
-  useEffect(() => {
-    const refs = parseLocalAudioRefsKey(refsKey);
-    let cancelled = false;
-    const settle = (next: AudioDurationMap) => {
-      if (!cancelled) {
-        setLocal((current) => (sameDurationMap(current, next) ? current : next));
-      }
-    };
-
-    if (store === null || refs.length === 0) {
-      settle(NO_DURATIONS);
-
-      return;
-    }
-
-    void readAudioDurations(store, refs).then(settle, () =>
-      settle(NO_DURATIONS),
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [store, refsKey, refreshToken]);
+  useEffect(
+    () =>
+      startAudioDurationRead(store, parseLocalAudioRefsKey(refsKey), (next) =>
+        setLocal((current) => (sameDurationMap(current, next) ? current : next)),
+      ),
+    [store, refsKey, refreshToken],
+  );
 
   return useMemo(() => storyAudioDurations(story, local), [story, local]);
 };

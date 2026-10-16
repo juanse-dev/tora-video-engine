@@ -21,7 +21,7 @@ test("an M4A (AAC-LC) file imports with its duration and survives a reload", asy
     await section(page)
       .locator('.my-assets-toolbar input[type="file"]')
       .setInputFiles({name, mimeType: "audio/mp4", buffer: Buffer.from(bytes)});
-    await expect(section(page).getByRole("status")).toHaveText(`Imported "${label}".`);
+    await expect(section(page).locator('[role="status"]:not([data-audio-preview-error])')).toHaveText(`Imported "${label}".`);
     await expect(
       page.locator(`[data-local-asset-card="${refOf(bytes)}"] [data-audio-duration]`),
     ).toHaveText(duration);

@@ -1,7 +1,7 @@
 import {Player, type PlayerRef} from "@remotion/player";
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
-import {buildAudioSourceMap} from "../../audio/sources.ts";
 import type {AudioDurationMap} from "../../audio/catalog.ts";
+import type {AudioSourceMap} from "../../audio/sources.ts";
 import {storyHasAudio} from "../../audio/storyAudio.ts";
 import type {LocalAssetSourceMap} from "../../localAssets/sources.ts";
 import {ToraVideo} from "../../Video.tsx";
@@ -10,18 +10,28 @@ import type {Story} from "../../story/types.ts";
 import type {StoryLocalAssetState} from "../localAssetState.ts";
 import {describeLocalAssetPreviewStatus} from "../localAssetPreviewStatus.ts";
 import {applyArmingAction, nextArmingAction} from "../audioArming.ts";
+import type {EditorAudioPlanView} from "../audio/audioPlanView.ts";
+import {audioPreview} from "../audio/previewPlayback.ts";
+import type {StoryWaveforms} from "../audio/storyWaveforms.ts";
 import {readStoredPlayerVolume, storePlayerVolume} from "../playerVolume.ts";
 import {getWebPlayerConfig} from "../previewConfig.ts";
-
-// Until the bundled-audio store exists (AUDIO-004) no bundled sound has an
-// entry, and the Player resolves bundled ids with "static-fallback".
-const noBundledAudio = () => undefined;
+import {AudioTimeline} from "./AudioTimeline.tsx";
 
 type PreviewProps = {
   story?: Story;
   localAssetSources?: LocalAssetSourceMap;
   localAssetState?: StoryLocalAssetState;
   audioDurations: AudioDurationMap;
+  /**
+   * The Player's audio sources, assembled once by App: the verified local audio
+   * entries plus one entry per bundled id from the page's bundled-audio store.
+   * The Player mounts a bundled sound only from its checked blob: URL.
+   */
+  audioSources: AudioSourceMap;
+  /** The timeline and plan the audio timeline under the Player shows (the Player's own plan, recompiled from the same inputs). */
+  audioPlanView: EditorAudioPlanView;
+  /** The peaks the timeline draws, by ref (stored local peaks and the bundled store's). */
+  waveforms: StoryWaveforms;
 };
 
 export const Preview = ({
@@ -29,15 +39,14 @@ export const Preview = ({
   localAssetSources,
   localAssetState,
   audioDurations,
+  audioSources,
+  audioPlanView,
+  waveforms,
 }: PreviewProps) => {
   const config = getWebPlayerConfig(story, audioDurations);
   const playerRef = useRef<PlayerRef>(null);
   const frameProbeRef = useRef<HTMLDivElement>(null);
   const overBudget = localAssetState?.kind === "over-budget";
-  const audioSources = useMemo(
-    () => buildAudioSourceMap(story, localAssetSources, noBundledAudio),
-    [story, localAssetSources],
-  );
   const hasAudio = storyHasAudio(story);
   // The Player starts muted and a Story's tracks only mount after the Player
   // muted itself, so `armed` flips in a layout effect (see below).
@@ -56,7 +65,7 @@ export const Preview = ({
       localAssetSources,
       audioDurations,
       audioSources,
-      bundledAudioPolicy: "static-fallback" as const,
+      bundledAudioPolicy: "explicit" as const,
       audioArmed,
     }),
     [story, localAssetSources, audioDurations, audioSources, audioArmed],
@@ -94,6 +103,9 @@ export const Preview = ({
     const onVolumeChange = ({detail}: {detail: {volume: number}}) => {
       storePlayerVolume(detail.volume);
     };
+    // The Player and a My audio preview never sound together: starting either
+    // stops the other (the preview pauses the Player it is handed here).
+    const onPlay = () => audioPreview().playerStarted();
 
     if (frameProbeRef.current !== null) {
       frameProbeRef.current.dataset.toraMuted = String(player.isMuted());
@@ -102,8 +114,12 @@ export const Preview = ({
     player.addEventListener("frameupdate", onFrameUpdate);
     player.addEventListener("mutechange", onMuteChange);
     player.addEventListener("volumechange", onVolumeChange);
+    player.addEventListener("play", onPlay);
+    audioPreview().setPlayerPause(() => player.pause());
 
     return () => {
+      audioPreview().setPlayerPause(null);
+      player.removeEventListener("play", onPlay);
       player.removeEventListener("frameupdate", onFrameUpdate);
       player.removeEventListener("mutechange", onMuteChange);
       player.removeEventListener("volumechange", onVolumeChange);
@@ -154,6 +170,13 @@ export const Preview = ({
       />
       {statusLine !== null ? (
         <p data-local-asset-status>{statusLine}</p>
+      ) : null}
+      {hasAudio ? (
+        <AudioTimeline
+          view={audioPlanView}
+          waveforms={waveforms}
+          playerRef={playerRef}
+        />
       ) : null}
     </div>
   );

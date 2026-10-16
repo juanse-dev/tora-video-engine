@@ -1,6 +1,8 @@
-import {useContext} from "react";
+import {useContext, useEffect} from "react";
 import type {LocalAudioRef} from "../../localAssets/refs.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
+import {audioPreview} from "../audio/previewPlayback.ts";
+import {useAudioPreviewState} from "../audio/useAudioPreview.ts";
 import {AssetLibraryContext} from "../assetLibraryContext.ts";
 import type {MutationCancelable} from "../localAssetManageFlow.ts";
 import {
@@ -8,6 +10,7 @@ import {
   type LocalAssetPageEntry,
 } from "../localAssetPageController.ts";
 import {
+  activeStoryAudioUsage,
   audioRefUsesMusic,
   fileAcceptFor,
   localOnlyDisclosure,
@@ -26,8 +29,25 @@ type MyAudioSectionProps = {
   scenes: readonly SceneAudioValues[];
 };
 
-// Nothing is selected from this list yet (AUDIO-004 adds the scene-field pickers).
+// Nothing is selected from this list, by design: the Music, Sound effect and Voice selects pick sounds.
 const ignoreImportedRef = () => {};
+
+/**
+ * Ends a preview whose card is not listed (another page of the list, or the row
+ * is gone): it has no Stop button left. Renders nothing; a component only so
+ * that its effect can sit below `MyAudioSection`'s early return.
+ */
+const StopPreviewWhenUnlisted = ({listedRefs}: {listedRefs: readonly string[]}) => {
+  useEffect(() => {
+    const current = audioPreview().getState();
+
+    if (current.kind !== "idle" && !listedRefs.includes(current.ref)) {
+      audioPreview().stopRef(current.ref);
+    }
+  });
+
+  return null;
+};
 
 /**
  * The minimal My audio list: heading with the total, the local-only
@@ -40,12 +60,16 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
   const page = useLocalAssetPage("audio");
   const imports = useLocalAssetImport("audio", ignoreImportedRef);
   const manage = useLocalAssetManage();
+  const preview = useAudioPreviewState();
+
+  // Leaving the editor (or this section) ends a preview that is still playing.
+  useEffect(() => () => audioPreview().stop(), []);
 
   if (context === null) {
     return null;
   }
 
-  const {status, localAssetState, transitionPending} = context;
+  const {status, localAssetState, transitionPending, acquirePreviewUrl} = context;
   const ready = status.kind === "ready";
   const story = {music, scenes};
   const usageOf = (ref: LocalAudioRef) => ({
@@ -73,6 +97,7 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
     onDelete: () => {
       const usage = usageOf(entry.ref as LocalAudioRef);
 
+      audioPreview().stopRef(entry.ref as LocalAudioRef);
       imports.clearOutcome();
       manage.requestDelete({
         ref: entry.ref,
@@ -90,6 +115,9 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
 
   return (
     <div className="my-assets my-audio" data-my-audio="">
+      <StopPreviewWhenUnlisted
+        listedRefs={ready ? visibleEntries.map((entry) => entry.ref) : []}
+      />
       <h5>{ready ? `My audio · ${page.total}` : "My audio"}</h5>
       {ready ? (
         <>
@@ -149,7 +177,7 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
               assetRef={item.usage.ref}
               category="audio"
               kind={item.status === "ready" ? "missing" : item.status}
-              {...usageOf(item.usage.ref as LocalAudioRef)}
+              {...activeStoryAudioUsage(item.usage)}
               unavailableMessage={item.detail ?? ""}
               // Only a disabled or unavailable LIBRARY hides the action (R11).
               onImportMatching={
@@ -171,6 +199,20 @@ export const MyAudioSection = ({music, scenes}: MyAudioSectionProps) => {
                   selected={false}
                   canManage
                   {...cardActions(entry)}
+                  preview={{
+                    active:
+                      (preview.kind === "loading" || preview.kind === "playing") &&
+                      preview.ref === entry.ref,
+                    error:
+                      preview.kind === "failed" && preview.ref === entry.ref
+                        ? preview.message
+                        : null,
+                    onToggle: () =>
+                      void audioPreview().toggle(
+                        entry.ref as LocalAudioRef,
+                        acquirePreviewUrl,
+                      ),
+                  }}
                 />
               ))
             : null}

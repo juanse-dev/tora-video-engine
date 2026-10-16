@@ -3,6 +3,16 @@ import {formatAudioDuration} from "../../audio/formatDuration.ts";
 import {shortAssetId} from "../../localAssets/sources.ts";
 import type {MutationCancelable} from "../localAssetManageFlow.ts";
 import type {LocalAssetPageEntry} from "../localAssetPageController.ts";
+import {WaveformCanvas} from "./WaveformCanvas.tsx";
+
+/** The audio preview controls of a My audio card. */
+export type LocalAssetCardPreview = {
+  /** The sound is loading or playing: the button says Stop. */
+  active: boolean;
+  /** Shown under the card when the preview could not start or broke off. */
+  error: string | null;
+  onToggle: () => void;
+};
 
 type LocalAssetCardProps = {
   entry: LocalAssetPageEntry;
@@ -13,7 +23,7 @@ type LocalAssetCardProps = {
   canManage: boolean;
   /** An App transition panel is open, so a dialog cannot open now. */
   deleteDisabled?: boolean;
-  /** Absent: the card is not selectable (My audio, until AUDIO-004's pickers). */
+  /** Absent: the card is not selectable (My audio cards never are: the Music, Sound effect and Voice selects pick sounds). */
   onSelect?: () => void;
   /**
    * Resolves to an inline error message, or null once the rename is done (or
@@ -25,6 +35,8 @@ type LocalAssetCardProps = {
     onCancelable: MutationCancelable,
   ) => Promise<string | null>;
   onDelete: () => void;
+  /** My audio only: the Play / Stop toggle. */
+  preview?: LocalAssetCardPreview;
 };
 
 /**
@@ -43,6 +55,7 @@ export const LocalAssetCard = ({
   onSelect,
   onRename,
   onDelete,
+  preview,
 }: LocalAssetCardProps) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -199,9 +212,17 @@ export const LocalAssetCard = ({
   const body = (
     <>
       {isAudio ? (
-        <span className="local-asset-thumbnail-fallback" aria-hidden="true">
-          ♪
-        </span>
+        entry.waveform !== undefined && entry.audio !== undefined ? (
+          <WaveformCanvas
+            className="waveform-thumbnail"
+            waveform={entry.waveform}
+            seconds={entry.audio.durationSeconds}
+          />
+        ) : (
+          <span className="local-asset-thumbnail-fallback" aria-hidden="true">
+            ♪
+          </span>
+        )
       ) : entry.thumbnailUrl === null ? (
         <span className="local-asset-thumbnail-fallback" aria-hidden="true">
           {label}
@@ -256,11 +277,26 @@ export const LocalAssetCard = ({
       {canManage ? (
         // Each button names its asset, so a screen reader can tell the cards apart.
         <div className="local-asset-actions">
+          {preview === undefined ? null : (
+            <button
+              type="button"
+              aria-label={`${preview.active ? "Stop" : "Play"} ${label}`}
+              onClick={preview.onToggle}
+            >
+              {preview.active ? "Stop" : "Play"}
+            </button>
+          )}
           <button
             ref={renameButtonRef}
             type="button"
             aria-label={`Rename ${label}`}
             onClick={() => {
+              // The rename form has no Stop button: a preview that is playing
+              // (Stop shown) is stopped here, since toggling the active card stops it.
+              if (preview?.active === true) {
+                preview.onToggle();
+              }
+
               editSessionRef.current += 1;
               setDraft(label);
               setError(null);
@@ -279,6 +315,13 @@ export const LocalAssetCard = ({
           </button>
         </div>
       ) : null}
+      {preview === undefined ? null : (
+        // Always mounted, only its text changes: a live region that appears
+        // already holding its message is not reliably announced.
+        <small className="audio-preview-error" role="status" data-audio-preview-error="">
+          {preview.error ?? ""}
+        </small>
+      )}
     </div>
   );
 };

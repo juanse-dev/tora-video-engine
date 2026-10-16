@@ -940,3 +940,202 @@ h1 {
   width: min(220px, 100%);
   height: 10px;
 }
+
+/* AUDIO-004: music panel, scene audio and the Auto checkbox. */
+.music-panel {
+  margin-top: 20px;
+  padding: 4px 14px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.music-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.scene-audio {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.range-field .range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-field input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  accent-color: #94a3b8;
+}
+
+.range-field output {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: #d7dfeb;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 620px) {
+  .music-settings,
+  .scene-audio {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* AUDIO-004: My audio card waveform thumbnail and preview error. */
+.audio-grid .waveform-thumbnail {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 5 / 1;
+  background: #070a0f;
+}
+
+.audio-preview-error {
+  display: block;
+  padding: 0 8px 8px;
+  color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.audio-preview-error:empty {
+  padding: 0;
+}
+
+/* AUDIO-004: the audio timeline under the Player. */
+.audio-timeline {
+  position: relative;
+  margin: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(5, 8, 13, 0.72);
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.audio-timeline:focus-visible {
+  outline: 2px solid #94a3b8;
+  outline-offset: 2px;
+}
+
+.timeline-lanes {
+  position: relative;
+}
+
+.timeline-scenes {
+  position: relative;
+  height: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timeline-scene {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
+  font-size: 10px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.timeline-lane {
+  position: relative;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.timeline-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.timeline-block {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 4px;
+  color: #cbd5e1;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.timeline-block span {
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.timeline-block-plain {
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.timeline-block-hatched {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(248, 113, 113, 0.28) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.timeline-band-sfx {
+  bottom: 50%;
+}
+
+.timeline-band-voice {
+  top: 50%;
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #f8fafc;
+  pointer-events: none;
+}
+
+/* AUDIO-004: warnings next to the audio controls. */
+.audio-notices {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+.audio-notices:empty {
+  margin: 0;
+}
+
+.audio-notices p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -124,7 +124,7 @@ describe("AUDIO-002 Player length and audio props", () => {
     assert.match(source, /const audioArmed = hasAudio && armed/);
     assert.match(source, /useLayoutEffect\(/);
     assert.match(source, /applyArmingAction\(/);
-    assert.match(source, /bundledAudioPolicy: "static-fallback" as const/);
+    assert.match(source, /bundledAudioPolicy: "explicit" as const/);
     assert.doesNotMatch(source, /Stories are video-only/);
   });
 });

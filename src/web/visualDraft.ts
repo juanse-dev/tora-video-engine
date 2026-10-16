@@ -29,6 +29,11 @@ export type VisualSceneDraft = {
   duration: string;
   sfx?: AudioClip;
   voice?: AudioClip;
+  /**
+   * Editor memory, never part of the candidate Story: the numeric duration the
+   * scene had before `Auto (from voice)` was checked, restored when it is unchecked.
+   */
+  lastDuration?: string;
 };
 
 export type VisualStoryDraft = {
@@ -99,6 +104,34 @@ export const updateVisualScene = (
     sceneIndex === index ? {...scene, ...patch} : scene,
   ),
 });
+
+/** Replaces one whole scene: the audio edits that must change several fields in ONE candidate. */
+export const replaceVisualScene = (
+  draft: VisualStoryDraft,
+  index: number,
+  scene: VisualSceneDraft,
+): VisualStoryDraft => ({
+  ...draft,
+  scenes: draft.scenes.map((current, sceneIndex) =>
+    sceneIndex === index ? scene : current,
+  ),
+});
+
+/** Sets or removes (`undefined`) the Story's music. */
+export const setVisualMusic = (
+  draft: VisualStoryDraft,
+  music: Music | undefined,
+): VisualStoryDraft => {
+  const next = {...draft};
+
+  if (music === undefined) {
+    delete next.music;
+  } else {
+    next.music = music;
+  }
+
+  return next;
+};
 
 const durationFromInput = (value: string): number | "auto" =>
   value.trim() === "auto"

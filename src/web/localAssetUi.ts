@@ -4,6 +4,7 @@ import {
   type LocalAssetRef,
   type LocalAudioRef,
 } from "../localAssets/refs.ts";
+import type {LocalAssetUsage} from "../localAssets/readiness.ts";
 import {shortAssetId} from "../localAssets/sources.ts";
 
 /** What a scene count needs from a scene: a Story scene or a visual draft scene both fit. */
@@ -46,6 +47,23 @@ export const sceneNumbersUsingAudioRef = (
   story.scenes.flatMap((scene, index) =>
     scene.sfx?.src === ref || scene.voice?.src === ref ? [index + 1] : [],
   );
+
+/**
+ * The Active Story's own usage of an audio ref, as the collector found it. A
+ * missing card exists because the Active Story uses the ref, so its text is
+ * counted from that same usage: a pending visual draft can neither hide the
+ * problem it describes nor invent one. (The delete warning of a regular card
+ * counts the visual draft instead, so a pending draft is never under-counted.)
+ */
+export const activeStoryAudioUsage = (
+  usage: LocalAssetUsage,
+): {sceneNumbers: number[]; usesMusic: boolean} =>
+  usage.category === "audio"
+    ? {
+        sceneNumbers: usage.sceneIndexes.map((index) => index + 1),
+        usesMusic: usage.roles.includes("music"),
+      }
+    : {sceneNumbers: [], usesMusic: false};
 
 export const audioRefUsesMusic = (
   story: {readonly music?: {readonly src: string}},

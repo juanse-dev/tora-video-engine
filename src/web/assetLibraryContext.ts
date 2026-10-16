@@ -7,6 +7,7 @@ import type {
   AssetLibraryMessage,
   AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
+import type {AcquirePreviewUrl} from "./audio/previewPlayback.ts";
 import type {MutationCancelable} from "./localAssetManageFlow.ts";
 import type {StoryLocalAssetState} from "./localAssetState.ts";
 
@@ -76,6 +77,8 @@ export type AssetLibraryContextValue = {
    * the dialog's own Cancel (which also runs `onCancel`).
    */
   closeAssetDialog: () => void;
+  /** A verified object URL for a library sound, for the My audio preview (same pool as images). */
+  acquirePreviewUrl: AcquirePreviewUrl;
 };
 
 export const AssetLibraryContext =

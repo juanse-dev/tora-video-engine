@@ -1,12 +1,34 @@
 import {useEffect, useMemo, useState} from "react";
+import type {AudioDurationMap} from "../../audio/catalog.ts";
 import type {Story} from "../../story/types.ts";
+import {
+  autoDurationText,
+  autoSceneView,
+  setDraftMusicNumber,
+  setDraftMusicSource,
+  setSceneAudioVolume,
+  setSceneAuto,
+  setSceneSfxSource,
+  setSceneVoiceSource,
+} from "../audio/audioFields.ts";
+import {
+  NO_AUDIO_NOTICES,
+  NO_SCENE_NOTICES,
+  audioFieldNotices,
+} from "../audio/audioNotices.ts";
+import type {EditorAudioPlanView} from "../audio/audioPlanView.ts";
+import {useBundledAudioStates} from "../audio/bundledAudio.ts";
+import {useLibraryAudioOptions} from "../audio/useLibraryAudioOptions.ts";
 import {AssetCatalog} from "./AssetCatalog.tsx";
+import {MusicPanel} from "./MusicPanel.tsx";
+import {SceneAudioFields} from "./SceneAudioFields.tsx";
 import {
   addVisualScene,
   canAddVisualScene,
   deleteVisualScene,
   evaluateVisualDraft,
   moveVisualScene,
+  replaceVisualScene,
   storyToVisualDraft,
   updateVisualScene,
   validateRawVisualCaption,
@@ -19,6 +41,11 @@ import {
 
 type VisualEditorProps = {
   activeStory: Story;
+  /** The page's one duration map, so `auto · 2.7 s` is the Player's own number. */
+  audioDurations: AudioDurationMap;
+  fps: number;
+  /** The Active Story's timeline and plan: the warnings come from it. */
+  audioPlanView: EditorAudioPlanView;
   onEvaluationChange: (evaluation: VisualDraftEvaluation) => void;
 };
 
@@ -33,6 +60,9 @@ const removeError = (
 
 export const VisualEditor = ({
   activeStory,
+  audioDurations,
+  fps,
+  audioPlanView,
   onEvaluationChange,
 }: VisualEditorProps) => {
   const [draft, setDraft] = useState<VisualStoryDraft>(() =>
@@ -49,6 +79,8 @@ export const VisualEditor = ({
     ...rawGuardErrors,
   };
   const selected = draft.scenes[selectedScene] ?? draft.scenes[0];
+  const library = useLibraryAudioOptions();
+  const bundledStates = useBundledAudioStates();
 
   useEffect(() => {
     onEvaluationChange(evaluation);
@@ -59,6 +91,23 @@ export const VisualEditor = ({
     patch: Partial<VisualSceneDraft>,
   ) => {
     setDraft((current) => updateVisualScene(current, index, patch));
+  };
+
+  // Every audio edit is one candidate Story, validated like any other edit.
+  const editSelectedScene = (
+    edit: (scene: VisualSceneDraft, resolvedSeconds: number) => VisualSceneDraft,
+  ) => {
+    setDraft((current) => {
+      const scene = current.scenes[selectedScene];
+
+      return scene === undefined
+        ? current
+        : replaceVisualScene(
+            current,
+            selectedScene,
+            edit(scene, autoSceneView(scene, audioDurations, fps).seconds),
+          );
+    });
   };
 
   const updateTitle = (title: string) => {
@@ -139,6 +188,15 @@ export const VisualEditor = ({
   };
 
   const pending = evaluation.kind !== "eligible";
+  // The plan belongs to the Active Story, which is what the fields show only
+  // while no draft is pending; a pending draft may have moved or dropped sounds.
+  const notices = useMemo(
+    () =>
+      pending
+        ? NO_AUDIO_NOTICES
+        : audioFieldNotices(audioPlanView, bundledStates),
+    [pending, audioPlanView, bundledStates],
+  );
 
   return (
     <section className="editor-card" aria-labelledby="editor-heading">
@@ -183,6 +241,19 @@ export const VisualEditor = ({
           </small>
         ) : null}
       </label>
+
+      <MusicPanel
+        music={draft.music}
+        library={library}
+        errors={errors}
+        notices={notices.music}
+        onSourceChange={(src) =>
+          setDraft((current) => setDraftMusicSource(current, src))
+        }
+        onNumberChange={(field, value) =>
+          setDraft((current) => setDraftMusicNumber(current, field, value))
+        }
+      />
 
       <div className="scene-editor-layout">
         <aside className="scene-list" aria-label="Scenes">
@@ -297,10 +368,33 @@ export const VisualEditor = ({
               ) : null}
             </label>
 
+            <SceneAudioFields
+              scene={selected}
+              library={library}
+              notices={notices.scenes.get(selectedScene) ?? NO_SCENE_NOTICES}
+              onSfxChange={(src) =>
+                editSelectedScene((scene) => setSceneSfxSource(scene, src))
+              }
+              onVoiceChange={(src) =>
+                editSelectedScene((scene, resolvedSeconds) =>
+                  setSceneVoiceSource(scene, src, resolvedSeconds),
+                )
+              }
+              onVolumeChange={(role, volume) =>
+                editSelectedScene((scene) =>
+                  setSceneAudioVolume(scene, role, volume),
+                )
+              }
+            />
+
             <label className="field">
               <span>Duration (seconds)</span>
               {selected.duration === "auto" ? (
-                <output className="field-readonly">auto (from voice)</output>
+                <output className="field-readonly">
+                  {autoDurationText(
+                    autoSceneView(selected, audioDurations, fps),
+                  )}
+                </output>
               ) : (
                 <input
                   type="number"
@@ -322,6 +416,19 @@ export const VisualEditor = ({
                   {errors[`scenes.${selectedScene}.duration`]}
                 </small>
               ) : null}
+            </label>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={selected.duration === "auto"}
+                disabled={selected.voice === undefined}
+                onChange={(event) =>
+                  editSelectedScene((scene, resolvedSeconds) =>
+                    setSceneAuto(scene, event.target.checked, resolvedSeconds),
+                  )
+                }
+              />
+              <span>Auto (from voice)</span>
             </label>
           </div>
         ) : null}

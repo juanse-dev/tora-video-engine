@@ -25,6 +25,17 @@ import {
   type AssetLibraryStatus,
 } from "./assetLibrary/coordination.ts";
 import {IntegrityCache} from "./assetLibrary/integrity.ts";
+import {
+  audioSourceForBundledState,
+  bundledAudioKey,
+  parseBundledAudioKey,
+  requestBundledAudio,
+  useBundledAudioStates,
+} from "./audio/bundledAudio.ts";
+import {compileEditorAudioPlan} from "./audio/audioPlanView.ts";
+import {audioPreview, type AcquirePreviewUrl} from "./audio/previewPlayback.ts";
+import {useStoryWaveforms} from "./audio/storyWaveforms.ts";
+import {acquireAudioPreviewUrl} from "./audio/previewSource.ts";
 import {evaluateBrowserStoryPolicy} from "./browserPolicy.ts";
 import {
   AssetDialogHost,
@@ -69,6 +80,7 @@ import {
   type PersistenceVersion,
   type ProtectedRecovery,
 } from "./persistence.ts";
+import {buildAudioSourceMap} from "../audio/sources.ts";
 import {
   AUDIO_RENDER_BLOCK_MESSAGE,
   storyHasAudio,
@@ -313,6 +325,40 @@ export const App = () => {
     assetRefreshToken,
   );
   const previewConfig = getWebPlayerConfig(activeStory, audioDurations);
+  // The bundled-audio store is the one source of truth for bundled ids: every
+  // id the Active Story references is checked from page load, with no display.
+  const bundledStates = useBundledAudioStates();
+  const bundledKey = bundledAudioKey(activeStory);
+
+  useEffect(() => {
+    requestBundledAudio(parseBundledAudioKey(bundledKey));
+  }, [bundledKey]);
+
+  // The Player's audio sources: verified local entries plus the store's bundled ones.
+  const audioSources = useMemo(
+    () =>
+      buildAudioSourceMap(activeStory, localAssets.sources, (id) =>
+        audioSourceForBundledState(bundledStates.get(id)),
+      ),
+    [activeStory, localAssets.sources, bundledStates],
+  );
+  // The audio timeline's plan: the Player's own inputs, compiled once more for display.
+  const audioPlanView = useMemo(
+    () =>
+      compileEditorAudioPlan({
+        story: activeStory,
+        fps: previewConfig.fps,
+        audioDurations,
+        audioSources,
+      }),
+    [activeStory, previewConfig.fps, audioDurations, audioSources],
+  );
+  const waveforms = useStoryWaveforms(
+    activeStory,
+    assetLibrary,
+    assetRefreshToken,
+    bundledStates,
+  );
 
   const activeStoryChangedFromInitial =
     !storiesSemanticallyEqual(initialProject.activeStory, activeStory);
@@ -357,6 +403,14 @@ export const App = () => {
   // An open asset dialog also freezes the Story so its scene count cannot go stale.
   const authoringLocked =
     renderAuthoringLocked || assetImportInFlight || assetDialog !== null;
+
+  // The preview's Stop button is an authoring control, so a preview that is
+  // still sounding when the lock engages would have no way to be stopped.
+  useEffect(() => {
+    if (authoringLocked) {
+      audioPreview().stop();
+    }
+  }, [authoringLocked]);
   const localAssetRenderBlock = describeLocalAssetRenderBlock(
     localAssets.state,
     assetLibrary ?? OPENING_ASSET_LIBRARY,
@@ -524,6 +578,17 @@ export const App = () => {
     [],
   );
   const transitionPending = transition !== null;
+  const acquirePreviewUrl = useCallback<AcquirePreviewUrl>(
+    (ref, signal) =>
+      acquireAudioPreviewUrl({
+        library: assetLibrary,
+        cache: integrityCache,
+        pool: objectUrlPool,
+        ref,
+        signal,
+      }),
+    [assetLibrary, integrityCache, objectUrlPool],
+  );
   const assetLibraryContext = useMemo<AssetLibraryContextValue>(
     () => ({
       status: assetLibrary ?? OPENING_ASSET_LIBRARY,
@@ -537,6 +602,7 @@ export const App = () => {
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
+      acquirePreviewUrl,
     }),
     [
       assetLibrary,
@@ -549,6 +615,7 @@ export const App = () => {
       transitionPending,
       openAssetDialog,
       closeAssetDialog,
+      acquirePreviewUrl,
     ],
   );
 
@@ -2056,6 +2123,9 @@ export const App = () => {
             <VisualEditor
               key={visualRevision}
               activeStory={activeStory}
+              audioDurations={audioDurations}
+              fps={previewConfig.fps}
+              audioPlanView={audioPlanView}
               onEvaluationChange={onVisualEvaluationChange}
             />
           ) : yamlState !== null ? (
@@ -2093,6 +2163,9 @@ export const App = () => {
             localAssetSources={localAssets.sources}
             localAssetState={localAssets.state}
             audioDurations={audioDurations}
+            audioSources={audioSources}
+            audioPlanView={audioPlanView}
+            waveforms={waveforms}
           />
         </section>
       </main>
