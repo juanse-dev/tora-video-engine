@@ -56,8 +56,8 @@ describe("WEB-002 player metadata", () => {
     const otherScenesFrames =
       360 - exampleStory.scenes[1].duration * 30;
 
-    // The bundled ding is 1.2 s: the auto scene lasts ceil((1.2 + 0.5) * 30) = 51 frames.
-    assert.equal(audioConfig.durationInFrames, otherScenesFrames + 51);
+    // The bundled ding is 1.8 s: the auto scene lasts ceil((1.8 + 0.5) * 30) = 69 frames.
+    assert.equal(audioConfig.durationInFrames, otherScenesFrames + 69);
     // Without the map the auto scene falls back to 3 s = 90 frames.
     assert.equal(fallbackConfig.durationInFrames, otherScenesFrames + 90);
     assert.notEqual(

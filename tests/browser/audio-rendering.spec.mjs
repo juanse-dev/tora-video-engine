@@ -2,6 +2,7 @@ import {expect, test} from "@playwright/test";
 import {
   assertAacLcStereoStream,
   assertIntegrationEnvelope,
+  DING_HZ,
   INTEGRATION_FRAMES,
   INTEGRATION_VOICE_FIXTURE,
   integrationStoryYaml,
@@ -169,9 +170,10 @@ test("a Story with a bundled sfx enables Render by itself, renders it through ob
 
   // The ding is audible at the start and gone later (positive control + silence).
   const samples = await decodeMp4AudioMono(path);
-  const ding = goertzelWindows(samples, 880, 100);
+  const ding = goertzelWindows(samples, DING_HZ, 100);
 
-  expect(ding[0]).toBeGreaterThan(0.02);
+  // Window 0 reads 0.20 in the file and 0.0535 at D-15's 60 ms offset.
+  expect(ding[0]).toBeGreaterThan(0.03);
   expect(Math.max(...ding.slice(20))).toBeLessThan(0.01);
   expect(await listRemotionOpfsEntries(page)).toEqual([]);
 });
@@ -225,9 +227,9 @@ test("without a native AAC encoder the WASM encoder renders and the file passes 
   assertAacLcStereoStream(audio[0], "wasm aac", {bitrate: false});
 
   // The sound is really there (positive control).
-  const ding = goertzelWindows(await decodeMp4AudioMono(path), 880, 100);
+  const ding = goertzelWindows(await decodeMp4AudioMono(path), DING_HZ, 100);
 
-  expect(ding[0]).toBeGreaterThan(0.02);
+  expect(ding[0]).toBeGreaterThan(0.03);
   expect(await listRemotionOpfsEntries(page)).toEqual([]);
 });
 

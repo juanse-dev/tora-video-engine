@@ -126,7 +126,7 @@ Renders, for each plan track, `<Sequence from={track.fromFrame} durationInFrames
   - music shorter than the Story → copies at `k × (300 − 9)` frames (`X = round(0.3 × 30) = 9`), last copy truncated at `T`; at every overlap frame the two crossfade factors satisfy `out² + in² = 1` (±1e-9) and are monotonic;
   - **phase sanity (documents D-4):** summing two unit sinusoids with the plan's factors at the overlap centre gives amplitude `√2·cos(φ/2)` — ≈ 1.41 at `φ = 0°`, ≈ 0.71 at 120°, 0 at 180° (the linear law would give `cos(φ/2)`: 1, 0.5, 0) — while for two independent seeded noise signals the RMS stays within ±10% of 1 across the overlap. This is why AUDIO-006 checks the seam with noise, not a tone;
   - music longer than the Story → one copy;
-  - music shorter than `MIN_LOOPING_MUSIC_SECONDS` (the 0.12 s `pop`) → one copy, no loop, `music-too-short-to-loop` issue, the function terminates;
+  - music shorter than `MIN_LOOPING_MUSIC_SECONDS` (the 0.25 s `pop`) → one copy, no loop, `music-too-short-to-loop` issue, the function terminates;
   - a Story longer than 3,600 s with music → no tracks, one `story-too-long-for-audio` issue, and the function returns without building copies (property: a plan never holds more than 5,143 music copies + 2 tracks per scene);
   - music of 1.0 s at 30 FPS → `X = min(9, 15) = 9`, stride 21; music of 0.5 s is below the minimum; a duration where `floor(D / 2) < round(0.3 × fps)` clamps `X` and every stride is `>= 1`;
   - fade-in/out values at their endpoints and midpoints; fades scaled + issue when too long;

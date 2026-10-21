@@ -292,7 +292,7 @@ describe("checkAudioFileDecodes applies the D-9 truncation rule", () => {
   });
 
   it("refuses exit 0 with zero decoded bytes, which is what a 0.12 s clip that decodes to nothing looks like", async () => {
-    const result = await checkAudioFileDecodes("/staged/pop.wav", 0.12, {
+    const result = await checkAudioFileDecodes("/staged/short-clip.wav", 0.12, {
       spawn: fakeSpawn(succeedWith(wavStream(0))),
       ffmpeg: FFMPEG,
     });

@@ -1390,7 +1390,7 @@ describe("renderStory staging", () => {
       "bundledAudioPolicy",
       "audioArmed",
     ]);
-    assert.deepEqual(calls[0].props.audioDurations, {ding: 1.2});
+    assert.deepEqual(calls[0].props.audioDurations, {ding: 1.8});
     assert.deepEqual(calls[0].props.audioSources, {
       ding: {kind: "static", path: "__local-assets/bundled/ding.wav"},
     });
@@ -1620,8 +1620,8 @@ describe("renderStory staging", () => {
     };
     const exit1 = await run((child) => child.emit("close", 1, null));
     const timeout = await run(() => undefined, 20);
-    const short = await run(decodeSeconds(0.9));
-    const nearlyWhole = await run(decodeSeconds(1.0));
+    const short = await run(decodeSeconds(1.5));
+    const nearlyWhole = await run(decodeSeconds(1.6));
 
     for (const refused of [exit1, timeout, short]) {
       assert.equal(refused.spawned, 0);

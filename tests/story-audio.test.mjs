@@ -49,11 +49,11 @@ describe("buildStoryAudioMounts", () => {
     assert.equal(mounts.length, 1);
     assert.deepEqual(
       [mounts[0].key, mounts[0].from, mounts[0].durationInFrames, mounts[0].src],
-      [`sfx-1:${dingSrc}`, 90, 36, dingSrc],
+      [`sfx-1:${dingSrc}`, 90, 54, dingSrc],
     );
     // The volume callback receives the frame inside the sequence.
     assert.equal(mounts[0].volumeAt(0), 0.5);
-    assert.equal(mounts[0].volumeAt(35), 0.5);
+    assert.equal(mounts[0].volumeAt(53), 0.5);
   });
 
   it("mounts the same with audioArmed true and nothing with exactly false", () => {
