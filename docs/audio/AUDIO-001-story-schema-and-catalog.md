@@ -6,7 +6,7 @@ Depends on: v0.3.3. Read [README](./README.md) first (invariants, constants, gra
 
 ## Goal
 
-A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The schema validates them without any audio bytes (AINV-2); the timeline turns `auto` into frames from a supplied duration map; YAML and browser persistence round-trip the new fields; Stories without audio behave exactly as in v0.3 (AINV-6). The bundled audio catalog exists, with four synthesized effects and two music slots.
+A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The schema validates them without any audio bytes (AINV-2); the timeline turns `auto` into frames from a supplied duration map; YAML and browser persistence round-trip the new fields; Stories without audio behave exactly as in v0.3 (AINV-6). The bundled audio catalog exists, with four CC0 sound effects (recordings from Freesound, prepared by `scripts/prepareBundledAudio.mjs`; the first version synthesized them, see task 6) and two music slots.
 
 ## Decisions specific to this spec
 
@@ -35,8 +35,9 @@ A Story can declare `music`, per-scene `sfx`/`voice` and `duration: auto`. The s
 | `src/web/persistence.ts` | version 3 |
 | `src/web/visualDraft.ts` | carry `music`/`sfx`/`voice` and `auto` through the draft |
 | `src/web/browserPolicy.ts` | default `deriveTotalFrames` = `minimumStoryFrames` |
-| `scripts/generateBundledAudio.mjs` | new: synthesizes the four effects |
-| `public/audio/sfx/*.wav`, `public/audio/LICENSES.md` | generated effects + license table |
+| `scripts/prepareBundledAudio.mjs` | new: cuts, converts and fades the four CC0 recordings into the effects (replaced the synthesizing `generateBundledAudio.mjs`) |
+| `scripts/noiseSynthesis.mjs` | the seeded noise helper that `generateAudioFixtures.mjs` still uses (it was part of `generateBundledAudio.mjs`) |
+| `public/audio/sfx/*.wav`, `public/audio/LICENSES.md` | prepared effects + license table |
 
 ## Interfaces
 
@@ -112,7 +113,16 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 3. [x] Timeline + metadata + `ToraVideoProps.audioDurations` + `calculateMetadata`.
 4. [x] Canonical YAML (`serializeStory.ts`): field order `type, pose, background, animation, text, sfx, voice, duration` per scene and `title, music, scenes` per Story; audio objects `src, volume, fadeIn, fadeOut, duck`; unset optionals omitted. YAML parse → serialize → parse is identity for every fixture.
 5. [x] Persistence version 3 (write rule, read rule, the version-mismatch rejection). Test: a v0.3 build's reader (the `PERSISTENCE_VERSION_LOCAL` code path as it is on `main` before this task, kept as a fixture function in the test) treats a version 3 envelope as `unsupported-version` and the app keeps it as a protected recovery snapshot (WEB-005 rule 14).
-6. [x] `scripts/generateBundledAudio.mjs` (repository ffmpeg via `tests/helpers/ffmpeg.mjs`'s lookup): `whoosh` (0.6 s seeded pink-weighted sum of sine partials with a fade-in/fade-out swell; the repository ffmpeg has no noise source or filters, so a band-passed noise sweep is not available), `boom` (0.8 s 55 Hz sine + noise burst with exponential decay), `ding` (1.2 s 880 Hz + 1760 Hz partials, exponential decay), `pop` (0.12 s 1.2 kHz click with fast decay); 48 kHz stereo 16-bit WAV in `public/audio/sfx/`; deterministic (same bytes on every run, checked by a test that hashes them). Fill `durationSeconds` from `inspectAudio` once AUDIO-003 task 1 exists — until then from ffprobe, and AUDIO-003 adds the cross-check test. `public/audio/LICENSES.md`: one row per file (id, file, source = "synthesized by scripts/generateBundledAudio.mjs", author = project, license = CC0-1.0).
+6. [x] The four sound effects. **Replaced:** the first version was synthesized by `scripts/generateBundledAudio.mjs` (sine partials; 0.6 / 0.8 / 1.2 / 0.12 s) and the owner disliked it. They are now four CC0 recordings from Freesound that the owner chose, prepared by `scripts/prepareBundledAudio.mjs <originalsDir> [outDir]` with the repository ffmpeg: it refuses any original whose sha256 is not the chosen recording, then per effect resamples to 48 kHz, copies mono to both channels, cuts `start` and `length` (exact samples; a whole multiple of 10 ms), applies a gain, and fades the edges (2 ms in, 20-60 ms out, done on the samples because this ffmpeg has no `afade` and its `volume` expression is evaluated once per decoder frame, 21-85 ms). Output is 48 kHz stereo 16-bit WAV in `public/audio/sfx/` and the process is deterministic. The originals are not committed (they live in a git-excluded directory); `tests/bundled-audio.test.mjs` reproduces the committed files from them when they are present and skips with a reason when they are not.
+
+   | id | source | cut (start, length) | gain | file | `durationSeconds` |
+   | --- | --- | --- | --- | --- | --- |
+   | `whoosh` | freesound.org/people/qubodup/sounds/60013 | 0 s, 0.42 s (40 ms fade-out) | 0 dB | 80 684 B | 0.42 |
+   | `boom` | freesound.org/people/Julien_Matthey/sounds/201571 | 0 s, 3.2 s (50 ms fade-out) | -0.9 dB (peak -1.0 dBFS) | 614 444 B | 3.2 |
+   | `ding` | freesound.org/people/Saya13/sounds/407258 | 0.705 s, 1.8 s (60 ms fade-out); dominant 2640 Hz | 0 dB | 345 644 B | 1.8 |
+   | `pop` | freesound.org/people/deraj/sounds/202230 | 0.19 s, 0.25 s (20 ms fade-out) | 0 dB | 48 044 B | 0.25 |
+
+   `durationSeconds` is filled from `inspectAudio` (AINV-3, checked by `tests/bundled-audio.test.mjs`). `public/audio/LICENSES.md`: one row per file (id, file, source = the Freesound URL plus "trimmed and converted to 48 kHz stereo 16-bit WAV by scripts/prepareBundledAudio.mjs", author = the Freesound user, license = CC0-1.0).
 7. [ ] **Owner-supplied music (blocks AUDIO-006, not the other specs).** When the owner provides two CC0 tracks, add them as `public/audio/music/calm-loop.<ext>` and `upbeat-loop.<ext>` (original bytes, MP3/OGG/WAV/M4A, each ≤ 5 MB), set `file` and `durationSeconds`, and add their LICENSES rows (source URL, author, CC0-1.0). Until then the music ids are "missing" (see Decisions).
 
 ## Tests
@@ -124,7 +134,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
 - `tests/story-source.test.mjs` (extend): YAML round-trip for a Story with every audio field and with none; canonical output omits defaults.
 - `tests/persistence-v3.test.mjs`: first promotions 1→2 (local ref), 1→3 (audio), 2→3 (audio added to a v2 project); monotonic cases v2 → bundled-only stays 2, v3 → no audio stays 3, v3 → no audio and no local refs stays 3; a fresh project with no durable version is written at 1/2/3 by content; read all three; reject audio in version 1/2; the v0.3 reader fixture treats version 3 as unsupported.
 - `tests/web-editor.test.mjs` (extend): a Story with `music`, a scene `sfx`, a scene `voice` and `duration: auto` survives `storyToVisualDraft` → caption edit → `evaluateVisualDraft` with every audio field intact and `auto` preserved; scene add/move/delete keeps each scene's audio on that scene; `minimumStoryFrames` counts `auto` as 16 frames at 30 FPS; the policy accepts 101 `auto` scenes with fixed scenes summing to under the budget.
-- `tests/bundled-audio.test.mjs`: every catalog entry with a non-null `file` exists, has a LICENSES row, and the generator is deterministic (hash twice).
+- `tests/bundled-audio.test.mjs`: every catalog entry with a non-null `file` exists, has a LICENSES row; each effect is 48 kHz stereo 16-bit with the catalog length (equal to `inspectAudio`'s), a peak in -6..-0.5 dBFS, its first sound within 10 ms and no click at either end; a wrong sha256 or a missing original is refused; and, when the originals are present, `prepareBundledAudio.mjs` reproduces the committed files (same header, every sample within 1 LSB).
 - Existing suites unchanged and green (AINV-6), including the browser-render golden.
 
 ## Verify

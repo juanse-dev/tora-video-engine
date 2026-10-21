@@ -1050,7 +1050,7 @@ test("an unusable ding shows a hatched block with the role label instead of a wa
 
   const block = page.locator("[data-timeline-placeholder]");
 
-  // The check is pending: a plain block of the right length (ding is 1.2 s of 6 s) and no waveform.
+  // The check is pending: a plain block of the right length (ding is 1.8 s of 6 s) and no waveform.
   await expect(block).toHaveAttribute("data-timeline-placeholder", "plain");
   await expect(block).toHaveText("Sound effect");
   await expect(timeline(page)).toHaveAttribute("data-audio-tracks", "");
@@ -1061,7 +1061,7 @@ test("an unusable ding shows a hatched block with the role label instead of a wa
     block.boundingBox(),
   ]);
 
-  expect(blockBox.width / laneBox.width).toBeCloseTo(36 / 180, 1);
+  expect(blockBox.width / laneBox.width).toBeCloseTo(54 / 180, 1);
 
   release();
   await expect(block).toHaveAttribute("data-timeline-placeholder", "hatched");

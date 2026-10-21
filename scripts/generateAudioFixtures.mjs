@@ -7,7 +7,7 @@
 // Vorbis encoder (so there is no Ogg Vorbis fixture), and no m4a muxer name (the
 // MP4 muxer is selected with `-f mp4`). Tones come from the `sine` source lifted
 // to a unit-amplitude (full scale) sine; the noise is a seeded sum of sine
-// partials below 2 kHz (the same technique as generateBundledAudio.mjs).
+// partials below 2 kHz (scripts/noiseSynthesis.mjs).
 //
 // The PCM files (.wav) match across platforms within 1 LSB. The lossy files
 // (mp3, m4a, opus.ogg, mp4) are deterministic for one ffmpeg build only: the
@@ -21,7 +21,7 @@ import {join, resolve} from "node:path";
 import process from "node:process";
 import {pathToFileURL} from "node:url";
 import {resolveFfmpegBinaries} from "../tests/helpers/ffmpeg.mjs";
-import {noise} from "./generateBundledAudio.mjs";
+import {noise} from "./noiseSynthesis.mjs";
 
 /** `sine` source lifted to a unit-amplitude sine (ffmpeg's `sine` peaks at 1/8). */
 const tone = (hz, seconds, rate) =>

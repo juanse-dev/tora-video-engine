@@ -70,10 +70,10 @@ describe("planMusicLoop", () => {
     assert.equal(half.tooShortToLoop, true);
     assert.equal(half.crossfadeFrames, 0);
 
-    // The bundled `pop`: 0.12 s = 4 frames.
-    const pop = planMusicLoop({musicSeconds: 0.12, totalFrames: 90, fps: 30});
+    // The bundled `pop`: 0.25 s = round(7.5) = 8 frames.
+    const pop = planMusicLoop({musicSeconds: 0.25, totalFrames: 90, fps: 30});
 
-    assert.deepEqual(rows(pop), [[0, 0, 4]]);
+    assert.deepEqual(rows(pop), [[0, 0, 8]]);
     assert.equal(pop.tooShortToLoop, true);
   });
 

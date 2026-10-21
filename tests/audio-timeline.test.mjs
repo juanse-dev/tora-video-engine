@@ -102,7 +102,7 @@ describe("timeline layout", () => {
     const ding = view.plan.tracks.find((track) => track.key === "sfx-0");
     const voice = view.plan.tracks.find((track) => track.key === "voice-1");
 
-    assert.deepEqual(trackSpan(ding, 270), {leftPct: 0, widthPct: (36 / 270) * 100});
+    assert.deepEqual(trackSpan(ding, 270), {leftPct: 0, widthPct: (54 / 270) * 100});
     assert.deepEqual(trackSpan(voice, 270), {leftPct: (90 / 270) * 100, widthPct: (66 / 270) * 100});
   });
 
@@ -282,9 +282,9 @@ describe("placeholder blocks for sounds without a track", () => {
       ["ding", "hatched", "Sound effect"],
       ["pop", "plain", "Sound effect"],
     ]);
-    // ding is 1.2 s = 36 frames of 180; pop is 0.12 s = round(3.6) = 4 frames starting at frame 90.
-    assert.deepEqual([blocks[0].leftPct, blocks[0].widthPct], [0, (36 / 180) * 100]);
-    assert.deepEqual([blocks[1].leftPct, blocks[1].widthPct], [50, (4 / 180) * 100]);
+    // ding is 1.8 s = 54 frames of 180; pop is 0.25 s = round(7.5) = 8 frames starting at frame 90.
+    assert.deepEqual([blocks[0].leftPct, blocks[0].widthPct], [0, (54 / 180) * 100]);
+    assert.deepEqual([blocks[1].leftPct, blocks[1].widthPct], [50, (8 / 180) * 100]);
   });
 
   it("an sfx block is cut at the Story end and a voice block at its scene end; unknown lengths fall back to the scene", () => {
@@ -310,8 +310,8 @@ describe("placeholder blocks for sounds without a track", () => {
   });
 
   it("a placeholder has exactly the span its track will have once the sound is ready (the plan's own clamps)", () => {
-    // ding (1.2 s) runs past its 1 s scene, pop is 0.12 s (4 frames), the 5 s voice is cut at its scene end,
-    // and boom (0.8 s) is cut at the end of a Story that stops 6 frames after it starts.
+    // ding (1.8 s) runs past its 1 s scene, pop is 0.25 s (8 frames), the 5 s voice is cut at its scene end,
+    // and boom (3.2 s) is cut at the end of a Story that stops 6 frames after it starts.
     const story = {
       title: "T",
       scenes: [
@@ -377,9 +377,9 @@ describe("lane drawing", () => {
     const voice = bars.filter(([, , y]) => y >= 32 - 1e-9 && y < 64);
 
     assert.equal(ding.length + voice.length, bars.length);
-    // ding: frames 0 to 36 of 270 on a 270 px canvas = x 0 to 36; voice: frames 90 to 156.
+    // ding: frames 0 to 54 of 270 on a 270 px canvas = x 0 to 54; voice: frames 90 to 156.
     assert.equal(Math.min(...ding.map(([, x]) => x)), 0);
-    assert.equal(Math.max(...ding.map(([, x, , w]) => x + w)) <= 36.5, true);
+    assert.equal(Math.max(...ding.map(([, x, , w]) => x + w)) <= 54.5, true);
     assert.ok(Math.abs(Math.min(...voice.map(([, x]) => x)) - 90) < 1e-6);
     assert.equal(Math.max(...voice.map(([, x, , w]) => x + w)) <= 156.5, true);
     assert.equal(calls[0][0], "clear");

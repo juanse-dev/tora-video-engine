@@ -194,7 +194,7 @@ describe("two different frame checks, on purpose", () => {
     assert.ok(101 * 90 > MAX_BROWSER_TOTAL_FRAMES);
   });
 
-  it("readiness checks the exact total: 101 bundled ding voices (51 frames each) fit, 101 three-second local voices do not", () => {
+  it("readiness checks the exact total: 101 bundled ding voices (69 frames each) fit, 101 three-second local voices do not", () => {
     assert.equal(
       evaluate(autoStory(101), {ding: {kind: "ready"}}).block,
       null,

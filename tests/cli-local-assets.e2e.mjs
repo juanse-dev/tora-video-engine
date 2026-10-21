@@ -26,6 +26,8 @@ import {
 import {
   assertAacLcStereoStream,
   assertIntegrationEnvelope,
+  DING_HZ,
+  DING_PARTIAL_HZ,
   INTEGRATION_FRAMES,
   INTEGRATION_VOICE_FIXTURE,
   integrationStoryYaml,
@@ -338,13 +340,13 @@ describe("CLI render with audio", () => {
 
   it("plays the ding at the scene start and nothing after it (Goertzel on the decoded MP4)", async () => {
     const samples = await decodeMp4AudioMono(audioOutputPath);
-    const fundamental = goertzelWindows(samples, 880, 100);
-    const partial = goertzelWindows(samples, 1760, 100);
+    const fundamental = goertzelWindows(samples, DING_HZ, 100);
+    const partial = goertzelWindows(samples, DING_PARTIAL_HZ, 100);
 
-    // Positive control: the sfx is clearly there in the first 300 ms...
-    for (const windows of [fundamental, partial]) {
-      assert.ok(windows[0] > 0.02 && windows[1] > 0.02, windows.slice(0, 3).join(" "));
-    }
+    // Positive control: the sfx is clearly there in the first 200 ms (the 6870 Hz
+    // partial is gone after about 0.2 s, so only its first window is asserted)...
+    assert.ok(fundamental[0] > 0.05 && fundamental[1] > 0.05, fundamental.slice(0, 3).join(" "));
+    assert.ok(partial[0] > 0.02, partial.slice(0, 3).join(" "));
 
     // ...it decays, and nothing sounds from 2 s on (the Story has no other audio).
     for (const windows of [fundamental, partial]) {

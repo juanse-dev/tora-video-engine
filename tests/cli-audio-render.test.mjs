@@ -109,7 +109,7 @@ describe("prepareCliAudio", () => {
       ding: {kind: "static", path: `${STAGED_BUNDLED_AUDIO_DIR}/ding.wav`},
     });
     assert.equal(STAGED_BUNDLED_AUDIO_DIR, "__local-assets/bundled");
-    assert.deepEqual(result.audioDurations, {ding: 1.2});
+    assert.deepEqual(result.audioDurations, {ding: 1.8});
     assert.deepEqual(
       await readFile(join(publicDir, "__local-assets", "bundled", "ding.wav")),
       original,
@@ -129,7 +129,7 @@ describe("prepareCliAudio", () => {
     );
     const {result} = await prepare(story, {localRoot: root});
 
-    assert.deepEqual(result.audioDurations, {[voiceRef]: 2.2, ding: 1.2});
+    assert.deepEqual(result.audioDurations, {[voiceRef]: 2.2, ding: 1.8});
     assert.deepEqual(result.audioSources, {
       [voiceRef]: {kind: "static", path: `__local-assets/audio/${sha(voice)}.wav`},
       ding: {kind: "static", path: "__local-assets/bundled/ding.wav"},
@@ -216,15 +216,15 @@ describe("prepareCliAudio", () => {
     const story = storyOf(scene({sfx: {src: "ding"}}));
     const passCalls = [];
 
-    // ding is 1.2 s: 1.0 s decoded is 0.2 s short and passes (tolerance 0.25 s).
-    await prepare(story, { preflight: fakePreflight(decodeSeconds(1.0), passCalls) });
+    // ding is 1.8 s: 1.6 s decoded is 0.2 s short and passes (tolerance 0.25 s).
+    await prepare(story, { preflight: fakePreflight(decodeSeconds(1.6), passCalls) });
     assert.equal(passCalls.length, 1);
     assert.match(passCalls[0].args.join(" "), /__local-assets[\\/]bundled[\\/]ding\.wav/u);
 
     await refuses(
       story,
-      {preflight: fakePreflight(decodeSeconds(0.9), [])},
-      /only 0\.90 s of 1\.20 s could be decoded/u,
+      {preflight: fakePreflight(decodeSeconds(1.5), [])},
+      /only 1\.50 s of 1\.80 s could be decoded/u,
     );
     await refuses(
       story,
@@ -255,7 +255,7 @@ describe("prepareCliAudio", () => {
       {
         preflight: {
           spawn: fakeSpawn((child, call) => {
-            const seconds = call.args.join(" ").includes("whoosh") ? 0.6 : call.args.join(" ").includes("boom") ? 0.8 : 1.2;
+            const seconds = call.args.join(" ").includes("whoosh") ? 0.42 : call.args.join(" ").includes("boom") ? 3.2 : 1.8;
 
             decodeSeconds(seconds)(child);
           }, calls),

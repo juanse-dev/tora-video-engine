@@ -427,12 +427,12 @@ describe("compileAudioPlan: music loop", () => {
     assert.deepEqual(shape(exact), [["music-0", 0, 300]]);
   });
 
-  it("plays the 0.12 s pop once and reports music-too-short-to-loop", () => {
+  it("plays the 0.25 s pop once and reports music-too-short-to-loop", () => {
     const plan = buildPlan(makeStory([scene()], {src: "pop"}), {
-      durations: {pop: 0.12},
+      durations: {pop: 0.25},
     });
 
-    assert.deepEqual(shape(plan), [["music-0", 0, 4]]);
+    assert.deepEqual(shape(plan), [["music-0", 0, 8]]);
     assert.deepEqual(plan.issues, [{kind: "music-too-short-to-loop"}]);
   });
 
@@ -935,12 +935,12 @@ describe("compileAudioPlan: issue order across sources", () => {
         fadeOut: 3,
       }),
       {
-        durations: {pop: 0.12, [SFX]: 0.4},
+        durations: {pop: 0.25, [SFX]: 0.4},
         sourceState: (ref) => (ref === SFX ? "pending" : "ready"),
       },
     );
 
-    assert.deepEqual(shape(plan), [["music-0", 0, 4]]);
+    assert.deepEqual(shape(plan), [["music-0", 0, 8]]);
     assert.deepEqual(plan.issues, [
       {kind: "music-too-short-to-loop"},
       {kind: "fades-scaled"},

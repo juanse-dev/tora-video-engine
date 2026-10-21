@@ -4,7 +4,8 @@
 // The audio of the MP4 is decoded to mono PCM with the ffmpeg that ships with
 // Remotion, then a Goertzel filter reads the amplitude of one frequency in
 // consecutive windows. The fixtures are pure tones (music 220 Hz, voice 440 Hz,
-// sfx 880 Hz), so the amplitude per window tells which track sounds and how loud.
+// sfx 880 Hz) and the bundled ding is a bell at 2640 Hz, so the amplitude per
+// window tells which track sounds and how loud.
 // Always include a positive control: a broken decode returns silence that looks
 // like legitimate silence.
 

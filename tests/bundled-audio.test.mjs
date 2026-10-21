@@ -1,25 +1,34 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {execFileSync} from "node:child_process";
-import {existsSync, mkdtempSync, readFileSync, rmSync} from "node:fs";
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
-import {join} from "node:path";
+import {join, resolve} from "node:path";
 import {after, describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
 import {inspectAudio} from "../src/localAssets/audioInspection.ts";
+import {checkOriginals, originals} from "../scripts/prepareBundledAudio.mjs";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const licenses = readFileSync("public/audio/LICENSES.md", "utf8");
 const effectIds = ["whoosh", "boom", "ding", "pop"];
 
+// The CC0 originals are not committed (the directory is git-excluded), so CI has
+// none: the reproduction test runs wherever they are on disk (TORA_SFX_ORIGINALS
+// names another directory) and skips, saying why, everywhere else.
+const originalsDir = resolve(process.env.TORA_SFX_ORIGINALS ?? ".superpowers/sdd/sfx-cc0/originals");
+const skip = Object.values(originals).every(({file}) => existsSync(join(originalsDir, file)))
+  ? false
+  : `the CC0 originals are not on this machine (${originalsDir}); set TORA_SFX_ORIGINALS to a directory that holds them`;
+
 describe("bundled audio files", () => {
   const outputs = [];
-  const generate = () => {
-    const out = mkdtempSync(join(tmpdir(), "tora-sfx-"));
-    outputs.push(out);
-    execFileSync(process.execPath, ["scripts/generateBundledAudio.mjs", out]);
-    return out;
+  const tempDir = () => {
+    const dir = mkdtempSync(join(tmpdir(), "tora-sfx-"));
+    outputs.push(dir);
+    return dir;
   };
+  const prepare = (from, out) => execFileSync(process.execPath, ["scripts/prepareBundledAudio.mjs", from, out], {stdio: "pipe"});
   after(() => {
     for (const dir of outputs) rmSync(dir, {recursive: true, force: true});
   });
@@ -32,7 +41,7 @@ describe("bundled audio files", () => {
     });
   }
 
-  // Only the synthesized effects are WAVs; owner-supplied music may be MP3, M4A or Ogg (task 7).
+  // Only the effects are WAVs; owner-supplied music may be MP3, M4A or Ogg (task 7).
   for (const id of effectIds) {
     const entry = bundledAudioCatalog[id];
     it(`${id}: is 48 kHz stereo 16-bit PCM WAV of the catalog length`, () => {
@@ -69,16 +78,38 @@ describe("bundled audio files", () => {
     });
   }
 
-  it("the generator is deterministic: two runs write byte-identical files", () => {
-    const first = generate();
-    const second = generate();
-    for (const id of effectIds) {
-      assert.equal(sha(join(first, `${id}.wav`)), sha(join(second, `${id}.wav`)), id);
-    }
+  for (const id of effectIds) {
+    it(`${id}: sounds on its cue and ends without a click (onset within 10 ms, first and last sample within 2 LSB of zero, whole 10 ms)`, () => {
+      const bytes = readFileSync(join("public", bundledAudioCatalog[id].file));
+      const start = bytes.indexOf("data") + 8;
+      const frames = (bytes.length - start) / 4;
+      const amplitude = (frame) => Math.max(Math.abs(bytes.readInt16LE(start + frame * 4)), Math.abs(bytes.readInt16LE(start + frame * 4 + 2)));
+      let onset = 0;
+      while (onset < frames && amplitude(onset) < 0.003 * 32_768) onset += 1;
+      assert.ok(onset / 48 <= 10, `${id}: the first audible sample (>= -50 dBFS) is at ${(onset / 48).toFixed(1)} ms`);
+      assert.ok(amplitude(0) <= 2, `${id}: first sample ${amplitude(0)}`);
+      assert.ok(amplitude(frames - 1) <= 2, `${id}: last sample ${amplitude(frames - 1)}`);
+      assert.equal(frames % 480, 0, `${id}: ${frames} frames is not a whole number of 10 ms`);
+    });
+  }
+
+  it("refuses an original whose sha256 is not the chosen recording, and writes nothing", () => {
+    const bogus = tempDir();
+    const out = join(tempDir(), "sfx");
+    for (const {file} of Object.values(originals)) writeFileSync(join(bogus, file), "not the recording");
+
+    assert.throws(() => checkOriginals(bogus), /whoosh: .* has sha256 .* expected 7159ba26/);
+    assert.throws(() => prepare(bogus, out), (error) => error.status === 1 && /refusing a file that is not the chosen recording/.test(String(error.stderr)));
+    assert.equal(existsSync(out), false, "a refused run must not create the output directory");
   });
 
-  it("a fresh run matches the committed files (same header, every sample within 1 LSB)", () => {
-    const out = generate();
+  it("refuses a missing original", () => {
+    assert.throws(() => checkOriginals(tempDir()), /whoosh: the original 60013__qubodup__whoosh\.flac is missing/);
+  });
+
+  it("preparing the originals reproduces the committed files (same header, every sample within 1 LSB)", {skip}, () => {
+    const out = tempDir();
+    prepare(originalsDir, out);
     for (const id of effectIds) {
       const fresh = join(out, `${id}.wav`);
       const committed = join("public/audio/sfx", `${id}.wav`);

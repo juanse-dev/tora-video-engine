@@ -95,7 +95,7 @@ describe("browser readiness and the CLI props use the same durations", () => {
     const staged = await stageLocalAssetsForStory(story, {root, publicDir});
     const cli = await prepareCliAudio(story, {publicDir, localSources: staged.sources});
 
-    assert.deepEqual(cli.audioDurations, {ding: 1.2, [ref]: 2.2});
+    assert.deepEqual(cli.audioDurations, {ding: 1.8, [ref]: 2.2});
     assert.deepEqual(readiness.audioDurations, cli.audioDurations);
     assert.deepEqual(pageMap, cli.audioDurations);
     assert.equal(

@@ -161,7 +161,7 @@ describe("sources feed the audio plan", () => {
     assert.deepEqual(
       plan.tracks.map((track) => [track.key, track.durationInFrames]),
       [
-        ["sfx-0", 36],
+        ["sfx-0", 54],
         ["voice-0", 66],
       ],
     );
