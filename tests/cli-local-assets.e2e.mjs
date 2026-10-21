@@ -344,9 +344,11 @@ describe("CLI render with audio", () => {
     const partial = goertzelWindows(samples, DING_PARTIAL_HZ, 100);
 
     // Positive control: the sfx is clearly there in the first 200 ms (the 6870 Hz
-    // partial is gone after about 0.2 s, so only its first window is asserted)...
-    assert.ok(fundamental[0] > 0.05 && fundamental[1] > 0.05, fundamental.slice(0, 3).join(" "));
-    assert.ok(partial[0] > 0.02, partial.slice(0, 3).join(" "));
+    // partial is gone after about 0.2 s, so only its first window is asserted).
+    // File values: fundamental 0.20 and 0.16, partial 0.06; at D-15's 60 ms offset
+    // window 0 reads 0.0535 and 0.028, above the thresholds below...
+    assert.ok(fundamental[0] > 0.03 && fundamental[1] > 0.05, fundamental.slice(0, 3).join(" "));
+    assert.ok(partial[0] > 0.015, partial.slice(0, 3).join(" "));
 
     // ...it decays, and nothing sounds from 2 s on (the Story has no other audio).
     for (const windows of [fundamental, partial]) {

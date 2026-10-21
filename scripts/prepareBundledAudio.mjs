@@ -7,8 +7,11 @@
 // <originalsDir> holds the original downloads (they are not committed; see
 // `originals` below for the file names and the sha256 each must have: a file
 // with another hash is refused before anything is written). Output is
-// <id>.wav, 48 kHz stereo 16-bit PCM, the same bytes on every platform up to
-// 1 LSB. Per effect (the table below is the whole recipe):
+// <id>.wav, 48 kHz stereo 16-bit PCM, written only after all four succeeded.
+// Verified on Windows only: there two runs are byte-identical and equal the
+// committed files; on other platforms the resampler or MP3 decoder may differ by
+// a LSB (the reproduction test allows 1 LSB and skips in CI, which has no
+// originals). Per effect (the table below is the whole recipe):
 //
 //   1. mono is copied to both channels (no -3 dB pan law), then resampled to 48 kHz;
 //   2. `start` seconds of leading silence are cut and the sound is cut after
@@ -26,7 +29,7 @@
 import {Buffer} from "node:buffer";
 import {execFileSync} from "node:child_process";
 import {createHash} from "node:crypto";
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import process from "node:process";
@@ -90,7 +93,8 @@ export const originals = {
   },
 };
 
-const seconds = (value) => Math.round(value * SAMPLE_RATE);
+/** Seconds to a whole number of samples at 48 kHz. */
+const samplesOf = (value) => Math.round(value * SAMPLE_RATE);
 
 /** Throws unless every original is in `dir` with the sha256 of the recording the owner chose. */
 export const checkOriginals = (dir) => {
@@ -111,13 +115,13 @@ export const checkOriginals = (dir) => {
 
 /** The ffmpeg `-af` chain for one effect: steps 1-3 of the recipe. */
 export const filterChain = ({channels, start, length, gainDb}) => {
-  const first = seconds(start);
+  const first = samplesOf(start);
   const pan = channels === "mono" ? "pan=stereo|c0=c0|c1=c0" : "pan=stereo|c0=c0|c1=c1";
   const chain = [
     pan,
     `aresample=${SAMPLE_RATE}`,
     "aformat=sample_fmts=fltp",
-    `atrim=start_sample=${first}:end_sample=${first + seconds(length)}`,
+    `atrim=start_sample=${first}:end_sample=${first + samplesOf(length)}`,
     "asetpts=PTS-STARTPTS",
   ];
 
@@ -131,8 +135,8 @@ export const filterChain = ({channels, start, length, gainDb}) => {
 /** Step 4: linear fade-in over the first and fade-out over the last samples of interleaved 16-bit stereo PCM, in place. */
 export const applyFades = (pcm, fadeOutSeconds) => {
   const frames = pcm.length / BYTES_PER_FRAME;
-  const fadeIn = seconds(FADE_IN_SECONDS);
-  const fadeOut = seconds(fadeOutSeconds);
+  const fadeIn = samplesOf(FADE_IN_SECONDS);
+  const fadeOut = samplesOf(fadeOutSeconds);
 
   for (let frame = 0; frame < frames; frame += 1) {
     const gain = Math.min(1, (frame + 1) / fadeIn, (frames - frame) / fadeOut);
@@ -184,10 +188,14 @@ export const wavFile = (pcm) => {
   return Buffer.concat([header, pcm]);
 };
 
-/** Writes <id>.wav for every effect into `outDir`, after checking every original in `originalsDir`. */
-export const prepareBundledAudio = (originalsDir, outDir) => {
+/**
+ * Writes <id>.wav for every effect into `outDir`, after checking every original in
+ * `originalsDir`. All four are prepared in a scratch directory first and copied to
+ * `outDir` only when all four succeeded, so a failure never leaves a mixed set.
+ * `execute` replaces `execFileSync` (tests inject a failure).
+ */
+export const prepareBundledAudio = (originalsDir, outDir, {execute = execFileSync} = {}) => {
   checkOriginals(originalsDir);
-  mkdirSync(outDir, {recursive: true});
 
   const {ffmpeg, dir} = resolveFfmpegBinaries();
   const env = {
@@ -198,12 +206,15 @@ export const prepareBundledAudio = (originalsDir, outDir) => {
 
   // This ffmpeg has no raw PCM muxer: it writes a WAV, whose data chunk is read back.
   const scratch = mkdtempSync(join(tmpdir(), "tora-sfx-prepare-"));
+  const ready = join(scratch, "ready");
 
   try {
+    mkdirSync(ready);
+
     for (const [id, recipe] of Object.entries(originals)) {
       const decoded = join(scratch, `${id}.wav`);
 
-      execFileSync(
+      execute(
         ffmpeg,
         [
           "-hide_banner", "-loglevel", "error", "-y",
@@ -222,14 +233,20 @@ export const prepareBundledAudio = (originalsDir, outDir) => {
       );
 
       const pcm = dataChunk(readFileSync(decoded));
-      const expected = seconds(recipe.length) * BYTES_PER_FRAME;
+      const expected = samplesOf(recipe.length) * BYTES_PER_FRAME;
 
       if (pcm.length !== expected) {
         throw new Error(`${id}: ffmpeg produced ${pcm.length} bytes, expected ${expected}; the original is shorter than start + length`);
       }
 
       applyFades(pcm, recipe.fadeOut);
-      writeFileSync(join(outDir, `${id}.wav`), wavFile(pcm));
+      writeFileSync(join(ready, `${id}.wav`), wavFile(pcm));
+    }
+
+    mkdirSync(outDir, {recursive: true});
+
+    for (const id of Object.keys(originals)) {
+      copyFileSync(join(ready, `${id}.wav`), join(outDir, `${id}.wav`));
     }
   } finally {
     rmSync(scratch, {recursive: true, force: true});

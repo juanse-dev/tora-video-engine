@@ -7,7 +7,7 @@ import {join, resolve} from "node:path";
 import {after, describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
 import {inspectAudio} from "../src/localAssets/audioInspection.ts";
-import {checkOriginals, originals} from "../scripts/prepareBundledAudio.mjs";
+import {checkOriginals, originals, prepareBundledAudio} from "../scripts/prepareBundledAudio.mjs";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const licenses = readFileSync("public/audio/LICENSES.md", "utf8");
@@ -101,6 +101,17 @@ describe("bundled audio files", () => {
     assert.throws(() => checkOriginals(bogus), /whoosh: .* has sha256 .* expected 7159ba26/);
     assert.throws(() => prepare(bogus, out), (error) => error.status === 1 && /refusing a file that is not the chosen recording/.test(String(error.stderr)));
     assert.equal(existsSync(out), false, "a refused run must not create the output directory");
+  });
+
+  it("leaves the output directory untouched when ffmpeg fails on the last effect", {skip}, () => {
+    const out = join(tempDir(), "sfx");
+    const failOnPop = (command, args, options) => {
+      if (args.includes(join(originalsDir, originals.pop.file))) throw new Error("ffmpeg failed on pop");
+      return execFileSync(command, args, options);
+    };
+
+    assert.throws(() => prepareBundledAudio(originalsDir, out, {execute: failOnPop}), /ffmpeg failed on pop/);
+    assert.equal(existsSync(out), false, "three finished effects must not be copied out");
   });
 
   it("refuses a missing original", () => {

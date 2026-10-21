@@ -122,7 +122,7 @@ The bundled entries' durations are **not** injected implicitly by `compileTimeli
    | `ding` | freesound.org/people/Saya13/sounds/407258 | 0.705 s, 1.8 s (60 ms fade-out); dominant 2640 Hz | 0 dB | 345 644 B | 1.8 |
    | `pop` | freesound.org/people/deraj/sounds/202230 | 0.19 s, 0.25 s (20 ms fade-out) | 0 dB | 48 044 B | 0.25 |
 
-   `durationSeconds` is filled from `inspectAudio` (AINV-3, checked by `tests/bundled-audio.test.mjs`). `public/audio/LICENSES.md`: one row per file (id, file, source = the Freesound URL plus "trimmed and converted to 48 kHz stereo 16-bit WAV by scripts/prepareBundledAudio.mjs", author = the Freesound user, license = CC0-1.0).
+   `durationSeconds` is filled from `inspectAudio` (AINV-3, checked by `tests/bundled-audio.test.mjs`). `public/audio/LICENSES.md`: one row per file (id, file, source = the Freesound URL plus the modifications ("trimmed, faded, converted to 48 kHz stereo 16-bit WAV by scripts/prepareBundledAudio.mjs"; boom also "lowered 0.9 dB", pop "converted from mono"), author = the Freesound user, license = CC0-1.0).
 7. [ ] **Owner-supplied music (blocks AUDIO-006, not the other specs).** When the owner provides two CC0 tracks, add them as `public/audio/music/calm-loop.<ext>` and `upbeat-loop.<ext>` (original bytes, MP3/OGG/WAV/M4A, each ≤ 5 MB), set `file` and `durationSeconds`, and add their LICENSES rows (source URL, author, CC0-1.0). Until then the music ids are "missing" (see Decisions).
 
 ## Tests

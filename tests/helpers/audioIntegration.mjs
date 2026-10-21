@@ -68,11 +68,14 @@ export const assertIntegrationEnvelope = (samples, label) => {
     message(`${seconds.toFixed(3)} s long`),
   );
 
-  // The ding sounds at the first scene's start, fundamental (0.2 and 0.16 in the
-  // file) and partial (0.06 in the first window, 0.014 in the second: only the
-  // first is asserted) (positive control).
-  assert.ok(ding[0] > 0.05 && ding[1] > 0.05, message(`ding at 0 s: ${ding.slice(0, 3)}`));
-  assert.ok(dingPartial[0] > 0.02, message(`ding partial at 0 s: ${dingPartial.slice(0, 3)}`));
+  // The ding sounds at the first scene's start, fundamental and partial (positive
+  // control). In the file the fundamental reads 0.20 and 0.16 in its first two
+  // windows and the partial 0.06 then 0.014 (only the first is asserted). D-15
+  // allows the audio to start up to 60 ms off; at that offset window 0 reads 0.0535
+  // (fundamental) and 0.028 (partial), so the thresholds sit under those: window 0
+  // > 0.03, window 1 > 0.05, partial window 0 > 0.015.
+  assert.ok(ding[0] > 0.03 && ding[1] > 0.05, message(`ding at 0 s: ${ding.slice(0, 3)}`));
+  assert.ok(dingPartial[0] > 0.015, message(`ding partial at 0 s: ${dingPartial.slice(0, 3)}`));
   // ...while the 440 Hz voice has not started: nothing at 440 Hz before 2 s.
   assert.ok(max(voice.slice(0, 19)) < 0.02, message(`440 Hz before the voice: ${max(voice.slice(0, 19))}`));
 

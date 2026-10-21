@@ -172,7 +172,8 @@ test("a Story with a bundled sfx enables Render by itself, renders it through ob
   const samples = await decodeMp4AudioMono(path);
   const ding = goertzelWindows(samples, DING_HZ, 100);
 
-  expect(ding[0]).toBeGreaterThan(0.05);
+  // Window 0 reads 0.20 in the file and 0.0535 at D-15's 60 ms offset.
+  expect(ding[0]).toBeGreaterThan(0.03);
   expect(Math.max(...ding.slice(20))).toBeLessThan(0.01);
   expect(await listRemotionOpfsEntries(page)).toEqual([]);
 });
@@ -228,7 +229,7 @@ test("without a native AAC encoder the WASM encoder renders and the file passes 
   // The sound is really there (positive control).
   const ding = goertzelWindows(await decodeMp4AudioMono(path), DING_HZ, 100);
 
-  expect(ding[0]).toBeGreaterThan(0.05);
+  expect(ding[0]).toBeGreaterThan(0.03);
   expect(await listRemotionOpfsEntries(page)).toEqual([]);
 });
 
