@@ -6,7 +6,11 @@ import {
   localAssetRef,
   metadataOnlyRecord,
 } from "./helpers/seedAssetLibrary.mjs";
-import {applyYaml, openSeeded} from "./helpers/localAssetPage.mjs";
+import {
+  applyYaml,
+  openSeeded,
+  waitForRenderSupportCheck,
+} from "./helpers/localAssetPage.mjs";
 
 // The Player controls sit below the preview; a tall viewport keeps them on screen.
 test.use({viewport: {width: 1400, height: 1500}});
@@ -138,6 +142,8 @@ const openWithAudio = async (page, source = AUDIO_YAML) => {
     "data-tora-audio-armed",
     "true",
   );
+  // The callers click the Player's controls next (see waitForRenderSupportCheck).
+  await waitForRenderSupportCheck(page);
 };
 
 test("a Story without audio keeps the v0.3 Player: no volume controls, nothing armed", async ({
@@ -347,6 +353,7 @@ test("the remembered volume survives an over-budget unmount and remount of the P
 
   await openSeeded(page, records);
   await applyYaml(page, AUDIO_YAML);
+  await waitForRenderSupportCheck(page);
   await volumeButton(page).click();
   await volumeButton(page).hover();
 
