@@ -1,7 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {fixtureBytes} from "../helpers/audioBytes.mjs";
 import {yamlSource} from "./helpers/localAssetFlows.mjs";
-import {applyYaml, openSeeded, waitForOwner} from "./helpers/localAssetPage.mjs";
+import {applyYaml, openSeeded, waitForOwner, waitForRenderSupportCheck} from "./helpers/localAssetPage.mjs";
 import {audioWavRecord, metadataOnlyRecord} from "./helpers/seedAssetLibrary.mjs";
 
 // The built bundle is served; the Player is the real one (muted start, arming).
@@ -688,6 +688,8 @@ const installStartCounter = () => {
 const starts = (page) => page.evaluate(() => window.__starts);
 const volumeToggle = (page) => page.locator('.preview-frame button[aria-label$=" sound"]');
 const unmuteAndPlay = async (page) => {
+  // The armed Story's render check can still move the controls (see waitForRenderSupportCheck).
+  await waitForRenderSupportCheck(page);
   await volumeToggle(page).click();
   await expect(volumeToggle(page)).toHaveAttribute("aria-label", "Mute sound");
   await page.getByRole("button", {name: "Play video"}).click();
