@@ -7,13 +7,13 @@ import {join, resolve} from "node:path";
 import {after, describe, it} from "node:test";
 import {bundledAudioCatalog} from "../src/audio/catalog.ts";
 import {inspectAudio} from "../src/localAssets/audioInspection.ts";
-import {checkOriginals, originals, prepareBundledAudio} from "../scripts/prepareBundledAudio.mjs";
+import {checkOriginals, originals, prepareBundledAudio, publishPrepared} from "../scripts/prepareBundledAudio.mjs";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const licenses = readFileSync("public/audio/LICENSES.md", "utf8");
 const effectIds = ["whoosh", "boom", "ding", "pop"];
 
-// The CC0 originals are not committed (the directory is git-excluded), so CI has
+// The CC0 originals are not committed (`.superpowers/` is in .gitignore), so CI has
 // none: the reproduction test runs wherever they are on disk (TORA_SFX_ORIGINALS
 // names another directory) and skips, saying why, everywhere else.
 const originalsDir = resolve(process.env.TORA_SFX_ORIGINALS ?? ".superpowers/sdd/sfx-cc0/originals");
@@ -112,6 +112,45 @@ describe("bundled audio files", () => {
 
     assert.throws(() => prepareBundledAudio(originalsDir, out, {execute: failOnPop}), /ffmpeg failed on pop/);
     assert.equal(existsSync(out), false, "three finished effects must not be copied out");
+  });
+
+  it("publishes the four effects as one set: a copy failing on the third puts the replaced files back", () => {
+    const ready = tempDir();
+    const out = tempDir();
+    const ids = Object.keys(originals);
+
+    for (const id of ids) {
+      writeFileSync(join(ready, `${id}.wav`), `new ${id}`);
+      writeFileSync(join(out, `${id}.wav`), `old ${id}`);
+    }
+
+    let copies = 0;
+    const failOnThird = (from, to) => {
+      copies += 1;
+      if (copies === 3) {
+        writeFileSync(to, "half");
+        throw new Error("disk full");
+      }
+      writeFileSync(to, readFileSync(from));
+    };
+
+    assert.throws(() => publishPrepared(ready, out, {copy: failOnThird}), /disk full/);
+    for (const id of ids) {
+      assert.equal(readFileSync(join(out, `${id}.wav`), "utf8"), `old ${id}`, id);
+    }
+  });
+
+  it("publishing into a new directory removes it again when a copy fails", () => {
+    const ready = tempDir();
+    const out = join(tempDir(), "sfx");
+
+    for (const id of Object.keys(originals)) writeFileSync(join(ready, `${id}.wav`), id);
+
+    assert.throws(
+      () => publishPrepared(ready, out, {copy: () => { throw new Error("disk full"); }}),
+      /disk full/,
+    );
+    assert.equal(existsSync(out), false);
   });
 
   it("refuses a missing original", () => {

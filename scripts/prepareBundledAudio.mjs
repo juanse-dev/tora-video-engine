@@ -189,10 +189,52 @@ export const wavFile = (pcm) => {
 };
 
 /**
+ * Copies every prepared <id>.wav from `readyDir` into `outDir` as one set: the
+ * files it replaces are read first, and if any copy fails every file already
+ * copied (and the one that failed) is put back as it was, or removed when it did
+ * not exist, and a directory this call created is removed. `copy` replaces
+ * `copyFileSync` (tests inject a failure).
+ */
+export const publishPrepared = (readyDir, outDir, {copy = copyFileSync} = {}) => {
+  const createdDir = !existsSync(outDir);
+  const ids = Object.keys(originals);
+  const target = (id) => join(outDir, `${id}.wav`);
+
+  mkdirSync(outDir, {recursive: true});
+
+  const previous = new Map(ids.map((id) => [id, existsSync(target(id)) ? readFileSync(target(id)) : null]));
+  const touched = [];
+
+  try {
+    for (const id of ids) {
+      touched.push(id);
+      copy(join(readyDir, `${id}.wav`), target(id));
+    }
+  } catch (error) {
+    for (const id of touched) {
+      const bytes = previous.get(id);
+
+      if (bytes === null) {
+        rmSync(target(id), {force: true});
+      } else {
+        writeFileSync(target(id), bytes);
+      }
+    }
+
+    if (createdDir) {
+      rmSync(outDir, {recursive: true, force: true});
+    }
+
+    throw error;
+  }
+};
+
+/**
  * Writes <id>.wav for every effect into `outDir`, after checking every original in
- * `originalsDir`. All four are prepared in a scratch directory first and copied to
- * `outDir` only when all four succeeded, so a failure never leaves a mixed set.
- * `execute` replaces `execFileSync` (tests inject a failure).
+ * `originalsDir`. All four are prepared in a scratch directory first and published
+ * to `outDir` only when all four succeeded, as one set (`publishPrepared`), so a
+ * failure never leaves a mixed set. `execute` replaces `execFileSync` (tests inject
+ * a failure).
  */
 export const prepareBundledAudio = (originalsDir, outDir, {execute = execFileSync} = {}) => {
   checkOriginals(originalsDir);
@@ -243,11 +285,7 @@ export const prepareBundledAudio = (originalsDir, outDir, {execute = execFileSyn
       writeFileSync(join(ready, `${id}.wav`), wavFile(pcm));
     }
 
-    mkdirSync(outDir, {recursive: true});
-
-    for (const id of Object.keys(originals)) {
-      copyFileSync(join(ready, `${id}.wav`), join(outDir, `${id}.wav`));
-    }
+    publishPrepared(ready, outDir);
   } finally {
     rmSync(scratch, {recursive: true, force: true});
   }

@@ -10,6 +10,10 @@ output
 local-assets/*
 !local-assets/README.md
 
+# Local working notes and downloads (e.g. the CC0 sound-effect originals that
+# scripts/prepareBundledAudio.mjs reads from .superpowers/sdd/sfx-cc0/originals)
+.superpowers/
+
 # GATE-001 deployed verification: per-target state and the local phase B build
 .gate/
 dist/web-gate-b/
