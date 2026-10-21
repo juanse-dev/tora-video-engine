@@ -35,6 +35,19 @@ export const applyYaml = async (page, yaml) => {
 };
 
 /**
+ * Waits until the render capability check of the Active Story has settled.
+ * A Story that gains audio starts its own check (with AAC, which can wait for
+ * the WASM encoder when the browser has no native one); the banner's result
+ * can take another line and move everything below it, the Player's controls
+ * included, so a click sent before it settles can miss its button.
+ */
+export const waitForRenderSupportCheck = (page) =>
+  expect(page.locator(".render-banner")).not.toContainText(
+    "Checking browser render support",
+    {timeout: 15_000},
+  );
+
+/**
  * Call on a page showing the bundled Story: waits for the render capability
  * check and reports whether browser MP4 rendering works in this runtime
  * (bundled Chromium usually cannot encode H.264).
@@ -42,15 +55,7 @@ export const applyYaml = async (page, yaml) => {
 export const isBrowserRenderSupported = async (page) => {
   const banner = page.locator(".render-banner");
 
-  await expect
-    .poll(
-      async () =>
-        !((await banner.textContent()) ?? "").includes(
-          "Checking browser render support",
-        ),
-      {timeout: 15_000},
-    )
-    .toBe(true);
+  await waitForRenderSupportCheck(page);
 
   return ((await banner.textContent()) ?? "").includes(
     "Browser MP4 rendering is ready.",
